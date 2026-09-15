@@ -7,6 +7,7 @@ summaries, payment-status filters, and staff account management.
 - **Frontend:** React + TypeScript (Vite), Tailwind CSS
 - **Backend:** Supabase (Postgres + Auth + Row Level Security + Realtime)
 - **Roles:** `owner` (full access + dashboard) and `staff` (add/view transactions)
+- **Deployment:** Vercel, linked to `main`
 
 ---
 
