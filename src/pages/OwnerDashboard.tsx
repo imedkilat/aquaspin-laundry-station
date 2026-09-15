@@ -52,7 +52,7 @@ export default function OwnerDashboard() {
     }
   }, [rows])
 
-  const exportSpreadsheet = async () => {
+  const exportSpreadsheet = async (outputFormat: 'csv' | 'google_sheets') => {
     setExporting(true)
     setExportMessage(null)
 
@@ -62,6 +62,7 @@ export default function OwnerDashboard() {
         date_to: dateTo,
         payment_method: methodFilter,
         search,
+        output_format: outputFormat,
       },
     })
 
@@ -74,6 +75,16 @@ export default function OwnerDashboard() {
 
     if (data?.error) {
       setExportMessage(String(data.error))
+      return
+    }
+
+    if (outputFormat === 'google_sheets') {
+      if (typeof data?.sheet_url !== 'string') {
+        setExportMessage('The n8n export did not return a Google Sheet link.')
+        return
+      }
+      window.open(data.sheet_url, '_blank', 'noopener,noreferrer')
+      setExportMessage(`Sent ${data.row_count ?? filtered.length} transactions to Google Sheets.`)
       return
     }
 
@@ -160,11 +171,19 @@ export default function OwnerDashboard() {
               <div className="flex items-center gap-2 flex-wrap">
                 <button
                   type="button"
-                  onClick={exportSpreadsheet}
+                  onClick={() => exportSpreadsheet('csv')}
                   disabled={exporting}
                   className="rounded-lg border border-sky-300 px-3 py-1.5 text-sm font-medium text-sky-700 hover:bg-sky-50 disabled:opacity-50 dark:border-sky-800 dark:text-sky-300 dark:hover:bg-sky-950/40"
                 >
-                  {exporting ? 'Exporting…' : '⇩ Export Spreadsheet (n8n)'}
+                  {exporting ? 'Exporting…' : '⇩ Export CSV'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => exportSpreadsheet('google_sheets')}
+                  disabled={exporting}
+                  className="rounded-lg border border-emerald-300 px-3 py-1.5 text-sm font-medium text-emerald-700 hover:bg-emerald-50 disabled:opacity-50 dark:border-emerald-800 dark:text-emerald-300 dark:hover:bg-emerald-950/40"
+                >
+                  {exporting ? 'Exporting…' : '⇗ Export to Google Sheets'}
                 </button>
                 <button
                   type="button"

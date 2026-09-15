@@ -79,22 +79,38 @@ n8n secrets in §4 are separate and specific to `export-transactions`.
 1. Import [`n8n/aquaspin-transaction-export.json`](./n8n/aquaspin-transaction-export.json)
    into your n8n instance (Workflows → Import from File). It ships with no
    credential attached, by design.
-2. In n8n, create a **Header Auth** credential named e.g. "Aquaspin Export
-   Token" — header name `x-aquaspin-export-token`, value: a random secret
-   you generate yourself (e.g. `openssl rand -hex 32`). Attach it to the
-   **Aquaspin Export Webhook** node.
-3. Activate the workflow and copy its **production** webhook URL.
-4. In Supabase, set two secrets for the `export-transactions` function
-   (Dashboard → Edge Functions → export-transactions → Secrets, or via CLI):
+2. In n8n, on the **Aquaspin Export Webhook** node, attach a **Header Auth**
+   credential — create a new one (don't reuse an existing credential from
+   another workflow), named e.g. "Aquaspin Export Token", header name
+   `x-aquaspin-export-token`, value: a random secret you generate yourself
+   (e.g. `openssl rand -hex 32`).
+   **Double-check the header name after saving** — n8n's credential picker
+   can silently pre-select an unrelated existing credential instead of the
+   one you just created; if that happens the header name won't be
+   `x-aquaspin-export-token` and the export will fail authentication.
+3. **Activate the workflow** (top-right toggle). The production webhook URL
+   only responds while it's active.
+4. Copy the workflow's **production** webhook URL and, in Supabase, set two
+   secrets for the `export-transactions` function (Dashboard → Edge
+   Functions → export-transactions → Secrets, or via CLI):
 
    ```bash
    supabase secrets set N8N_EXPORT_WEBHOOK_URL="https://your-n8n-host/webhook/aquaspin-transaction-export" --project-ref YOUR-PROJECT-REF
    supabase secrets set N8N_EXPORT_TOKEN="the-same-random-secret-from-step-2" --project-ref YOUR-PROJECT-REF
    ```
 
-   Until both secrets are set, the owner dashboard's "Export Spreadsheet"
-   button returns a clear "n8n export automation is not configured yet"
-   error instead of failing silently.
+   Until both secrets are set, the owner dashboard's export buttons return a
+   clear "n8n export automation is not configured yet" error instead of
+   failing silently.
+5. **Optional — Google Sheets export.** The dashboard has two export
+   buttons: "Export CSV" (works with steps 1–4 alone) and "Export to Google
+   Sheets" (creates a new spreadsheet per export and returns its link). For
+   the Sheets button to work, attach a **Google Sheets (OAuth2)** credential
+   to both the **Create Sheet** and **Append Rows** nodes — same
+   double-check as step 2: confirm it's connected to the Google account you
+   actually want this business data landing in, not whatever credential the
+   picker suggests first. No Supabase secrets needed for this part; it
+   reuses the same webhook/token from steps 2–4.
 
 The webhook URL and token never touch the browser — the frontend only ever
 calls the `export-transactions` Edge Function, which holds the n8n secrets
@@ -168,10 +184,12 @@ value.
 - **Transaction IDs** — public, non-sequential codes like `AQ-7F3C9A2D`
   (`transaction_code`). The internal numeric `transaction_no` still exists
   for stable ordering but isn't shown in the UI.
-- **Spreadsheet export** — Dashboard → Export Spreadsheet sends the
-  currently applied filters (date range, payment method, customer search) to
-  the `export-transactions` Edge Function, which asks n8n to build a CSV and
-  streams it back for download. See §4 for setup.
+- **Spreadsheet export** — Dashboard → **Export CSV** or **Export to Google
+  Sheets** sends the currently applied filters (date range, payment method,
+  customer search) to the `export-transactions` Edge Function, which asks
+  n8n to build the export and returns either CSV text (downloaded directly)
+  or a new Google Sheet's link (opened in a new tab). See §4 for setup —
+  the Google Sheets option needs one extra credential.
 - **Theme** — light/dark toggle, persisted in the browser, available on
   every screen including Login.
 

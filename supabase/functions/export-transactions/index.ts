@@ -75,6 +75,7 @@ Deno.serve(async (req: Request) => {
     const dateTo = String(body.date_to ?? "").trim();
     const paymentMethod = String(body.payment_method ?? "all").trim();
     const search = String(body.search ?? "").trim().toLowerCase();
+    const outputFormat = body.output_format === "google_sheets" ? "google_sheets" : "csv";
 
     let query = admin
       .from("transactions")
@@ -109,6 +110,7 @@ Deno.serve(async (req: Request) => {
       },
       body: JSON.stringify({
         export_name: exportName,
+        output_format: outputFormat,
         filters: {
           date_from: dateFrom || null,
           date_to: dateTo || null,
@@ -133,6 +135,18 @@ Deno.serve(async (req: Request) => {
       n8nData = JSON.parse(responseText);
     } catch {
       return json({ error: "n8n returned an invalid export response." }, 502, corsHeaders);
+    }
+
+    if (outputFormat === "google_sheets") {
+      if (typeof n8nData.sheet_url !== "string") {
+        return json({ error: "n8n response did not include a Google Sheet link." }, 502, corsHeaders);
+      }
+      return json({
+        filename: typeof n8nData.filename === "string" ? n8nData.filename : `${exportName}-sheet`,
+        sheet_url: n8nData.sheet_url,
+        spreadsheet_id: n8nData.spreadsheet_id,
+        row_count: filtered.length,
+      }, 200, corsHeaders);
     }
 
     if (typeof n8nData.csv !== "string") {

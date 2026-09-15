@@ -3,15 +3,15 @@
   "nodes": [
     {
       "parameters": {
-        "content": "## Aquaspin export\n1. Create an n8n Header Auth credential with header name `x-aquaspin-export-token`.\n2. Set the credential value to the same secret stored in Supabase as `N8N_EXPORT_TOKEN`.\n3. Attach that credential to the Webhook node.\n4. Activate the workflow and store the production webhook URL in Supabase as `N8N_EXPORT_WEBHOOK_URL`.\n\nThe workflow returns CSV text, which Aquaspin downloads as a spreadsheet-compatible file.",
-        "height": 260,
-        "width": 420
+        "content": "## Aquaspin export\n1. Create an n8n Header Auth credential with header name `x-aquaspin-export-token`.\n2. Set the credential value to the same secret stored in Supabase as `N8N_EXPORT_TOKEN`.\n3. Attach that credential to the Webhook node.\n4. Activate the workflow and store the production webhook URL in Supabase as `N8N_EXPORT_WEBHOOK_URL`.\n5. Attach a Google Sheets (OAuth2) credential to the 'Create Sheet' and 'Append Rows' nodes for the Google Sheets export option (CSV export works without it).\n\nThe webhook branches on `output_format`: 'csv' (default) returns CSV text; 'google_sheets' creates a new spreadsheet per export, writes the rows into it, and returns its URL.",
+        "height": 320,
+        "width": 460
       },
       "id": "note-aquaspin-export",
       "name": "Setup Notes",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
-      "position": [-620, -180]
+      "position": [-620, -260]
     },
     {
       "parameters": {
@@ -30,13 +30,33 @@
     },
     {
       "parameters": {
-        "jsCode": "const incoming = $input.first().json;\nconst payload = incoming.body ?? incoming;\nconst rows = Array.isArray(payload.transactions) ? payload.transactions : [];\n\nconst escapeCsv = (value) => {\n  if (value === null || value === undefined) return '';\n  const text = typeof value === 'object' ? JSON.stringify(value) : String(value);\n  return `\\\"${text.replace(/\\\"/g, '\\\"\\\"')}\\\"`;\n};\n\nconst headers = [\n  'Transaction ID', 'Date', 'Customer', 'Phone', 'Service', 'Kg', 'Loads',\n  'Base Amount', 'Add-ons', 'Add-on Details', 'Total', 'Cash Received',\n  'GCash Received', 'GCash Reference', 'Payment Method', 'Pickup Date', 'Notes'\n];\n\nconst lines = [headers.map(escapeCsv).join(',')];\nfor (const row of rows) {\n  const service = row.services?.code ?? row.services?.label ?? '';\n  const values = [\n    row.transaction_code ?? row.transaction_no ?? '',\n    row.transaction_date ?? '',\n    row.customer_name ?? '',\n    row.phone_number ?? '',\n    service,\n    row.kg ?? '',\n    row.no_of_loads ?? '',\n    row.base_amount ?? 0,\n    row.add_ons ?? 0,\n    row.add_on_items ?? [],\n    row.total_amount ?? 0,\n    row.cash_amount ?? 0,\n    row.gcash_amount ?? 0,\n    row.gcash_reference ?? '',\n    row.payment_method ?? '',\n    row.pickup_date ?? '',\n    row.notes ?? ''\n  ];\n  lines.push(values.map(escapeCsv).join(','));\n}\n\nconst filename = `${payload.export_name || 'aquaspin-transactions'}.csv`;\nreturn [{ json: { filename, csv: lines.join('\\n'), row_count: rows.length } }];"
+        "conditions": {
+          "combinator": "and",
+          "conditions": [
+            {
+              "leftValue": "={{ $json.body?.output_format ?? $json.output_format }}",
+              "operator": { "operation": "equals", "type": "string" },
+              "rightValue": "google_sheets"
+            }
+          ],
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 2 }
+        }
+      },
+      "id": "if-route-format",
+      "name": "Route Export Format",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [120, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "const incoming = $input.first().json;\nconst payload = incoming.body ?? incoming;\nconst rows = Array.isArray(payload.transactions) ? payload.transactions : [];\n\nconst escapeCsv = (value) => {\n  if (value === null || value === undefined) return '';\n  const text = typeof value === 'object' ? JSON.stringify(value) : String(value);\n  return `\\\"${text.replace(/\\\"/g, '\\\"\\\"')}\\\"`;\n};\n\nconst headers = [\n  'Transaction ID', 'Date', 'Customer', 'Phone', 'Service', 'Kg', 'Loads',\n  'Base Amount', 'Add-ons', 'Add-on Names', 'Add-on Quantity', 'Total', 'Cash Received',\n  'GCash Received', 'GCash Reference', 'Payment Method', 'Pickup Date', 'Notes'\n];\n\nconst lines = [headers.map(escapeCsv).join(',')];\nfor (const row of rows) {\n  const service = row.services?.code ?? row.services?.label ?? '';\n  const addOnItems = Array.isArray(row.add_on_items) ? row.add_on_items : [];\n  const addOnNames = addOnItems.map((item) => item.name ?? '').join(', ');\n  const addOnQuantities = addOnItems.map((item) => item.quantity ?? '').join(', ');\n  const values = [\n    row.transaction_code ?? row.transaction_no ?? '',\n    row.transaction_date ?? '',\n    row.customer_name ?? '',\n    row.phone_number ?? '',\n    service,\n    row.kg ?? '',\n    row.no_of_loads ?? '',\n    row.base_amount ?? 0,\n    row.add_ons ?? 0,\n    addOnNames,\n    addOnQuantities,\n    row.total_amount ?? 0,\n    row.cash_amount ?? 0,\n    row.gcash_amount ?? 0,\n    row.gcash_reference ?? '',\n    row.payment_method ?? '',\n    row.pickup_date ?? '',\n    row.notes ?? ''\n  ];\n  lines.push(values.map(escapeCsv).join(','));\n}\n\nconst filename = `${payload.export_name || 'aquaspin-transactions'}.csv`;\nreturn [{ json: { filename, csv: lines.join('\\n'), row_count: rows.length } }];"
       },
       "id": "code-build-csv",
       "name": "Build Spreadsheet CSV",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [120, 0]
+      "position": [360, -120]
     },
     {
       "parameters": {
@@ -48,12 +68,123 @@
       "name": "Return Export",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.4,
-      "position": [360, 0]
+      "position": [600, -120]
+    },
+    {
+      "parameters": {
+        "resource": "spreadsheet",
+        "operation": "create",
+        "title": "={{ $json.body?.export_name ?? $json.export_name ?? 'aquaspin-transactions' }}",
+        "sheetsUi": { "sheetValues": [{ "title": "Transactions" }] },
+        "options": {}
+      },
+      "id": "sheets-create",
+      "name": "Create Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [360, 120]
+    },
+    {
+      "parameters": {
+        "jsCode": "const trigger = $('Aquaspin Export Webhook').first().json;\nconst payload = trigger.body ?? trigger;\nconst rows = Array.isArray(payload.transactions) ? payload.transactions : [];\n\nconst paymentLabels = { paid: 'Cash', gcash: 'GCash', pay_later: 'Pay Later' };\n\nreturn rows.map((row) => {\n  const service = row.services?.code ?? row.services?.label ?? '';\n  const addOnItems = Array.isArray(row.add_on_items) ? row.add_on_items : [];\n  const addOnNames = addOnItems.map((item) => item.name ?? '').join(', ');\n  const addOnQuantities = addOnItems.map((item) => item.quantity ?? '').join(', ');\n  return {\n    json: {\n      'Transaction ID': row.transaction_code ?? row.transaction_no ?? '',\n      'Date': row.transaction_date ?? '',\n      'Customer': row.customer_name ?? '',\n      'Phone': row.phone_number ?? '',\n      'Service': service,\n      'Kg': row.kg ?? '',\n      'Loads': row.no_of_loads ?? '',\n      'Base Amount': row.base_amount ?? 0,\n      'Add-ons': row.add_ons ?? 0,\n      'Add-on Names': addOnNames,\n      'Add-on Quantity': addOnQuantities,\n      'Total': row.total_amount ?? 0,\n      'Cash Received': row.cash_amount ?? 0,\n      'GCash Received': row.gcash_amount ?? 0,\n      'GCash Reference': row.gcash_reference ?? '',\n      'Payment Method': paymentLabels[row.payment_method] ?? row.payment_method ?? '',\n      'Pickup Date': row.pickup_date ?? '',\n      'Notes': row.notes ?? '',\n    },\n  };\n});"
+      },
+      "id": "code-build-sheet-rows",
+      "name": "Build Sheet Rows",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [600, 200]
+    },
+    {
+      "parameters": {
+        "resource": "sheet",
+        "operation": "append",
+        "documentId": { "__rl": true, "mode": "id", "value": "={{ $('Create Sheet').first().json.spreadsheetId }}" },
+        "sheetName": { "__rl": true, "mode": "name", "value": "Transactions" },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Transaction ID": "={{ $json['Transaction ID'] }}",
+            "Date": "={{ $json['Date'] }}",
+            "Customer": "={{ $json['Customer'] }}",
+            "Phone": "={{ $json['Phone'] }}",
+            "Service": "={{ $json['Service'] }}",
+            "Kg": "={{ $json['Kg'] }}",
+            "Loads": "={{ $json['Loads'] }}",
+            "Base Amount": "={{ $json['Base Amount'] }}",
+            "Add-ons": "={{ $json['Add-ons'] }}",
+            "Add-on Names": "={{ $json['Add-on Names'] }}",
+            "Add-on Quantity": "={{ $json['Add-on Quantity'] }}",
+            "Total": "={{ $json['Total'] }}",
+            "Cash Received": "={{ $json['Cash Received'] }}",
+            "GCash Received": "={{ $json['GCash Received'] }}",
+            "GCash Reference": "={{ $json['GCash Reference'] }}",
+            "Payment Method": "={{ $json['Payment Method'] }}",
+            "Pickup Date": "={{ $json['Pickup Date'] }}",
+            "Notes": "={{ $json['Notes'] }}"
+          },
+          "schema": [
+            { "id": "Transaction ID", "displayName": "Transaction ID", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "Date", "displayName": "Date", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": false },
+            { "id": "Customer", "displayName": "Customer", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": false },
+            { "id": "Phone", "displayName": "Phone", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": false },
+            { "id": "Service", "displayName": "Service", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": false },
+            { "id": "Kg", "displayName": "Kg", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": false },
+            { "id": "Loads", "displayName": "Loads", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": false },
+            { "id": "Base Amount", "displayName": "Base Amount", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": false },
+            { "id": "Add-ons", "displayName": "Add-ons", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": false },
+            { "id": "Add-on Names", "displayName": "Add-on Names", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": false },
+            { "id": "Add-on Quantity", "displayName": "Add-on Quantity", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": false },
+            { "id": "Total", "displayName": "Total", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": false },
+            { "id": "Cash Received", "displayName": "Cash Received", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": false },
+            { "id": "GCash Received", "displayName": "GCash Received", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": false },
+            { "id": "GCash Reference", "displayName": "GCash Reference", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": false },
+            { "id": "Payment Method", "displayName": "Payment Method", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": false },
+            { "id": "Pickup Date", "displayName": "Pickup Date", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": false },
+            { "id": "Notes", "displayName": "Notes", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": false }
+          ]
+        },
+        "options": {}
+      },
+      "id": "sheets-append",
+      "name": "Append Rows",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [840, 200]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { filename: ($json.body?.export_name ?? $json.export_name ?? 'aquaspin-transactions') + '-sheet', sheet_url: $json.spreadsheetUrl, spreadsheet_id: $json.spreadsheetId, row_count: ($('Aquaspin Export Webhook').first().json.body?.transactions ?? $('Aquaspin Export Webhook').first().json.transactions ?? []).length } }}",
+        "options": {}
+      },
+      "id": "respond-sheet-link",
+      "name": "Return Sheet Link",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [600, 40]
     }
   ],
   "connections": {
     "Aquaspin Export Webhook": {
       "main": [
+        [
+          {
+            "node": "Route Export Format",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route Export Format": {
+      "main": [
+        [
+          {
+            "node": "Create Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ],
         [
           {
             "node": "Build Spreadsheet CSV",
@@ -73,13 +204,40 @@
           }
         ]
       ]
+    },
+    "Create Sheet": {
+      "main": [
+        [
+          {
+            "node": "Build Sheet Rows",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Return Sheet Link",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Sheet Rows": {
+      "main": [
+        [
+          {
+            "node": "Append Rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "active": false,
   "settings": {
     "executionOrder": "v1"
   },
-  "versionId": "00000000-0000-0000-0000-000000000001",
+  "versionId": "00000000-0000-0000-0000-000000000002",
   "meta": {
     "templateCredsSetupCompleted": false
   },
