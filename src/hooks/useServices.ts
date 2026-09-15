@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import type { Service } from '../types/database'
 
@@ -6,7 +6,8 @@ export function useServices() {
   const [services, setServices] = useState<Service[]>([])
   const [loading, setLoading] = useState(true)
 
-  useEffect(() => {
+  const reload = useCallback(() => {
+    setLoading(true)
     supabase
       .from('services')
       .select('*')
@@ -22,5 +23,25 @@ export function useServices() {
       })
   }, [])
 
-  return { services, loading }
+  useEffect(() => {
+    reload()
+  }, [reload])
+
+  // Keep every open staff/owner screen in sync when an owner changes pricing.
+  useEffect(() => {
+    const channel = supabase
+      .channel('services-realtime')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'services' },
+        () => reload()
+      )
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(channel)
+    }
+  }, [reload])
+
+  return { services, loading, reload }
 }
