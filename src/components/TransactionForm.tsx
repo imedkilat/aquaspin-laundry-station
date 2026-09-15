@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { supabase } from '../lib/supabase'
 import { useServices } from '../hooks/useServices'
+import { useAddOns } from '../hooks/useAddOns'
 import { useAuth } from '../lib/auth-context'
-import type { PaymentMethod } from '../types/database'
+import type { PaymentMethod, TransactionAddOnItem } from '../types/database'
 import { shopDate } from '../lib/date'
 import { toTitleCaseName } from '../lib/text'
 
@@ -27,10 +28,17 @@ const emptyForm = {
 const peso = (n: number) =>
   `₱${n.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 
+const unitLabel = (unit: string, quantity = 1) => {
+  if (unit === 'flat') return 'flat'
+  return quantity === 1 ? unit : `${unit}s`
+}
+
 export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
   const { services } = useServices()
+  const { addOns, loading: addOnsLoading } = useAddOns()
   const { profile } = useAuth()
   const [form, setForm] = useState(emptyForm)
+  const [selectedAddOns, setSelectedAddOns] = useState<Record<string, number>>({})
   const [totalTouched, setTotalTouched] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -39,6 +47,29 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
   const selectedService = useMemo(
     () => services.find((service) => service.id === form.service_id) ?? null,
     [form.service_id, services]
+  )
+
+  const selectedAddOnItems = useMemo<TransactionAddOnItem[]>(() => {
+    return addOns.flatMap((addOn) => {
+      const quantity = selectedAddOns[addOn.id] ?? 0
+      if (quantity <= 0) return []
+      const normalizedQuantity = addOn.unit_type === 'flat' ? 1 : quantity
+      return [
+        {
+          add_on_id: addOn.id,
+          name: addOn.name,
+          unit_type: addOn.unit_type,
+          unit_price: addOn.price,
+          quantity: normalizedQuantity,
+          line_total: Number((addOn.price * normalizedQuantity).toFixed(2)),
+        },
+      ]
+    })
+  }, [addOns, selectedAddOns])
+
+  const addOnsTotal = useMemo(
+    () => selectedAddOnItems.reduce((sum, item) => sum + item.line_total, 0),
+    [selectedAddOnItems]
   )
 
   const isWeightBased =
@@ -104,10 +135,15 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
   }, [form.kg, isWeightBased, selectedService?.default_rate, selectedService?.max_kg_per_load])
 
   useEffect(() => {
+    setForm((f) => ({ ...f, add_ons: addOnsTotal.toFixed(2) }))
+    setTotalTouched(false)
+  }, [addOnsTotal])
+
+  useEffect(() => {
     if (totalTouched) return
     const base = parseFloat(form.base_amount) || 0
-    const addOns = parseFloat(form.add_ons) || 0
-    setForm((f) => ({ ...f, total_amount: (base + addOns).toFixed(2) }))
+    const addOnAmount = parseFloat(form.add_ons) || 0
+    setForm((f) => ({ ...f, total_amount: (base + addOnAmount).toFixed(2) }))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [form.base_amount, form.add_ons, totalTouched])
 
@@ -132,6 +168,21 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
   const update = (field: keyof typeof emptyForm) => (
     e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>
   ) => setForm((f) => ({ ...f, [field]: e.target.value }))
+
+  const toggleAddOn = (id: string, checked: boolean) => {
+    setSelectedAddOns((current) => {
+      if (checked) return { ...current, [id]: 1 }
+      const next = { ...current }
+      delete next[id]
+      return next
+    })
+  }
+
+  const updateAddOnQuantity = (id: string, value: string, isDecimal: boolean) => {
+    const parsed = Number(value)
+    const quantity = Number.isFinite(parsed) && parsed > 0 ? (isDecimal ? parsed : Math.floor(parsed)) : 1
+    setSelectedAddOns((current) => ({ ...current, [id]: quantity }))
+  }
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault()
@@ -180,7 +231,8 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
       kg: form.kg ? Number(form.kg) : null,
       no_of_loads: form.no_of_loads ? Number(form.no_of_loads) : null,
       base_amount: form.base_amount ? Number(form.base_amount) : 0,
-      add_ons: form.add_ons ? Number(form.add_ons) : 0,
+      add_ons: addOnsTotal,
+      add_on_items: selectedAddOnItems,
       total_amount: form.total_amount ? Number(form.total_amount) : 0,
       cash_amount: form.cash_amount ? Number(form.cash_amount) : 0,
       gcash_amount: form.gcash_amount ? Number(form.gcash_amount) : 0,
@@ -204,8 +256,10 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
 
     const changeMessage = form.payment_method === 'paid' && changeDue > 0 ? ` · Change ${peso(changeDue)}` : ''
     const gcashMessage = form.payment_method === 'gcash' ? ` · GCash #${form.gcash_reference.trim()}` : ''
-    setSuccess(`Added — ${normalizedCustomerName}${changeMessage}${gcashMessage}`)
+    const addOnMessage = selectedAddOnItems.length > 0 ? ` · Add-ons ${peso(addOnsTotal)}` : ''
+    setSuccess(`Added — ${normalizedCustomerName}${addOnMessage}${changeMessage}${gcashMessage}`)
     setForm(emptyForm)
+    setSelectedAddOns({})
     setTotalTouched(false)
     onAdded?.()
     setTimeout(() => setSuccess(null), 4000)
@@ -217,7 +271,7 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
   const labelClass = 'block text-xs font-medium text-slate-600 mb-1 dark:text-slate-400'
 
   return (
-    <form onSubmit={handleSubmit} className="bg-white rounded-2xl border border-slate-200 p-5 space-y-4 dark:bg-slate-900 dark:border-slate-800">
+    <form onSubmit={handleSubmit} className="bg-white rounded-2xl border border-slate-200 p-5 space-y-5 dark:bg-slate-900 dark:border-slate-800">
       <h2 className="font-semibold text-slate-900 dark:text-slate-100">Add Customer Transaction</h2>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -234,32 +288,19 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
         </div>
         <div>
           <label className={labelClass}>Phone Number</label>
-          <input
-            value={form.phone_number}
-            onChange={update('phone_number')}
-            className={inputClass}
-            placeholder="09xxxxxxxxx"
-          />
+          <input value={form.phone_number} onChange={update('phone_number')} className={inputClass} placeholder="09xxxxxxxxx" />
         </div>
 
         <div>
           <label className={labelClass}>Transaction Date *</label>
-          <input
-            type="date"
-            required
-            value={form.transaction_date}
-            onChange={update('transaction_date')}
-            className={inputClass}
-          />
+          <input type="date" required value={form.transaction_date} onChange={update('transaction_date')} className={inputClass} />
         </div>
         <div>
           <label className={labelClass}>Service</label>
           <select value={form.service_id} onChange={update('service_id')} className={inputClass}>
             <option value="">Select service…</option>
             {services.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.label} ({s.code})
-              </option>
+              <option key={s.id} value={s.id}>{s.label} ({s.code})</option>
             ))}
           </select>
         </div>
@@ -276,9 +317,7 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
             className={inputClass}
           />
           {isWeightBased && selectedService?.max_kg_per_load && (
-            <p className="mt-1 text-xs text-sky-700 dark:text-sky-400">
-              Auto rule: up to {selectedService.max_kg_per_load} kg per load
-            </p>
+            <p className="mt-1 text-xs text-sky-700 dark:text-sky-400">Auto rule: up to {selectedService.max_kg_per_load} kg per load</p>
           )}
         </div>
         <div>
@@ -293,9 +332,7 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
             className={isWeightBased ? autoInputClass : inputClass}
           />
           {isWeightBased && form.no_of_loads && (
-            <p className="mt-1 text-xs text-slate-500">
-              {form.kg} kg = {form.no_of_loads} load{form.no_of_loads === '1' ? '' : 's'}, same transaction #
-            </p>
+            <p className="mt-1 text-xs text-slate-500">{form.kg} kg = {form.no_of_loads} load{form.no_of_loads === '1' ? '' : 's'}, same transaction #</p>
           )}
         </div>
 
@@ -311,23 +348,83 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
             className={isWeightBased ? autoInputClass : inputClass}
           />
           {isWeightBased && form.no_of_loads && selectedService?.default_rate != null && (
-            <p className="mt-1 text-xs text-slate-500">
-              ₱{selectedService.default_rate.toFixed(2)} × {form.no_of_loads} load{form.no_of_loads === '1' ? '' : 's'}
-            </p>
+            <p className="mt-1 text-xs text-slate-500">₱{selectedService.default_rate.toFixed(2)} × {form.no_of_loads} load{form.no_of_loads === '1' ? '' : 's'}</p>
           )}
         </div>
         <div>
-          <label className={labelClass}>Add-ons (₱)</label>
-          <input
-            type="number"
-            step="0.01"
-            min="0"
-            value={form.add_ons}
-            onChange={update('add_ons')}
-            className={inputClass}
-          />
+          <label className={labelClass}>Add-ons Total (₱) · Auto</label>
+          <input type="number" value={form.add_ons} readOnly className={autoInputClass} />
+          <p className="mt-1 text-xs text-slate-500">Select add-ons below. Prices and quantities are tracked with the transaction.</p>
+        </div>
+      </div>
+
+      <section className="rounded-xl border border-slate-200 p-4 dark:border-slate-700">
+        <div className="flex items-center justify-between gap-3 mb-3">
+          <div>
+            <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Add-ons</h3>
+            <p className="text-xs text-slate-500">Optional. Check an item and enter the quantity used.</p>
+          </div>
+          {selectedAddOnItems.length > 0 && <span className="text-sm font-semibold text-sky-600">{peso(addOnsTotal)}</span>}
         </div>
 
+        {addOnsLoading ? (
+          <p className="text-sm text-slate-400 py-3">Loading add-ons…</p>
+        ) : addOns.length === 0 ? (
+          <p className="text-sm text-slate-400 py-3">No active add-ons configured yet.</p>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {addOns.map((addOn) => {
+              const selected = (selectedAddOns[addOn.id] ?? 0) > 0
+              const quantity = selectedAddOns[addOn.id] ?? 1
+              const effectiveQuantity = addOn.unit_type === 'flat' ? 1 : quantity
+              const lineTotal = addOn.price * effectiveQuantity
+              const decimalQuantity = addOn.unit_type === 'kg'
+
+              return (
+                <div key={addOn.id} className={`rounded-lg border p-3 ${selected ? 'border-sky-300 bg-sky-50/60 dark:border-sky-800 dark:bg-sky-950/20' : 'border-slate-200 dark:border-slate-700'}`}>
+                  <label className="flex items-start gap-3 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={selected}
+                      onChange={(e) => toggleAddOn(addOn.id, e.target.checked)}
+                      className="mt-1 h-4 w-4"
+                    />
+                    <span className="flex-1">
+                      <span className="flex items-center justify-between gap-3">
+                        <span className="font-medium text-sm text-slate-900 dark:text-slate-100">{addOn.name}</span>
+                        <span className="text-sm font-medium text-slate-700 dark:text-slate-300">{peso(addOn.price)} / {addOn.unit_type}</span>
+                      </span>
+                      {selected && (
+                        <span className="mt-3 flex items-end justify-between gap-3">
+                          <span className="w-28">
+                            <span className="block text-xs text-slate-500 mb-1">Quantity</span>
+                            <input
+                              type="number"
+                              min={decimalQuantity ? '0.1' : '1'}
+                              step={decimalQuantity ? '0.1' : '1'}
+                              disabled={addOn.unit_type === 'flat'}
+                              value={effectiveQuantity}
+                              onChange={(e) => updateAddOnQuantity(addOn.id, e.target.value, decimalQuantity)}
+                              onClick={(e) => e.stopPropagation()}
+                              className={`${inputClass} py-1.5 disabled:opacity-60`}
+                            />
+                          </span>
+                          <span className="text-right">
+                            <span className="block text-xs text-slate-500">{effectiveQuantity} {unitLabel(addOn.unit_type, effectiveQuantity)}</span>
+                            <strong className="text-sm text-slate-900 dark:text-slate-100">{peso(lineTotal)}</strong>
+                          </span>
+                        </span>
+                      )}
+                    </span>
+                  </label>
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </section>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div>
           <label className={labelClass}>Total (₱)</label>
           <input
@@ -344,12 +441,7 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
         </div>
         <div>
           <label className={labelClass}>Payment Method *</label>
-          <select
-            required
-            value={form.payment_method}
-            onChange={update('payment_method')}
-            className={inputClass}
-          >
+          <select required value={form.payment_method} onChange={update('payment_method')} className={inputClass}>
             <option value="paid">Cash</option>
             <option value="gcash">GCash</option>
             <option value="pay_later">Pay Later</option>
@@ -369,16 +461,10 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
             className={`${inputClass} disabled:opacity-50 disabled:cursor-not-allowed`}
             placeholder={isCashPayment ? 'Amount tendered by customer' : 'Select Cash payment'}
           />
-          {isCashPayment && cashEntered && cashShort > 0 && (
-            <p className="mt-1 text-xs font-medium text-red-600">Short by {peso(cashShort)}. Transaction cannot be saved.</p>
-          )}
-          {isCashPayment && cashEntered && cashDifference === 0 && (
-            <p className="mt-1 text-xs font-medium text-emerald-600">Exact payment. No change due.</p>
-          )}
+          {isCashPayment && cashEntered && cashShort > 0 && <p className="mt-1 text-xs font-medium text-red-600">Short by {peso(cashShort)}. Transaction cannot be saved.</p>}
+          {isCashPayment && cashEntered && cashDifference === 0 && <p className="mt-1 text-xs font-medium text-emerald-600">Exact payment. No change due.</p>}
           {isCashPayment && cashEntered && changeDue > 0 && (
-            <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-300">
-              Change due: <strong>{peso(changeDue)}</strong>
-            </div>
+            <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-300">Change due: <strong>{peso(changeDue)}</strong></div>
           )}
         </div>
 
@@ -395,14 +481,8 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
             className={`${inputClass} disabled:opacity-50 disabled:cursor-not-allowed`}
             placeholder={isGcashPayment ? 'GCash amount received' : 'Select GCash payment'}
           />
-          {isGcashPayment && gcashEntered && gcashDifference === 0 && (
-            <p className="mt-1 text-xs font-medium text-emerald-600">GCash amount matches the total.</p>
-          )}
-          {isGcashPayment && gcashEntered && gcashDifference !== 0 && (
-            <p className="mt-1 text-xs font-medium text-red-600">
-              GCash amount must match {peso(totalAmount)}.
-            </p>
-          )}
+          {isGcashPayment && gcashEntered && gcashDifference === 0 && <p className="mt-1 text-xs font-medium text-emerald-600">GCash amount matches the total.</p>}
+          {isGcashPayment && gcashEntered && gcashDifference !== 0 && <p className="mt-1 text-xs font-medium text-red-600">GCash amount must match {peso(totalAmount)}.</p>}
         </div>
 
         {isGcashPayment && (
@@ -430,14 +510,8 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
         </div>
       </div>
 
-      {error && (
-        <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</p>
-      )}
-      {success && (
-        <p className="text-sm text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2">
-          {success}
-        </p>
-      )}
+      {error && <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</p>}
+      {success && <p className="text-sm text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2">{success}</p>}
 
       <button
         type="submit"
