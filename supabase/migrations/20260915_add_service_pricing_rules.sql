@@ -1,11 +1,18 @@
 -- Add configurable service pricing rules for Aquaspin.
--- WDF is automatically split into 8 kg loads while remaining one transaction.
+-- Every service uses an 8 kg maximum capacity per load while remaining one transaction.
 
 alter table public.services
-  add column if not exists pricing_type text not null default 'per_load_manual';
+  add column if not exists pricing_type text not null default 'per_load_by_weight';
 
 alter table public.services
-  add column if not exists max_kg_per_load numeric(6,2);
+  add column if not exists max_kg_per_load numeric(6,2) default 8.00;
+
+-- Make the shop-wide rule the default for future services too.
+alter table public.services
+  alter column pricing_type set default 'per_load_by_weight';
+
+alter table public.services
+  alter column max_kg_per_load set default 8.00;
 
 do $$
 begin
@@ -44,17 +51,7 @@ begin
 end
 $$;
 
+-- Current catalog and any existing service use the same 8 kg/load rule.
 update public.services
 set pricing_type = 'per_load_by_weight',
-    max_kg_per_load = 8.00
-where code = 'WDF';
-
-update public.services
-set pricing_type = 'per_load_manual',
-    max_kg_per_load = null
-where code in ('SSW', 'SSD');
-
-update public.services
-set pricing_type = 'per_item',
-    max_kg_per_load = null
-where code = 'CSDB';
+    max_kg_per_load = 8.00;
