@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useTransactions } from '../hooks/useTransactions'
 import TransactionTable from '../components/TransactionTable'
 import StaffAccountsManager from '../components/StaffAccountsManager'
@@ -7,6 +7,7 @@ import AddOnsManager from '../components/AddOnsManager'
 import type { PaymentMethod } from '../types/database'
 import { shopDate, shopDateDaysAgo } from '../lib/date'
 import { supabase } from '../lib/supabase'
+import { useAuth } from '../lib/auth-context'
 
 const peso = (n: number) =>
   `₱${n.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
@@ -14,6 +15,9 @@ const peso = (n: number) =>
 type Tab = 'overview' | 'staff' | 'pricing' | 'addons'
 
 export default function OwnerDashboard() {
+  const { profile } = useAuth()
+  const isOwner = profile?.role === 'owner'
+
   const [tab, setTab] = useState<Tab>('overview')
   const [dateFrom, setDateFrom] = useState(shopDateDaysAgo(6))
   const [dateTo, setDateTo] = useState(shopDate())
@@ -23,6 +27,13 @@ export default function OwnerDashboard() {
   const [exportMessage, setExportMessage] = useState<string | null>(null)
 
   const { rows, loading, reload } = useTransactions({ dateFrom, dateTo, limit: 1000 })
+
+  // Staff only ever get the Overview tab. Guard against a stale tab
+  // selection (e.g. an owner's session on a shared device gets replaced by
+  // a staff sign-in) instead of relying solely on the hidden nav buttons.
+  useEffect(() => {
+    if (!isOwner && tab !== 'overview') setTab('overview')
+  }, [isOwner, tab])
 
   const filtered = useMemo(() => {
     return rows.filter((r) => {
@@ -117,9 +128,13 @@ export default function OwnerDashboard() {
     <div className="space-y-6">
       <div className="flex items-center gap-2 flex-wrap">
         <button onClick={() => setTab('overview')} className={tabClass(tab === 'overview')}>Overview</button>
-        <button onClick={() => setTab('staff')} className={tabClass(tab === 'staff')}>Staff Accounts</button>
-        <button onClick={() => setTab('pricing')} className={tabClass(tab === 'pricing')}>Service Pricing</button>
-        <button onClick={() => setTab('addons')} className={tabClass(tab === 'addons')}>Add-ons</button>
+        {isOwner && (
+          <>
+            <button onClick={() => setTab('staff')} className={tabClass(tab === 'staff')}>Staff Accounts</button>
+            <button onClick={() => setTab('pricing')} className={tabClass(tab === 'pricing')}>Service Pricing</button>
+            <button onClick={() => setTab('addons')} className={tabClass(tab === 'addons')}>Add-ons</button>
+          </>
+        )}
       </div>
 
       {tab === 'overview' && (
@@ -169,22 +184,26 @@ export default function OwnerDashboard() {
                 </p>
               </div>
               <div className="flex items-center gap-2 flex-wrap">
-                <button
-                  type="button"
-                  onClick={() => exportSpreadsheet('csv')}
-                  disabled={exporting}
-                  className="rounded-lg border border-sky-300 px-3 py-1.5 text-sm font-medium text-sky-700 hover:bg-sky-50 disabled:opacity-50 dark:border-sky-800 dark:text-sky-300 dark:hover:bg-sky-950/40"
-                >
-                  {exporting ? 'Exporting…' : '⇩ Export CSV'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => exportSpreadsheet('google_sheets')}
-                  disabled={exporting}
-                  className="rounded-lg border border-emerald-300 px-3 py-1.5 text-sm font-medium text-emerald-700 hover:bg-emerald-50 disabled:opacity-50 dark:border-emerald-800 dark:text-emerald-300 dark:hover:bg-emerald-950/40"
-                >
-                  {exporting ? 'Exporting…' : '⇗ Export to Google Sheets'}
-                </button>
+                {isOwner && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => exportSpreadsheet('csv')}
+                      disabled={exporting}
+                      className="rounded-lg border border-sky-300 px-3 py-1.5 text-sm font-medium text-sky-700 hover:bg-sky-50 disabled:opacity-50 dark:border-sky-800 dark:text-sky-300 dark:hover:bg-sky-950/40"
+                    >
+                      {exporting ? 'Exporting…' : '⇩ Export CSV'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => exportSpreadsheet('google_sheets')}
+                      disabled={exporting}
+                      className="rounded-lg border border-emerald-300 px-3 py-1.5 text-sm font-medium text-emerald-700 hover:bg-emerald-50 disabled:opacity-50 dark:border-emerald-800 dark:text-emerald-300 dark:hover:bg-emerald-950/40"
+                    >
+                      {exporting ? 'Exporting…' : '⇗ Export to Google Sheets'}
+                    </button>
+                  </>
+                )}
                 <button
                   type="button"
                   onClick={reload}
@@ -231,9 +250,9 @@ export default function OwnerDashboard() {
         </>
       )}
 
-      {tab === 'staff' && <StaffAccountsManager />}
-      {tab === 'pricing' && <ServicePricingManager />}
-      {tab === 'addons' && <AddOnsManager />}
+      {isOwner && tab === 'staff' && <StaffAccountsManager />}
+      {isOwner && tab === 'pricing' && <ServicePricingManager />}
+      {isOwner && tab === 'addons' && <AddOnsManager />}
     </div>
   )
 }

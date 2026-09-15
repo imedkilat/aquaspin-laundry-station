@@ -35,11 +35,9 @@ export default function Layout({ children }: { children: ReactNode }) {
             <NavLink to="/" end className={linkClass}>
               Add Transaction
             </NavLink>
-            {isOwner && (
-              <NavLink to="/dashboard" className={linkClass}>
-                Dashboard
-              </NavLink>
-            )}
+            <NavLink to="/dashboard" className={linkClass}>
+              Dashboard
+            </NavLink>
             <ThemeToggle />
             <button
               onClick={signOut}

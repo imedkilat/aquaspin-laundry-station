@@ -43,7 +43,7 @@ function AppRoutes() {
       <Route
         path="/dashboard"
         element={
-          <Gate ownerOnly>
+          <Gate>
             <OwnerDashboard />
           </Gate>
         }

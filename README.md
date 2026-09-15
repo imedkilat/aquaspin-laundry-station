@@ -176,11 +176,18 @@ value.
   exactly and a GCash Transaction # (duplicate references are rejected).
   Both rules are enforced twice — in the form, and as database constraints
   — so they hold even for a direct API call, not just the UI.
-- **Owner dashboard** (`/dashboard`, owner-only) — Today's Sales, clickable
+- **Dashboard** (`/dashboard`, both roles) — Today's Sales, clickable
   Cash / GCash / Pay Later / Selected Sales cards that filter the table
-  below, a date range + customer search, a Staff Accounts tab, Service
-  Pricing tab, and Add-ons tab. "Pay Later" is always shown as outstanding,
-  never folded into "sales collected."
+  below, and a date range + customer search. Like the Staff view, the
+  transaction table here updates live via Supabase Realtime — a new sale
+  from any till shows up on every open Dashboard/Staff screen without a
+  page reload. "Pay Later" is always shown as outstanding, never folded
+  into "sales collected." The Staff Accounts,
+  Service Pricing, and Add-ons tabs, and the CSV/Google Sheets export
+  buttons, only render for the `owner` role — staff get the Overview tab
+  only. This is a UI convenience on top of real enforcement: the write-side
+  RLS policies on `services`/`add_ons_catalog` and the `export-transactions`
+  Edge Function already reject a non-owner regardless of what the UI shows.
 - **Transaction IDs** — public, non-sequential codes like `AQ-7F3C9A2D`
   (`transaction_code`). The internal numeric `transaction_no` still exists
   for stable ordering but isn't shown in the UI.
