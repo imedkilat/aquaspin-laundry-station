@@ -4,6 +4,18 @@ import PaymentBadge from './PaymentBadge'
 const peso = (n: number) =>
   `₱${n.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 
+// pickup_time comes back from Postgres as "HH:MM:SS" (24h). Render it as a
+// friendly 12h time; fall back gracefully if the format is ever unexpected.
+const formatPickupTime = (time: string) => {
+  const [hoursStr, minutesStr] = time.split(':')
+  const hours = Number(hoursStr)
+  const minutes = Number(minutesStr)
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return time
+  const period = hours >= 12 ? 'PM' : 'AM'
+  const hour12 = hours % 12 === 0 ? 12 : hours % 12
+  return `${hour12}:${String(minutes).padStart(2, '0')} ${period}`
+}
+
 export default function TransactionTable({
   rows,
   loading,
@@ -60,7 +72,16 @@ export default function TransactionTable({
                   </p>
                 )}
               </td>
-              <td className="py-2 pr-3 text-slate-500">{r.pickup_date || '—'}</td>
+              <td className="py-2 pr-3 text-slate-500 whitespace-nowrap">
+                {r.pickup_date ? (
+                  <>
+                    {r.pickup_date}
+                    {r.pickup_time && <span className="text-slate-400"> · {formatPickupTime(r.pickup_time)}</span>}
+                  </>
+                ) : (
+                  '—'
+                )}
+              </td>
             </tr>
           ))}
         </tbody>

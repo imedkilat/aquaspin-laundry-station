@@ -156,7 +156,8 @@ value.
 ## How it works
 
 - **Staff view** (`/`) — add a transaction (customer, phone, service, kg,
-  add-ons, payment method, pickup date) and see **only today's** (Asia/Manila)
+  add-ons, payment method, pickup date + optional time) and see **only
+  today's** (Asia/Manila)
   transactions, updating live via Supabase Realtime as anyone adds one. The
   view rolls itself to the new business day automatically if left open
   overnight, with a manual Refresh button as backup.

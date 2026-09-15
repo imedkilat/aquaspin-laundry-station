@@ -71,6 +71,7 @@ export type Transaction = {
   gcash_reference: string | null
   payment_method: PaymentMethod
   pickup_date: string | null
+  pickup_time: string | null // time, "HH:MM:SS"
   notes: string | null
   created_by: string | null
   created_at: string
@@ -169,6 +170,7 @@ export type Database = {
           gcash_reference?: string | null
           payment_method?: PaymentMethod
           pickup_date?: string | null
+          pickup_time?: string | null
           notes?: string | null
           created_by?: string | null
           created_at?: string
@@ -193,6 +195,7 @@ export type Database = {
           gcash_reference?: string | null
           payment_method?: PaymentMethod
           pickup_date?: string | null
+          pickup_time?: string | null
           notes?: string | null
           created_by?: string | null
           created_at?: string

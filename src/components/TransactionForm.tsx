@@ -22,6 +22,7 @@ const emptyForm = {
   gcash_reference: '',
   payment_method: 'pay_later' as PaymentMethod,
   pickup_date: '',
+  pickup_time: '',
   notes: '',
 }
 
@@ -239,6 +240,7 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
       gcash_reference: form.payment_method === 'gcash' ? form.gcash_reference.trim() : null,
       payment_method: form.payment_method,
       pickup_date: form.pickup_date || null,
+      pickup_time: form.pickup_date && form.pickup_time ? form.pickup_time : null,
       notes: form.notes.trim() || null,
       created_by: profile?.id ?? null,
     })
@@ -502,7 +504,29 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
 
         <div>
           <label className={labelClass}>Pickup Date</label>
-          <input type="date" value={form.pickup_date} onChange={update('pickup_date')} className={inputClass} />
+          <div className="flex gap-2">
+            <input
+              type="date"
+              value={form.pickup_date}
+              onChange={(e) =>
+                setForm((f) => ({
+                  ...f,
+                  pickup_date: e.target.value,
+                  pickup_time: e.target.value ? f.pickup_time : '',
+                }))
+              }
+              className={`${inputClass} flex-1`}
+            />
+            <input
+              type="time"
+              value={form.pickup_time}
+              onChange={update('pickup_time')}
+              disabled={!form.pickup_date}
+              placeholder="Time"
+              title={!form.pickup_date ? 'Set a pickup date first' : 'Pickup time (optional)'}
+              className={`${inputClass} w-32 disabled:opacity-50 disabled:cursor-not-allowed`}
+            />
+          </div>
         </div>
         <div>
           <label className={labelClass}>Notes</label>
