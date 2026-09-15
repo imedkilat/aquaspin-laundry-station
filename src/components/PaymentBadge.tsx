@@ -7,7 +7,7 @@ const STYLES: Record<PaymentMethod, string> = {
 }
 
 const LABELS: Record<PaymentMethod, string> = {
-  paid: 'Paid',
+  paid: 'Cash',
   gcash: 'GCash',
   pay_later: 'Pay Later',
 }
