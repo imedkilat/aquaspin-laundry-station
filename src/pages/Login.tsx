@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from 'react'
 import { supabase, SHOP_NAME } from '../lib/supabase'
+import ThemeToggle from '../components/ThemeToggle'
 
 export default function Login() {
   const [email, setEmail] = useState('')
@@ -17,9 +18,13 @@ export default function Login() {
   }
 
   return (
-    <div className="min-h-svh flex items-center justify-center bg-slate-100 px-4">
-      <div className="w-full max-w-sm bg-white rounded-2xl shadow-sm border border-slate-200 p-8">
-        <h1 className="text-xl font-semibold text-slate-900 text-center">{SHOP_NAME}</h1>
+    <div className="min-h-svh flex items-center justify-center bg-slate-100 px-4 dark:bg-slate-950">
+      <div className="absolute top-4 right-4">
+        <ThemeToggle />
+      </div>
+
+      <div className="w-full max-w-sm bg-white rounded-2xl shadow-sm border border-slate-200 p-8 dark:bg-slate-900 dark:border-slate-800">
+        <h1 className="text-xl font-semibold text-slate-900 text-center dark:text-slate-100">{SHOP_NAME}</h1>
         <p className="text-sm text-slate-500 text-center mt-1 mb-6">Staff &amp; owner sign in</p>
 
         <form onSubmit={handleSubmit} className="space-y-4">
