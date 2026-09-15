@@ -5,7 +5,7 @@ import { useServices } from '../hooks/useServices'
 import { supabase } from '../lib/supabase'
 import TransactionTable from '../components/TransactionTable'
 import StatCard from '../components/StatCard'
-import type { PaymentMethod, Role, Service } from '../types/database'
+import type { PaymentMethod, Profile, Role, Service } from '../types/database'
 import { useAuth } from '../lib/auth-context'
 import { shopDate, shopDateDaysAgo } from '../lib/date'
 
@@ -120,7 +120,7 @@ export default function OwnerDashboard() {
                   className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm"
                 >
                   <option value="all">All</option>
-                  <option value="paid">Paid</option>
+                  <option value="paid">Cash</option>
                   <option value="gcash">GCash</option>
                   <option value="pay_later">Pay Later</option>
                 </select>
@@ -158,6 +158,9 @@ function StaffAccounts() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
 
+  const ownerProfiles = useMemo(() => profiles.filter((profile) => profile.role === 'owner'), [profiles])
+  const staffProfiles = useMemo(() => profiles.filter((profile) => profile.role === 'staff'), [profiles])
+
   const createStaff = async (event: FormEvent) => {
     event.preventDefault()
     setError(null)
@@ -189,6 +192,7 @@ function StaffAccounts() {
     setEmail('')
     setPassword('')
     reload()
+    window.setTimeout(reload, 800)
   }
 
   const toggleRole = async (id: string, current: Role) => {
@@ -263,11 +267,11 @@ function StaffAccounts() {
         </button>
       </form>
 
-      <div className="bg-white rounded-2xl border border-slate-200 p-5 space-y-4 dark:bg-slate-900 dark:border-slate-800">
+      <div className="bg-white rounded-2xl border border-slate-200 p-5 space-y-5 dark:bg-slate-900 dark:border-slate-800">
         <div className="flex items-center justify-between gap-3">
           <div>
             <h2 className="font-semibold text-slate-900 dark:text-slate-100">Account Access</h2>
-            <p className="text-sm text-slate-500 mt-1">Owners can review and change account roles here.</p>
+            <p className="text-sm text-slate-500 mt-1">Owners and staff are separated below for easier access review.</p>
           </div>
           <button
             type="button"
@@ -282,43 +286,96 @@ function StaffAccounts() {
         {loading ? (
           <p className="text-sm text-slate-400">Loading…</p>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-left text-xs text-slate-500 border-b border-slate-200">
-                  <th className="py-2 pr-3 font-medium">Name</th>
-                  <th className="py-2 pr-3 font-medium">Role</th>
-                  <th className="py-2 pr-3 font-medium">Since</th>
-                  <th className="py-2 pr-3 font-medium"></th>
-                </tr>
-              </thead>
-              <tbody>
-                {profiles.map((p) => (
-                  <tr key={p.id} className="border-b border-slate-100 last:border-0">
-                    <td className="py-2 pr-3 font-medium text-slate-900">{p.full_name}</td>
-                    <td className="py-2 pr-3 capitalize">{p.role}</td>
-                    <td className="py-2 pr-3 text-slate-500">{new Date(p.created_at).toLocaleDateString()}</td>
-                    <td className="py-2 pr-3">
-                      <button
-                        disabled={updatingId === p.id || (p.id === currentProfile?.id && p.role === 'owner')}
-                        onClick={() => toggleRole(p.id, p.role)}
-                        className="text-sky-600 hover:text-sky-700 text-xs font-medium disabled:opacity-50"
-                      >
-                        {p.id === currentProfile?.id && p.role === 'owner'
-                          ? 'Current Owner'
-                          : p.role === 'owner'
-                            ? 'Demote to Staff'
-                            : 'Promote to Owner'}
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div className="space-y-5">
+            <AccessGroup
+              title="Owner Access"
+              profiles={ownerProfiles}
+              currentProfileId={currentProfile?.id}
+              updatingId={updatingId}
+              onToggleRole={toggleRole}
+              emptyText="No owner accounts found."
+            />
+            <AccessGroup
+              title="Staff Access"
+              profiles={staffProfiles}
+              currentProfileId={currentProfile?.id}
+              updatingId={updatingId}
+              onToggleRole={toggleRole}
+              emptyText="No staff accounts yet. Create one above, then use Refresh if needed."
+            />
           </div>
         )}
       </div>
     </div>
+  )
+}
+
+function AccessGroup({
+  title,
+  profiles,
+  currentProfileId,
+  updatingId,
+  onToggleRole,
+  emptyText,
+}: {
+  title: string
+  profiles: Profile[]
+  currentProfileId?: string
+  updatingId: string | null
+  onToggleRole: (id: string, current: Role) => void
+  emptyText: string
+}) {
+  return (
+    <section className="rounded-xl border border-slate-200 p-4 dark:border-slate-700">
+      <div className="flex items-center justify-between gap-3 mb-3">
+        <h3 className="font-medium text-slate-900 dark:text-slate-100">{title}</h3>
+        <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+          {profiles.length}
+        </span>
+      </div>
+
+      {profiles.length === 0 ? (
+        <p className="text-sm text-slate-400 py-2">{emptyText}</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-xs text-slate-500 border-b border-slate-200 dark:border-slate-700">
+                <th className="py-2 pr-3 font-medium">Name</th>
+                <th className="py-2 pr-3 font-medium">Role</th>
+                <th className="py-2 pr-3 font-medium">Since</th>
+                <th className="py-2 pr-3 font-medium"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {profiles.map((profile) => (
+                <tr key={profile.id} className="border-b border-slate-100 last:border-0 dark:border-slate-800">
+                  <td className="py-2 pr-3 font-medium text-slate-900 dark:text-slate-100">{profile.full_name}</td>
+                  <td className="py-2 pr-3 capitalize">{profile.role}</td>
+                  <td className="py-2 pr-3 text-slate-500">{new Date(profile.created_at).toLocaleDateString()}</td>
+                  <td className="py-2 pr-3">
+                    <button
+                      disabled={
+                        updatingId === profile.id ||
+                        (profile.id === currentProfileId && profile.role === 'owner')
+                      }
+                      onClick={() => onToggleRole(profile.id, profile.role)}
+                      className="text-sky-600 hover:text-sky-700 text-xs font-medium disabled:opacity-50"
+                    >
+                      {profile.id === currentProfileId && profile.role === 'owner'
+                        ? 'Current Owner'
+                        : profile.role === 'owner'
+                          ? 'Demote to Staff'
+                          : 'Promote to Owner'}
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
   )
 }
 
