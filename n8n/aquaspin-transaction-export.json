@@ -1,0 +1,87 @@
+{
+  "name": "Aquaspin Laundry - Transaction Spreadsheet Export",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Aquaspin export\n1. Create an n8n Header Auth credential with header name `x-aquaspin-export-token`.\n2. Set the credential value to the same secret stored in Supabase as `N8N_EXPORT_TOKEN`.\n3. Attach that credential to the Webhook node.\n4. Activate the workflow and store the production webhook URL in Supabase as `N8N_EXPORT_WEBHOOK_URL`.\n\nThe workflow returns CSV text, which Aquaspin downloads as a spreadsheet-compatible file.",
+        "height": 260,
+        "width": 420
+      },
+      "id": "note-aquaspin-export",
+      "name": "Setup Notes",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [-620, -180]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "aquaspin-transaction-export",
+        "authentication": "headerAuth",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-aquaspin-export",
+      "name": "Aquaspin Export Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [-120, 0],
+      "webhookId": "aquaspin-transaction-export"
+    },
+    {
+      "parameters": {
+        "jsCode": "const incoming = $input.first().json;\nconst payload = incoming.body ?? incoming;\nconst rows = Array.isArray(payload.transactions) ? payload.transactions : [];\n\nconst escapeCsv = (value) => {\n  if (value === null || value === undefined) return '';\n  const text = typeof value === 'object' ? JSON.stringify(value) : String(value);\n  return `\\\"${text.replace(/\\\"/g, '\\\"\\\"')}\\\"`;\n};\n\nconst headers = [\n  'Transaction ID', 'Date', 'Customer', 'Phone', 'Service', 'Kg', 'Loads',\n  'Base Amount', 'Add-ons', 'Add-on Details', 'Total', 'Cash Received',\n  'GCash Received', 'GCash Reference', 'Payment Method', 'Pickup Date', 'Notes'\n];\n\nconst lines = [headers.map(escapeCsv).join(',')];\nfor (const row of rows) {\n  const service = row.services?.code ?? row.services?.label ?? '';\n  const values = [\n    row.transaction_code ?? row.transaction_no ?? '',\n    row.transaction_date ?? '',\n    row.customer_name ?? '',\n    row.phone_number ?? '',\n    service,\n    row.kg ?? '',\n    row.no_of_loads ?? '',\n    row.base_amount ?? 0,\n    row.add_ons ?? 0,\n    row.add_on_items ?? [],\n    row.total_amount ?? 0,\n    row.cash_amount ?? 0,\n    row.gcash_amount ?? 0,\n    row.gcash_reference ?? '',\n    row.payment_method ?? '',\n    row.pickup_date ?? '',\n    row.notes ?? ''\n  ];\n  lines.push(values.map(escapeCsv).join(','));\n}\n\nconst filename = `${payload.export_name || 'aquaspin-transactions'}.csv`;\nreturn [{ json: { filename, csv: lines.join('\\n'), row_count: rows.length } }];"
+      },
+      "id": "code-build-csv",
+      "name": "Build Spreadsheet CSV",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [120, 0]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "respond-export",
+      "name": "Return Export",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [360, 0]
+    }
+  ],
+  "connections": {
+    "Aquaspin Export Webhook": {
+      "main": [
+        [
+          {
+            "node": "Build Spreadsheet CSV",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Spreadsheet CSV": {
+      "main": [
+        [
+          {
+            "node": "Return Export",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "00000000-0000-0000-0000-000000000001",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": []
+}
