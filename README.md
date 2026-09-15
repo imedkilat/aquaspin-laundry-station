@@ -64,6 +64,10 @@ serves static files (Vercel, Netlify, Cloudflare Pages, etc.). Set the same
 three `VITE_*` environment variables in your host's dashboard before
 building/deploying there.
 
+On Vercel, `VITE_*` values are compiled into the client bundle at build time.
+If an environment variable is added or its Production scope changes, create a
+new deployment so the production bundle receives the updated value.
+
 ---
 
 ## How it works
