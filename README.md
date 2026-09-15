@@ -58,6 +58,11 @@ Two Edge Functions live in [`supabase/functions/`](./supabase/functions/):
   transaction table as a spreadsheet via n8n (§4 below). Verifies the caller
   is an owner before doing anything.
 
+Both functions only accept CORS requests from the production origin
+(`https://aquaspin-laundry-station.vercel.app`, hardcoded as `ALLOWED_ORIGINS`
+at the top of each `index.ts`). If you deploy a second environment (staging,
+a custom domain) add its origin to that set in both files before deploying.
+
 Deploy both from the Supabase CLI:
 
 ```bash
@@ -169,6 +174,27 @@ value.
   streams it back for download. See §4 for setup.
 - **Theme** — light/dark toggle, persisted in the browser, available on
   every screen including Login.
+
+## Security hardening
+
+Beyond RLS and the owner/staff Edge Function checks described above:
+
+- **`anon` has zero access.** This app has no logged-out/public feature, so
+  the `anon` Postgres role's table privileges on `profiles`, `services`,
+  `add_ons_catalog`, and `transactions` are fully revoked — not just blocked
+  by RLS. A future RLS mistake (a dropped policy, RLS toggled off) can't
+  expose data to an anonymous caller, because there's no grant to fall back
+  on. Verified: `set role anon; select ... from transactions` fails with
+  `permission denied`, not an empty result set.
+- **CORS is locked to the production origin** on both Edge Functions (see
+  §3) instead of `*`.
+- **`transactions.updated_by`** records which logged-in user last edited a
+  row (e.g. who marked a Pay Later as paid on pickup) — a lightweight audit
+  trail, set automatically by a trigger. It doesn't restrict who can update;
+  see the staff-update note below.
+- Enable **Leaked Password Protection** in Supabase (Dashboard →
+  Authentication → Providers → Password) — the one remaining item that has
+  to be a manual dashboard toggle rather than a migration.
 
 ## Notes / assumptions to confirm with the shop
 
