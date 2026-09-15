@@ -13,6 +13,7 @@
 export type Role = 'owner' | 'staff'
 export type PaymentMethod = 'paid' | 'gcash' | 'pay_later'
 export type PricingType = 'per_load_by_weight' | 'per_load_manual' | 'per_item'
+export type AddOnUnit = 'piece' | 'load' | 'sachet' | 'dose' | 'cycle' | 'kg' | 'flat'
 
 export type Profile = {
   id: string
@@ -32,6 +33,25 @@ export type Service = {
   created_at: string
 }
 
+export type AddOn = {
+  id: string
+  name: string
+  price: number
+  unit_type: AddOnUnit
+  active: boolean
+  created_at: string
+  updated_at: string
+}
+
+export type TransactionAddOnItem = {
+  add_on_id: string
+  name: string
+  unit_type: AddOnUnit
+  unit_price: number
+  quantity: number
+  line_total: number
+}
+
 export type Transaction = {
   id: string
   transaction_no: number
@@ -43,6 +63,7 @@ export type Transaction = {
   no_of_loads: number | null
   base_amount: number
   add_ons: number
+  add_on_items: TransactionAddOnItem[]
   total_amount: number
   cash_amount: number
   gcash_amount: number
@@ -104,6 +125,28 @@ export type Database = {
         }
         Relationships: []
       }
+      add_ons_catalog: {
+        Row: AddOn
+        Insert: {
+          id?: string
+          name: string
+          price: number
+          unit_type?: AddOnUnit
+          active?: boolean
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          name?: string
+          price?: number
+          unit_type?: AddOnUnit
+          active?: boolean
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       transactions: {
         Row: Transaction
         Insert: {
@@ -117,6 +160,7 @@ export type Database = {
           no_of_loads?: number | null
           base_amount?: number
           add_ons?: number
+          add_on_items?: TransactionAddOnItem[]
           total_amount?: number
           cash_amount?: number
           gcash_amount?: number
@@ -139,6 +183,7 @@ export type Database = {
           no_of_loads?: number | null
           base_amount?: number
           add_ons?: number
+          add_on_items?: TransactionAddOnItem[]
           total_amount?: number
           cash_amount?: number
           gcash_amount?: number
