@@ -18,6 +18,7 @@ const emptyForm = {
   total_amount: '',
   cash_amount: '',
   gcash_amount: '',
+  gcash_reference: '',
   payment_method: 'pay_later' as PaymentMethod,
   pickup_date: '',
   notes: '',
@@ -47,13 +48,16 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
 
   const totalAmount = parseFloat(form.total_amount) || 0
   const cashReceived = parseFloat(form.cash_amount) || 0
+  const gcashReceived = parseFloat(form.gcash_amount) || 0
   const isCashPayment = form.payment_method === 'paid'
+  const isGcashPayment = form.payment_method === 'gcash'
   const cashEntered = form.cash_amount.trim() !== ''
+  const gcashEntered = form.gcash_amount.trim() !== ''
   const cashDifference = isCashPayment && cashEntered ? cashReceived - totalAmount : null
   const changeDue = cashDifference != null && cashDifference > 0 ? cashDifference : 0
   const cashShort = cashDifference != null && cashDifference < 0 ? Math.abs(cashDifference) : 0
+  const gcashDifference = isGcashPayment && gcashEntered ? gcashReceived - totalAmount : null
 
-  // Reset service-derived fields whenever a different service is selected.
   useEffect(() => {
     if (!selectedService) {
       setForm((f) => ({ ...f, no_of_loads: '', base_amount: '' }))
@@ -81,12 +85,9 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
       base_amount: selectedService.default_rate != null ? String(selectedService.default_rate) : '',
     }))
     setTotalTouched(false)
-    // Only reset when the chosen service changes. Weight changes are handled below.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [form.service_id, selectedService?.id, isWeightBased])
 
-  // Weight-based services calculate loads and base price automatically.
-  // Example: 11.3 kg at 8 kg/load => 2 loads under one transaction number.
   useEffect(() => {
     if (!isWeightBased || !selectedService?.max_kg_per_load) return
 
@@ -102,7 +103,6 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
     setTotalTouched(false)
   }, [form.kg, isWeightBased, selectedService?.default_rate, selectedService?.max_kg_per_load])
 
-  // Total defaults to base + add-ons unless the staff member overrides it.
   useEffect(() => {
     if (totalTouched) return
     const base = parseFloat(form.base_amount) || 0
@@ -111,13 +111,19 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [form.base_amount, form.add_ons, totalTouched])
 
-  // Keep tender fields aligned to the selected payment method.
   useEffect(() => {
     setForm((f) => {
-      if (f.payment_method === 'paid' && f.gcash_amount !== '') return { ...f, gcash_amount: '' }
-      if (f.payment_method === 'gcash' && f.cash_amount !== '') return { ...f, cash_amount: '' }
-      if (f.payment_method === 'pay_later' && (f.cash_amount !== '' || f.gcash_amount !== '')) {
-        return { ...f, cash_amount: '', gcash_amount: '' }
+      if (f.payment_method === 'paid' && (f.gcash_amount !== '' || f.gcash_reference !== '')) {
+        return { ...f, gcash_amount: '', gcash_reference: '' }
+      }
+      if (f.payment_method === 'gcash' && f.cash_amount !== '') {
+        return { ...f, cash_amount: '' }
+      }
+      if (
+        f.payment_method === 'pay_later' &&
+        (f.cash_amount !== '' || f.gcash_amount !== '' || f.gcash_reference !== '')
+      ) {
+        return { ...f, cash_amount: '', gcash_amount: '', gcash_reference: '' }
       }
       return f
     })
@@ -149,6 +155,21 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
       }
     }
 
+    if (form.payment_method === 'gcash') {
+      if (!gcashEntered) {
+        setError('Enter the GCash amount received before saving the transaction.')
+        return
+      }
+      if (Math.abs(gcashReceived - totalAmount) > 0.005) {
+        setError(`GCash received must match the total amount of ${peso(totalAmount)}.`)
+        return
+      }
+      if (!form.gcash_reference.trim()) {
+        setError('GCash Transaction # is required for tracking.')
+        return
+      }
+    }
+
     setSubmitting(true)
 
     const { error } = await supabase.from('transactions').insert({
@@ -163,6 +184,7 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
       total_amount: form.total_amount ? Number(form.total_amount) : 0,
       cash_amount: form.cash_amount ? Number(form.cash_amount) : 0,
       gcash_amount: form.gcash_amount ? Number(form.gcash_amount) : 0,
+      gcash_reference: form.payment_method === 'gcash' ? form.gcash_reference.trim() : null,
       payment_method: form.payment_method,
       pickup_date: form.pickup_date || null,
       notes: form.notes.trim() || null,
@@ -172,12 +194,17 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
     setSubmitting(false)
 
     if (error) {
-      setError(error.message)
+      if (error.message.toLowerCase().includes('transactions_gcash_reference_unique_idx')) {
+        setError('That GCash Transaction # is already attached to another transaction.')
+      } else {
+        setError(error.message)
+      }
       return
     }
 
     const changeMessage = form.payment_method === 'paid' && changeDue > 0 ? ` · Change ${peso(changeDue)}` : ''
-    setSuccess(`Added — ${normalizedCustomerName}${changeMessage}`)
+    const gcashMessage = form.payment_method === 'gcash' ? ` · GCash #${form.gcash_reference.trim()}` : ''
+    setSuccess(`Added — ${normalizedCustomerName}${changeMessage}${gcashMessage}`)
     setForm(emptyForm)
     setTotalTouched(false)
     onAdded?.()
@@ -354,19 +381,44 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
             </div>
           )}
         </div>
+
         <div>
-          <label className={labelClass}>GCash Received (₱)</label>
+          <label className={labelClass}>GCash Received (₱){isGcashPayment ? ' *' : ''}</label>
           <input
             type="number"
             step="0.01"
             min="0"
-            disabled={form.payment_method !== 'gcash'}
+            required={isGcashPayment}
+            disabled={!isGcashPayment}
             value={form.gcash_amount}
             onChange={update('gcash_amount')}
             className={`${inputClass} disabled:opacity-50 disabled:cursor-not-allowed`}
-            placeholder={form.payment_method === 'gcash' ? 'GCash amount received' : 'Select GCash payment'}
+            placeholder={isGcashPayment ? 'GCash amount received' : 'Select GCash payment'}
           />
+          {isGcashPayment && gcashEntered && gcashDifference === 0 && (
+            <p className="mt-1 text-xs font-medium text-emerald-600">GCash amount matches the total.</p>
+          )}
+          {isGcashPayment && gcashEntered && gcashDifference !== 0 && (
+            <p className="mt-1 text-xs font-medium text-red-600">
+              GCash amount must match {peso(totalAmount)}.
+            </p>
+          )}
         </div>
+
+        {isGcashPayment && (
+          <div className="sm:col-span-2">
+            <label className={labelClass}>GCash Transaction # *</label>
+            <input
+              required
+              value={form.gcash_reference}
+              onChange={update('gcash_reference')}
+              className={inputClass}
+              placeholder="Enter GCash reference / transaction number"
+              autoComplete="off"
+            />
+            <p className="mt-1 text-xs text-slate-500">Required for payment tracking and duplicate-reference checking.</p>
+          </div>
+        )}
 
         <div>
           <label className={labelClass}>Pickup Date</label>
