@@ -200,7 +200,7 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
           />
           {isWeightBased && selectedService?.max_kg_per_load && (
             <p className="mt-1 text-xs text-sky-700">
-              Auto rule: up to {selectedService.max_kg_per_load:g} kg per load
+              Auto rule: up to {selectedService.max_kg_per_load} kg per load
             </p>
           )}
         </div>
