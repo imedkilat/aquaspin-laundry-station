@@ -12,6 +12,7 @@
 
 export type Role = 'owner' | 'staff'
 export type PaymentMethod = 'paid' | 'gcash' | 'pay_later'
+export type PricingType = 'per_load_by_weight' | 'per_load_manual' | 'per_item'
 
 export type Profile = {
   id: string
@@ -25,6 +26,8 @@ export type Service = {
   code: string
   label: string
   default_rate: number | null
+  pricing_type: PricingType
+  max_kg_per_load: number | null
   active: boolean
   created_at: string
 }
@@ -83,6 +86,8 @@ export type Database = {
           code: string
           label: string
           default_rate?: number | null
+          pricing_type?: PricingType
+          max_kg_per_load?: number | null
           active?: boolean
           created_at?: string
         }
@@ -91,6 +96,8 @@ export type Database = {
           code?: string
           label?: string
           default_rate?: number | null
+          pricing_type?: PricingType
+          max_kg_per_load?: number | null
           active?: boolean
           created_at?: string
         }
