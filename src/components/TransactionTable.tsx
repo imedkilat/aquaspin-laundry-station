@@ -23,7 +23,7 @@ export default function TransactionTable({
     <div className="overflow-x-auto">
       <table className="w-full text-sm">
         <thead>
-          <tr className="text-left text-xs text-slate-500 border-b border-slate-200">
+          <tr className="text-left text-xs text-slate-500 border-b border-slate-200 dark:border-slate-800">
             <th className="py-2 pr-3 font-medium">No.</th>
             <th className="py-2 pr-3 font-medium">Date</th>
             <th className="py-2 pr-3 font-medium">Customer</th>
@@ -38,10 +38,13 @@ export default function TransactionTable({
         </thead>
         <tbody>
           {rows.map((r) => (
-            <tr key={r.id} className="border-b border-slate-100 last:border-0 hover:bg-slate-50">
+            <tr
+              key={r.id}
+              className="border-b border-slate-100 last:border-0 hover:bg-slate-50 dark:border-slate-800 dark:hover:bg-slate-800/60"
+            >
               <td className="py-2 pr-3 text-slate-500">#{String(r.transaction_no).padStart(4, '0')}</td>
               <td className="py-2 pr-3">{r.transaction_date}</td>
-              <td className="py-2 pr-3 font-medium text-slate-900">{r.customer_name}</td>
+              <td className="py-2 pr-3 font-medium text-slate-900 dark:text-slate-100">{r.customer_name}</td>
               <td className="py-2 pr-3 text-slate-500">{r.phone_number || '—'}</td>
               <td className="py-2 pr-3">{r.services?.code || '—'}</td>
               <td className="py-2 pr-3">{r.kg ?? '—'}</td>
@@ -49,6 +52,11 @@ export default function TransactionTable({
               <td className="py-2 pr-3 font-medium">{peso(r.total_amount)}</td>
               <td className="py-2 pr-3">
                 <PaymentBadge method={r.payment_method} />
+                {r.payment_method === 'gcash' && (
+                  <p className="mt-1 text-[11px] text-slate-500 whitespace-nowrap">
+                    Ref: {r.gcash_reference || 'Legacy / not recorded'}
+                  </p>
+                )}
               </td>
               <td className="py-2 pr-3 text-slate-500">{r.pickup_date || '—'}</td>
             </tr>
