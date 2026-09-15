@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { supabase } from '../lib/supabase'
 import { useServices } from '../hooks/useServices'
 import { useAuth } from '../lib/auth-context'
@@ -31,15 +31,64 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
 
-  // Base amount auto-fills from the selected service's default rate.
+  const selectedService = useMemo(
+    () => services.find((service) => service.id === form.service_id) ?? null,
+    [form.service_id, services]
+  )
+
+  const isWeightBased =
+    selectedService?.pricing_type === 'per_load_by_weight' &&
+    selectedService.max_kg_per_load != null &&
+    selectedService.max_kg_per_load > 0
+
+  // Reset service-derived fields whenever a different service is selected.
   useEffect(() => {
-    if (!form.service_id) return
-    const svc = services.find((s) => s.id === form.service_id)
-    if (svc?.default_rate != null && form.base_amount === '') {
-      setForm((f) => ({ ...f, base_amount: String(svc.default_rate) }))
+    if (!selectedService) {
+      setForm((f) => ({ ...f, no_of_loads: '', base_amount: '' }))
+      setTotalTouched(false)
+      return
     }
+
+    if (isWeightBased) {
+      const kg = parseFloat(form.kg)
+      const loads = Number.isFinite(kg) && kg > 0 ? Math.ceil(kg / selectedService.max_kg_per_load!) : 0
+      const rate = selectedService.default_rate ?? 0
+
+      setForm((f) => ({
+        ...f,
+        no_of_loads: loads > 0 ? String(loads) : '',
+        base_amount: loads > 0 ? (loads * rate).toFixed(2) : '',
+      }))
+      setTotalTouched(false)
+      return
+    }
+
+    setForm((f) => ({
+      ...f,
+      no_of_loads: '',
+      base_amount: selectedService.default_rate != null ? String(selectedService.default_rate) : '',
+    }))
+    setTotalTouched(false)
+    // Only reset when the chosen service changes. Weight changes are handled below.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [form.service_id, services])
+  }, [form.service_id, selectedService?.id, isWeightBased])
+
+  // Weight-based services calculate loads and base price automatically.
+  // Example: 11.3 kg at 8 kg/load => 2 loads under one transaction number.
+  useEffect(() => {
+    if (!isWeightBased || !selectedService?.max_kg_per_load) return
+
+    const kg = parseFloat(form.kg)
+    const loads = Number.isFinite(kg) && kg > 0 ? Math.ceil(kg / selectedService.max_kg_per_load) : 0
+    const rate = selectedService.default_rate ?? 0
+
+    setForm((f) => ({
+      ...f,
+      no_of_loads: loads > 0 ? String(loads) : '',
+      base_amount: loads > 0 ? (loads * rate).toFixed(2) : '',
+    }))
+    setTotalTouched(false)
+  }, [form.kg, isWeightBased, selectedService?.default_rate, selectedService?.max_kg_per_load])
 
   // Total defaults to base + add-ons unless the staff member overrides it.
   useEffect(() => {
@@ -94,6 +143,7 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
 
   const inputClass =
     'w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500'
+  const autoInputClass = `${inputClass} bg-slate-50 text-slate-700 cursor-not-allowed`
   const labelClass = 'block text-xs font-medium text-slate-600 mb-1'
 
   return (
@@ -138,30 +188,56 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
         </div>
 
         <div>
-          <label className={labelClass}>Kg</label>
-          <input type="number" step="0.1" min="0" value={form.kg} onChange={update('kg')} className={inputClass} />
+          <label className={labelClass}>Kg{isWeightBased ? ' *' : ''}</label>
+          <input
+            type="number"
+            step="0.1"
+            min={isWeightBased ? '0.1' : '0'}
+            required={isWeightBased}
+            value={form.kg}
+            onChange={update('kg')}
+            className={inputClass}
+          />
+          {isWeightBased && selectedService?.max_kg_per_load && (
+            <p className="mt-1 text-xs text-sky-700">
+              Auto rule: up to {selectedService.max_kg_per_load:g} kg per load
+            </p>
+          )}
         </div>
         <div>
-          <label className={labelClass}>No. of Loads</label>
+          <label className={labelClass}>No. of Loads{isWeightBased ? ' · Auto' : ''}</label>
           <input
             type="number"
             min="0"
             value={form.no_of_loads}
-            onChange={update('no_of_loads')}
-            className={inputClass}
+            onChange={isWeightBased ? undefined : update('no_of_loads')}
+            readOnly={isWeightBased}
+            placeholder={isWeightBased ? 'Enter kg first' : undefined}
+            className={isWeightBased ? autoInputClass : inputClass}
           />
+          {isWeightBased && form.no_of_loads && (
+            <p className="mt-1 text-xs text-slate-500">
+              {form.kg} kg = {form.no_of_loads} load{form.no_of_loads === '1' ? '' : 's'}, same transaction #
+            </p>
+          )}
         </div>
 
         <div>
-          <label className={labelClass}>Base Amount (₱)</label>
+          <label className={labelClass}>Base Amount (₱){isWeightBased ? ' · Auto' : ''}</label>
           <input
             type="number"
             step="0.01"
             min="0"
             value={form.base_amount}
-            onChange={update('base_amount')}
-            className={inputClass}
+            onChange={isWeightBased ? undefined : update('base_amount')}
+            readOnly={isWeightBased}
+            className={isWeightBased ? autoInputClass : inputClass}
           />
+          {isWeightBased && form.no_of_loads && selectedService?.default_rate != null && (
+            <p className="mt-1 text-xs text-slate-500">
+              ₱{selectedService.default_rate.toFixed(2)} × {form.no_of_loads} load{form.no_of_loads === '1' ? '' : 's'}
+            </p>
+          )}
         </div>
         <div>
           <label className={labelClass}>Add-ons (₱)</label>
