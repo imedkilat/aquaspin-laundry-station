@@ -46,6 +46,7 @@ export type Transaction = {
   total_amount: number
   cash_amount: number
   gcash_amount: number
+  gcash_reference: string | null
   payment_method: PaymentMethod
   pickup_date: string | null
   notes: string | null
@@ -119,6 +120,7 @@ export type Database = {
           total_amount?: number
           cash_amount?: number
           gcash_amount?: number
+          gcash_reference?: string | null
           payment_method?: PaymentMethod
           pickup_date?: string | null
           notes?: string | null
@@ -140,6 +142,7 @@ export type Database = {
           total_amount?: number
           cash_amount?: number
           gcash_amount?: number
+          gcash_reference?: string | null
           payment_method?: PaymentMethod
           pickup_date?: string | null
           notes?: string | null
