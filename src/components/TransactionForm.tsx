@@ -4,6 +4,7 @@ import { useServices } from '../hooks/useServices'
 import { useAuth } from '../lib/auth-context'
 import type { PaymentMethod } from '../types/database'
 import { shopDate } from '../lib/date'
+import { toTitleCaseName } from '../lib/text'
 
 const emptyForm = {
   customer_name: '',
@@ -21,6 +22,9 @@ const emptyForm = {
   pickup_date: '',
   notes: '',
 }
+
+const peso = (n: number) =>
+  `₱${n.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 
 export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
   const { services } = useServices()
@@ -40,6 +44,14 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
     selectedService?.pricing_type === 'per_load_by_weight' &&
     selectedService.max_kg_per_load != null &&
     selectedService.max_kg_per_load > 0
+
+  const totalAmount = parseFloat(form.total_amount) || 0
+  const cashReceived = parseFloat(form.cash_amount) || 0
+  const isCashPayment = form.payment_method === 'paid'
+  const cashEntered = form.cash_amount.trim() !== ''
+  const cashDifference = isCashPayment && cashEntered ? cashReceived - totalAmount : null
+  const changeDue = cashDifference != null && cashDifference > 0 ? cashDifference : 0
+  const cashShort = cashDifference != null && cashDifference < 0 ? Math.abs(cashDifference) : 0
 
   // Reset service-derived fields whenever a different service is selected.
   useEffect(() => {
@@ -99,6 +111,18 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [form.base_amount, form.add_ons, totalTouched])
 
+  // Keep tender fields aligned to the selected payment method.
+  useEffect(() => {
+    setForm((f) => {
+      if (f.payment_method === 'paid' && f.gcash_amount !== '') return { ...f, gcash_amount: '' }
+      if (f.payment_method === 'gcash' && f.cash_amount !== '') return { ...f, cash_amount: '' }
+      if (f.payment_method === 'pay_later' && (f.cash_amount !== '' || f.gcash_amount !== '')) {
+        return { ...f, cash_amount: '', gcash_amount: '' }
+      }
+      return f
+    })
+  }, [form.payment_method])
+
   const update = (field: keyof typeof emptyForm) => (
     e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>
   ) => setForm((f) => ({ ...f, [field]: e.target.value }))
@@ -107,10 +131,28 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
     e.preventDefault()
     setError(null)
     setSuccess(null)
+
+    const normalizedCustomerName = toTitleCaseName(form.customer_name)
+    if (!normalizedCustomerName) {
+      setError('Customer name is required.')
+      return
+    }
+
+    if (form.payment_method === 'paid') {
+      if (!cashEntered) {
+        setError('Enter the cash received before saving the transaction.')
+        return
+      }
+      if (cashReceived < totalAmount) {
+        setError(`Cash received is ${peso(totalAmount - cashReceived)} short.`)
+        return
+      }
+    }
+
     setSubmitting(true)
 
     const { error } = await supabase.from('transactions').insert({
-      customer_name: form.customer_name.trim(),
+      customer_name: normalizedCustomerName,
       phone_number: form.phone_number.trim() || null,
       transaction_date: form.transaction_date,
       service_id: form.service_id || null,
@@ -134,26 +176,34 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
       return
     }
 
-    setSuccess(`Added — ${form.customer_name.trim()}`)
+    const changeMessage = form.payment_method === 'paid' && changeDue > 0 ? ` · Change ${peso(changeDue)}` : ''
+    setSuccess(`Added — ${normalizedCustomerName}${changeMessage}`)
     setForm(emptyForm)
     setTotalTouched(false)
     onAdded?.()
-    setTimeout(() => setSuccess(null), 3000)
+    setTimeout(() => setSuccess(null), 4000)
   }
 
   const inputClass =
-    'w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500'
-  const autoInputClass = `${inputClass} bg-slate-50 text-slate-700 cursor-not-allowed`
-  const labelClass = 'block text-xs font-medium text-slate-600 mb-1'
+    'w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100'
+  const autoInputClass = `${inputClass} bg-slate-50 text-slate-700 cursor-not-allowed dark:bg-slate-800 dark:text-slate-300`
+  const labelClass = 'block text-xs font-medium text-slate-600 mb-1 dark:text-slate-400'
 
   return (
-    <form onSubmit={handleSubmit} className="bg-white rounded-2xl border border-slate-200 p-5 space-y-4">
-      <h2 className="font-semibold text-slate-900">Add Customer Transaction</h2>
+    <form onSubmit={handleSubmit} className="bg-white rounded-2xl border border-slate-200 p-5 space-y-4 dark:bg-slate-900 dark:border-slate-800">
+      <h2 className="font-semibold text-slate-900 dark:text-slate-100">Add Customer Transaction</h2>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div>
           <label className={labelClass}>Customer Name *</label>
-          <input required value={form.customer_name} onChange={update('customer_name')} className={inputClass} />
+          <input
+            required
+            value={form.customer_name}
+            onChange={update('customer_name')}
+            onBlur={() => setForm((f) => ({ ...f, customer_name: toTitleCaseName(f.customer_name) }))}
+            className={inputClass}
+            placeholder="Earl Dela Cruz"
+          />
         </div>
         <div>
           <label className={labelClass}>Phone Number</label>
@@ -199,7 +249,7 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
             className={inputClass}
           />
           {isWeightBased && selectedService?.max_kg_per_load && (
-            <p className="mt-1 text-xs text-sky-700">
+            <p className="mt-1 text-xs text-sky-700 dark:text-sky-400">
               Auto rule: up to {selectedService.max_kg_per_load} kg per load
             </p>
           )}
@@ -273,22 +323,36 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
             onChange={update('payment_method')}
             className={inputClass}
           >
-            <option value="paid">Paid</option>
+            <option value="paid">Cash</option>
             <option value="gcash">GCash</option>
             <option value="pay_later">Pay Later</option>
           </select>
         </div>
 
         <div>
-          <label className={labelClass}>Cash Received (₱)</label>
+          <label className={labelClass}>Cash Received (₱){isCashPayment ? ' *' : ''}</label>
           <input
             type="number"
             step="0.01"
             min="0"
+            required={isCashPayment}
+            disabled={!isCashPayment}
             value={form.cash_amount}
             onChange={update('cash_amount')}
-            className={inputClass}
+            className={`${inputClass} disabled:opacity-50 disabled:cursor-not-allowed`}
+            placeholder={isCashPayment ? 'Amount tendered by customer' : 'Select Cash payment'}
           />
+          {isCashPayment && cashEntered && cashShort > 0 && (
+            <p className="mt-1 text-xs font-medium text-red-600">Short by {peso(cashShort)}. Transaction cannot be saved.</p>
+          )}
+          {isCashPayment && cashEntered && cashDifference === 0 && (
+            <p className="mt-1 text-xs font-medium text-emerald-600">Exact payment. No change due.</p>
+          )}
+          {isCashPayment && cashEntered && changeDue > 0 && (
+            <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-300">
+              Change due: <strong>{peso(changeDue)}</strong>
+            </div>
+          )}
         </div>
         <div>
           <label className={labelClass}>GCash Received (₱)</label>
@@ -296,9 +360,11 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
             type="number"
             step="0.01"
             min="0"
+            disabled={form.payment_method !== 'gcash'}
             value={form.gcash_amount}
             onChange={update('gcash_amount')}
-            className={inputClass}
+            className={`${inputClass} disabled:opacity-50 disabled:cursor-not-allowed`}
+            placeholder={form.payment_method === 'gcash' ? 'GCash amount received' : 'Select GCash payment'}
           />
         </div>
 
