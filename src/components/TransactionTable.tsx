@@ -24,7 +24,7 @@ export default function TransactionTable({
       <table className="w-full text-sm">
         <thead>
           <tr className="text-left text-xs text-slate-500 border-b border-slate-200 dark:border-slate-800">
-            <th className="py-2 pr-3 font-medium">No.</th>
+            <th className="py-2 pr-3 font-medium">Transaction ID</th>
             <th className="py-2 pr-3 font-medium">Date</th>
             <th className="py-2 pr-3 font-medium">Customer</th>
             <th className="py-2 pr-3 font-medium">Phone</th>
@@ -42,7 +42,9 @@ export default function TransactionTable({
               key={r.id}
               className="border-b border-slate-100 last:border-0 hover:bg-slate-50 dark:border-slate-800 dark:hover:bg-slate-800/60"
             >
-              <td className="py-2 pr-3 text-slate-500">#{String(r.transaction_no).padStart(4, '0')}</td>
+              <td className="py-2 pr-3 font-medium text-slate-600 dark:text-slate-300 whitespace-nowrap">
+                {r.transaction_code || `#${String(r.transaction_no).padStart(4, '0')}`}
+              </td>
               <td className="py-2 pr-3">{r.transaction_date}</td>
               <td className="py-2 pr-3 font-medium text-slate-900 dark:text-slate-100">{r.customer_name}</td>
               <td className="py-2 pr-3 text-slate-500">{r.phone_number || '—'}</td>
