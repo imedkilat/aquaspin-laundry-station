@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTransactions } from '../hooks/useTransactions'
 import TransactionTable from '../components/TransactionTable'
 import StaffAccountsManager from '../components/StaffAccountsManager'
@@ -8,6 +8,7 @@ import type { PaymentMethod } from '../types/database'
 import { shopDate, shopDateDaysAgo } from '../lib/date'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/auth-context'
+import { edgeFunctionErrorMessage } from '../lib/edge-functions'
 
 const peso = (n: number) =>
   `₱${n.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
@@ -25,6 +26,7 @@ export default function OwnerDashboard() {
   const [search, setSearch] = useState('')
   const [exporting, setExporting] = useState(false)
   const [exportMessage, setExportMessage] = useState<string | null>(null)
+  const exportingRef = useRef(false)
 
   const { rows, loading, reload } = useTransactions({ dateFrom, dateTo, limit: 1000 })
 
@@ -64,6 +66,12 @@ export default function OwnerDashboard() {
   }, [rows])
 
   const exportSpreadsheet = async (outputFormat: 'csv' | 'google_sheets') => {
+    // Synchronous guard against a fast double-click firing two exports
+    // before the button re-renders as disabled -- each one hits n8n and,
+    // for Google Sheets, creates a whole extra spreadsheet.
+    if (exportingRef.current) return
+    exportingRef.current = true
+
     setExporting(true)
     setExportMessage(null)
 
@@ -78,9 +86,10 @@ export default function OwnerDashboard() {
     })
 
     setExporting(false)
+    exportingRef.current = false
 
     if (error) {
-      setExportMessage(error.message)
+      setExportMessage(await edgeFunctionErrorMessage(error, 'Export failed. Please try again.'))
       return
     }
 

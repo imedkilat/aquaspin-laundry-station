@@ -76,6 +76,7 @@ export type Transaction = {
   created_by: string | null
   created_at: string
   updated_at: string
+  client_request_id: string | null
 }
 
 export type TransactionWithService = Transaction & {
@@ -175,6 +176,7 @@ export type Database = {
           created_by?: string | null
           created_at?: string
           updated_at?: string
+          client_request_id?: string | null
         }
         Update: {
           id?: string
@@ -200,6 +202,7 @@ export type Database = {
           created_by?: string | null
           created_at?: string
           updated_at?: string
+          client_request_id?: string | null
         }
         Relationships: []
       }

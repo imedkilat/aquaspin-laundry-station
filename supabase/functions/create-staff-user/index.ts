@@ -64,6 +64,27 @@ Deno.serve(async (req: Request) => {
       return json({ error: "Only an owner can create staff accounts." }, 403, corsHeaders);
     }
 
+    // Rate limit: a real owner creates staff accounts occasionally, not in
+    // a loop. Caps runaway retries (a stuck button, a buggy script) well
+    // above any legitimate rate, without needing anything from the client.
+    const { data: withinLimit, error: rateLimitError } = await admin.rpc("check_rate_limit", {
+      p_key: `create-staff-user:${user.id}`,
+      p_max_count: 10,
+      p_window_seconds: 3600,
+    });
+
+    if (rateLimitError) {
+      return json({ error: "Could not verify request rate. Try again shortly." }, 500, corsHeaders);
+    }
+
+    if (!withinLimit) {
+      return json(
+        { error: "Too many staff accounts created recently. Please wait a bit and try again." },
+        429,
+        corsHeaders,
+      );
+    }
+
     const body = await req.json();
     const fullName = String(body.full_name ?? "").trim();
     const email = String(body.email ?? "").trim().toLowerCase();

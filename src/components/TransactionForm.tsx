@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { supabase } from '../lib/supabase'
 import { useServices } from '../hooks/useServices'
 import { useAddOns } from '../hooks/useAddOns'
@@ -44,6 +44,15 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
+
+  // One idempotency key per open form. Every submit attempt from this form
+  // instance (including a double-click that fires before the button's
+  // `disabled` prop re-renders) reuses the same key, so a duplicate insert
+  // collides on the database's unique index instead of creating a second
+  // transaction. A plain ref (not state) guards re-entrancy synchronously,
+  // before React has a chance to re-render anything.
+  const [clientRequestId, setClientRequestId] = useState(() => crypto.randomUUID())
+  const submitLockRef = useRef(false)
 
   const selectedService = useMemo(
     () => services.find((service) => service.id === form.service_id) ?? null,
@@ -187,84 +196,106 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault()
-    setError(null)
-    setSuccess(null)
 
-    const normalizedCustomerName = toTitleCaseName(form.customer_name)
-    if (!normalizedCustomerName) {
-      setError('Customer name is required.')
-      return
+    // Synchronous guard: blocks a second submit fired before React has
+    // re-rendered the button as disabled (e.g. a fast double-click).
+    if (submitLockRef.current) return
+    submitLockRef.current = true
+
+    try {
+      setError(null)
+      setSuccess(null)
+
+      const normalizedCustomerName = toTitleCaseName(form.customer_name)
+      if (!normalizedCustomerName) {
+        setError('Customer name is required.')
+        return
+      }
+
+      if (form.payment_method === 'paid') {
+        if (!cashEntered) {
+          setError('Enter the cash received before saving the transaction.')
+          return
+        }
+        if (cashReceived < totalAmount) {
+          setError(`Cash received is ${peso(totalAmount - cashReceived)} short.`)
+          return
+        }
+      }
+
+      if (form.payment_method === 'gcash') {
+        if (!gcashEntered) {
+          setError('Enter the GCash amount received before saving the transaction.')
+          return
+        }
+        if (Math.abs(gcashReceived - totalAmount) > 0.005) {
+          setError(`GCash received must match the total amount of ${peso(totalAmount)}.`)
+          return
+        }
+        if (!form.gcash_reference.trim()) {
+          setError('GCash Transaction # is required for tracking.')
+          return
+        }
+      }
+
+      setSubmitting(true)
+
+      const { error } = await supabase.from('transactions').insert({
+        customer_name: normalizedCustomerName,
+        phone_number: form.phone_number.trim() || null,
+        transaction_date: form.transaction_date,
+        service_id: form.service_id || null,
+        kg: form.kg ? Number(form.kg) : null,
+        no_of_loads: form.no_of_loads ? Number(form.no_of_loads) : null,
+        base_amount: form.base_amount ? Number(form.base_amount) : 0,
+        add_ons: addOnsTotal,
+        add_on_items: selectedAddOnItems,
+        total_amount: form.total_amount ? Number(form.total_amount) : 0,
+        cash_amount: form.cash_amount ? Number(form.cash_amount) : 0,
+        gcash_amount: form.gcash_amount ? Number(form.gcash_amount) : 0,
+        gcash_reference: form.payment_method === 'gcash' ? form.gcash_reference.trim() : null,
+        payment_method: form.payment_method,
+        pickup_date: form.pickup_date || null,
+        pickup_time: form.pickup_date && form.pickup_time ? form.pickup_time : null,
+        notes: form.notes.trim() || null,
+        created_by: profile?.id ?? null,
+        client_request_id: clientRequestId,
+      })
+
+      setSubmitting(false)
+
+      if (error) {
+        if (error.message.toLowerCase().includes('transactions_gcash_reference_unique_idx')) {
+          setError('That GCash Transaction # is already attached to another transaction.')
+        } else if (error.message.toLowerCase().includes('transactions_client_request_id_unique_idx')) {
+          // The exact same submit was already saved (a double-click or a
+          // retried request) -- not a real error, nothing lost.
+          setSuccess(`Added — ${normalizedCustomerName} (duplicate click ignored)`)
+          setForm(emptyForm)
+          setSelectedAddOns({})
+          setTotalTouched(false)
+          setClientRequestId(crypto.randomUUID())
+          onAdded?.()
+          setTimeout(() => setSuccess(null), 4000)
+        } else {
+          setError(error.message)
+        }
+        return
+      }
+
+      const changeMessage = form.payment_method === 'paid' && changeDue > 0 ? ` · Change ${peso(changeDue)}` : ''
+      const gcashMessage = form.payment_method === 'gcash' ? ` · GCash #${form.gcash_reference.trim()}` : ''
+      const addOnMessage = selectedAddOnItems.length > 0 ? ` · Add-ons ${peso(addOnsTotal)}` : ''
+      setSuccess(`Added — ${normalizedCustomerName}${addOnMessage}${changeMessage}${gcashMessage}`)
+      setForm(emptyForm)
+      setSelectedAddOns({})
+      setTotalTouched(false)
+      setClientRequestId(crypto.randomUUID())
+      onAdded?.()
+      setTimeout(() => setSuccess(null), 4000)
+    } finally {
+      submitLockRef.current = false
     }
-
-    if (form.payment_method === 'paid') {
-      if (!cashEntered) {
-        setError('Enter the cash received before saving the transaction.')
-        return
-      }
-      if (cashReceived < totalAmount) {
-        setError(`Cash received is ${peso(totalAmount - cashReceived)} short.`)
-        return
-      }
-    }
-
-    if (form.payment_method === 'gcash') {
-      if (!gcashEntered) {
-        setError('Enter the GCash amount received before saving the transaction.')
-        return
-      }
-      if (Math.abs(gcashReceived - totalAmount) > 0.005) {
-        setError(`GCash received must match the total amount of ${peso(totalAmount)}.`)
-        return
-      }
-      if (!form.gcash_reference.trim()) {
-        setError('GCash Transaction # is required for tracking.')
-        return
-      }
-    }
-
-    setSubmitting(true)
-
-    const { error } = await supabase.from('transactions').insert({
-      customer_name: normalizedCustomerName,
-      phone_number: form.phone_number.trim() || null,
-      transaction_date: form.transaction_date,
-      service_id: form.service_id || null,
-      kg: form.kg ? Number(form.kg) : null,
-      no_of_loads: form.no_of_loads ? Number(form.no_of_loads) : null,
-      base_amount: form.base_amount ? Number(form.base_amount) : 0,
-      add_ons: addOnsTotal,
-      add_on_items: selectedAddOnItems,
-      total_amount: form.total_amount ? Number(form.total_amount) : 0,
-      cash_amount: form.cash_amount ? Number(form.cash_amount) : 0,
-      gcash_amount: form.gcash_amount ? Number(form.gcash_amount) : 0,
-      gcash_reference: form.payment_method === 'gcash' ? form.gcash_reference.trim() : null,
-      payment_method: form.payment_method,
-      pickup_date: form.pickup_date || null,
-      pickup_time: form.pickup_date && form.pickup_time ? form.pickup_time : null,
-      notes: form.notes.trim() || null,
-      created_by: profile?.id ?? null,
-    })
-
-    setSubmitting(false)
-
-    if (error) {
-      if (error.message.toLowerCase().includes('transactions_gcash_reference_unique_idx')) {
-        setError('That GCash Transaction # is already attached to another transaction.')
-      } else {
-        setError(error.message)
-      }
-      return
-    }
-
-    const changeMessage = form.payment_method === 'paid' && changeDue > 0 ? ` · Change ${peso(changeDue)}` : ''
-    const gcashMessage = form.payment_method === 'gcash' ? ` · GCash #${form.gcash_reference.trim()}` : ''
-    const addOnMessage = selectedAddOnItems.length > 0 ? ` · Add-ons ${peso(addOnsTotal)}` : ''
-    setSuccess(`Added — ${normalizedCustomerName}${addOnMessage}${changeMessage}${gcashMessage}`)
-    setForm(emptyForm)
-    setSelectedAddOns({})
-    setTotalTouched(false)
-    onAdded?.()
-    setTimeout(() => setSuccess(null), 4000)
   }
 
   const inputClass =

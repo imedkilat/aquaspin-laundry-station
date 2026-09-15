@@ -1,7 +1,8 @@
-import { useMemo, useState, type FormEvent } from 'react'
+import { useMemo, useRef, useState, type FormEvent } from 'react'
 import { useProfiles } from '../hooks/useProfiles'
 import { useAuth } from '../lib/auth-context'
 import { supabase } from '../lib/supabase'
+import { edgeFunctionErrorMessage } from '../lib/edge-functions'
 import type { Profile, Role } from '../types/database'
 
 export default function StaffAccountsManager() {
@@ -14,42 +15,55 @@ export default function StaffAccountsManager() {
   const [fullName, setFullName] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const creatingRef = useRef(false)
 
   const ownerProfiles = useMemo(() => profiles.filter((profile) => profile.role === 'owner'), [profiles])
   const staffProfiles = useMemo(() => profiles.filter((profile) => profile.role === 'staff'), [profiles])
 
   const createStaff = async (event: FormEvent) => {
     event.preventDefault()
-    setError(null)
-    setSuccess(null)
-    setCreating(true)
 
-    const { data, error: functionError } = await supabase.functions.invoke('create-staff-user', {
-      body: {
-        full_name: fullName.trim(),
-        email: email.trim(),
-        password,
-      },
-    })
+    // Synchronous guard against a fast double-click firing this twice
+    // before the button re-renders as disabled -- this creates a real
+    // Auth login, so a duplicate attempt should never even reach the
+    // server (which would just reject it as an existing email anyway).
+    if (creatingRef.current) return
+    creatingRef.current = true
 
-    setCreating(false)
+    try {
+      setError(null)
+      setSuccess(null)
+      setCreating(true)
 
-    if (functionError) {
-      setError(functionError.message)
-      return
+      const { data, error: functionError } = await supabase.functions.invoke('create-staff-user', {
+        body: {
+          full_name: fullName.trim(),
+          email: email.trim(),
+          password,
+        },
+      })
+
+      setCreating(false)
+
+      if (functionError) {
+        setError(await edgeFunctionErrorMessage(functionError, 'Could not create the staff account. Please try again.'))
+        return
+      }
+
+      if (data?.error) {
+        setError(String(data.error))
+        return
+      }
+
+      setSuccess(`Staff account created for ${email.trim()}.`)
+      setFullName('')
+      setEmail('')
+      setPassword('')
+      reload()
+      window.setTimeout(reload, 800)
+    } finally {
+      creatingRef.current = false
     }
-
-    if (data?.error) {
-      setError(String(data.error))
-      return
-    }
-
-    setSuccess(`Staff account created for ${email.trim()}.`)
-    setFullName('')
-    setEmail('')
-    setPassword('')
-    reload()
-    window.setTimeout(reload, 800)
   }
 
   const toggleRole = async (id: string, current: Role) => {

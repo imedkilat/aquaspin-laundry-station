@@ -70,6 +70,27 @@ Deno.serve(async (req: Request) => {
       return json({ error: "Only an owner can export transactions." }, 403, corsHeaders);
     }
 
+    // Rate limit: protects the n8n webhook and the per-export Google Sheets
+    // quota from accidental repeated clicks or a runaway script, without
+    // getting in the way of normal end-of-day export use.
+    const { data: withinLimit, error: rateLimitError } = await admin.rpc("check_rate_limit", {
+      p_key: `export-transactions:${user.id}`,
+      p_max_count: 15,
+      p_window_seconds: 600,
+    });
+
+    if (rateLimitError) {
+      return json({ error: "Could not verify request rate. Try again shortly." }, 500, corsHeaders);
+    }
+
+    if (!withinLimit) {
+      return json(
+        { error: "Too many exports in a short time. Please wait a few minutes and try again." },
+        429,
+        corsHeaders,
+      );
+    }
+
     const body = await req.json().catch(() => ({}));
     const dateFrom = String(body.date_from ?? "").trim();
     const dateTo = String(body.date_to ?? "").trim();
