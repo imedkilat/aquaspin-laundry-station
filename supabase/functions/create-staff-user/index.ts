@@ -78,6 +78,26 @@ Deno.serve(async (req: Request) => {
       return json({ error: error.message }, 400);
     }
 
+    // Do not rely solely on the auth.users trigger. Explicitly ensure the
+    // application profile exists so the new staff account is immediately
+    // visible in Account Access and can create transactions under RLS.
+    const { error: staffProfileError } = await admin.from("profiles").upsert(
+      {
+        id: data.user.id,
+        full_name: fullName,
+        role: "staff",
+      },
+      { onConflict: "id" },
+    );
+
+    if (staffProfileError) {
+      // Keep Auth and application authorization consistent. If the profile
+      // cannot be created, roll the Auth user back rather than leaving an
+      // orphaned login that cannot operate correctly.
+      await admin.auth.admin.deleteUser(data.user.id);
+      return json({ error: `Could not create staff profile: ${staffProfileError.message}` }, 500);
+    }
+
     return json({
       user: {
         id: data.user.id,
