@@ -55,6 +55,7 @@ export type TransactionAddOnItem = {
 export type Transaction = {
   id: string
   transaction_no: number
+  transaction_code: string
   customer_name: string
   phone_number: string | null
   transaction_date: string // date
@@ -152,6 +153,7 @@ export type Database = {
         Insert: {
           id?: string
           transaction_no?: number
+          transaction_code?: string
           customer_name: string
           phone_number?: string | null
           transaction_date?: string
@@ -175,6 +177,7 @@ export type Database = {
         Update: {
           id?: string
           transaction_no?: number
+          transaction_code?: string
           customer_name?: string
           phone_number?: string | null
           transaction_date?: string
