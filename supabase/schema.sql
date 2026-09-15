@@ -107,15 +107,16 @@ create trigger profiles_prevent_last_owner_demotion
 
 -- ─────────────────────────────────────────────────────────────
 -- 2. Services catalog
+-- All current and future services default to an 8 kg maximum per load.
 -- ─────────────────────────────────────────────────────────────
 create table if not exists public.services (
   id uuid primary key default gen_random_uuid(),
   code text not null unique,
   label text not null,
   default_rate numeric(10,2) check (default_rate is null or default_rate >= 0),
-  pricing_type text not null default 'per_load_manual'
+  pricing_type text not null default 'per_load_by_weight'
     check (pricing_type in ('per_load_by_weight', 'per_load_manual', 'per_item')),
-  max_kg_per_load numeric(6,2) check (max_kg_per_load is null or max_kg_per_load > 0),
+  max_kg_per_load numeric(6,2) default 8.00 check (max_kg_per_load is null or max_kg_per_load > 0),
   active boolean not null default true,
   created_at timestamptz not null default now(),
   constraint services_weight_pricing_requires_capacity_check
@@ -144,9 +145,9 @@ create policy "services_write_owner_only"
 insert into public.services (code, label, default_rate, pricing_type, max_kg_per_load)
 values
   ('WDF', 'Wash-Dry-Fold', 195.00, 'per_load_by_weight', 8.00),
-  ('SSW', 'Self-Service Wash', 90.00, 'per_load_manual', null),
-  ('SSD', 'Self-Service Dry', 90.00, 'per_load_manual', null),
-  ('CSDB', 'Comforter / Special Item', 220.00, 'per_item', null)
+  ('SSW', 'Self-Service Wash', 90.00, 'per_load_by_weight', 8.00),
+  ('SSD', 'Self-Service Dry', 90.00, 'per_load_by_weight', 8.00),
+  ('CSDB', 'Comforter / Special Item', 220.00, 'per_load_by_weight', 8.00)
 on conflict (code) do nothing;
 
 -- ─────────────────────────────────────────────────────────────
