@@ -27,8 +27,18 @@ export default function OwnerDashboard() {
   const [exporting, setExporting] = useState(false)
   const [exportMessage, setExportMessage] = useState<string | null>(null)
   const exportingRef = useRef(false)
+  const [showDeleted, setShowDeleted] = useState(false)
 
-  const { rows, loading, reload } = useTransactions({ dateFrom, dateTo, limit: 1000 })
+  const { rows, loading, reload } = useTransactions({
+    dateFrom,
+    dateTo,
+    limit: 1000,
+    includeDeleted: isOwner && showDeleted,
+  })
+
+  // Sales totals must never count a deleted transaction, regardless of
+  // whether the "Show deleted" toggle is revealing it in the table below.
+  const activeRows = useMemo(() => rows.filter((r) => !r.deleted_at), [rows])
 
   // Staff only ever get the Overview tab. Guard against a stale tab
   // selection (e.g. an owner's session on a shared device gets replaced by
@@ -47,15 +57,15 @@ export default function OwnerDashboard() {
 
   const stats = useMemo(() => {
     const today = shopDate()
-    const todayRows = rows.filter((r) => r.transaction_date === today)
-    const cashRows = rows.filter((r) => r.payment_method === 'paid')
-    const gcashRows = rows.filter((r) => r.payment_method === 'gcash')
-    const payLaterRows = rows.filter((r) => r.payment_method === 'pay_later')
+    const todayRows = activeRows.filter((r) => r.transaction_date === today)
+    const cashRows = activeRows.filter((r) => r.payment_method === 'paid')
+    const gcashRows = activeRows.filter((r) => r.payment_method === 'gcash')
+    const payLaterRows = activeRows.filter((r) => r.payment_method === 'pay_later')
 
     return {
       salesToday: todayRows.reduce((sum, r) => sum + (r.total_amount || 0), 0),
       countToday: todayRows.length,
-      salesRange: rows.reduce((sum, r) => sum + (r.total_amount || 0), 0),
+      salesRange: activeRows.reduce((sum, r) => sum + (r.total_amount || 0), 0),
       cashTotal: cashRows.reduce((sum, r) => sum + (r.total_amount || 0), 0),
       cashCount: cashRows.length,
       gcashTotal: gcashRows.reduce((sum, r) => sum + (r.total_amount || 0), 0),
@@ -63,7 +73,7 @@ export default function OwnerDashboard() {
       payLaterTotal: payLaterRows.reduce((sum, r) => sum + (r.total_amount || 0), 0),
       payLaterCount: payLaterRows.length,
     }
-  }, [rows])
+  }, [activeRows])
 
   const exportSpreadsheet = async (outputFormat: 'csv' | 'google_sheets') => {
     // Synchronous guard against a fast double-click firing two exports
@@ -157,7 +167,7 @@ export default function OwnerDashboard() {
             <PaymentFilterCard
               label="Selected Sales"
               value={peso(stats.salesRange)}
-              hint={`${rows.length} transactions · click for all`}
+              hint={`${activeRows.length} transactions · click for all`}
               active={methodFilter === 'all'}
               onClick={() => setMethodFilter('all')}
             />
@@ -224,6 +234,18 @@ export default function OwnerDashboard() {
               </div>
             </div>
 
+            {isOwner && (
+              <label className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+                <input
+                  type="checkbox"
+                  checked={showDeleted}
+                  onChange={(e) => setShowDeleted(e.target.checked)}
+                  className="h-3.5 w-3.5"
+                />
+                Show deleted (who deleted it, when, and why — never counted in the totals above)
+              </label>
+            )}
+
             {exportMessage && (
               <p className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
                 {exportMessage}
@@ -254,7 +276,7 @@ export default function OwnerDashboard() {
               </div>
             </div>
 
-            <TransactionTable rows={filtered} loading={loading} />
+            <TransactionTable rows={filtered} loading={loading} isOwner={isOwner} />
           </div>
         </>
       )}

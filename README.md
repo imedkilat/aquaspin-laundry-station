@@ -192,6 +192,22 @@ value.
 - **Transaction IDs** — public, non-sequential codes like `AQ-7F3C9A2D`
   (`transaction_code`). The internal numeric `transaction_no` still exists
   for stable ordering but isn't shown in the UI.
+- **Edit and Delete** — every row on the Transactions table (both roles)
+  has Edit and Delete. Edit reopens the same fields as Add Transaction,
+  pre-filled, including the 8kg/load auto-pricing and add-ons picker.
+  Delete requires a short reason and is a **soft delete**: the row
+  disappears from the normal list, but nothing is destroyed — it's kept
+  with who deleted it, when, and why, and never counted in the sales
+  totals. The owner can reveal deleted rows with a "Show deleted" checkbox
+  on the Dashboard and **Restore** any of them. A true, permanent SQL
+  delete stays owner-only at the database level and isn't wired to any
+  button — the app never does one.
+- **Entered By** — the Dashboard's transaction table has an extra "Entered
+  By" column, owner-only, showing which staff account created each row
+  (and who last edited it, if different). Staff don't see this column for
+  each other's transactions — same as they can't see each other's Staff
+  Accounts entries, it follows directly from each profile only being
+  visible to its own owner/staff account under RLS.
 - **Spreadsheet export** — Dashboard → **Export CSV** or **Export to Google
   Sheets** sends the currently applied filters (date range, payment method,
   customer search) to the `export-transactions` Edge Function, which asks
@@ -215,9 +231,14 @@ Beyond RLS and the owner/staff Edge Function checks described above:
 - **CORS is locked to the production origin** on both Edge Functions (see
   §3) instead of `*`.
 - **`transactions.updated_by`** records which logged-in user last edited a
-  row (e.g. who marked a Pay Later as paid on pickup) — a lightweight audit
-  trail, set automatically by a trigger. It doesn't restrict who can update;
-  see the staff-update note below.
+  row (e.g. who marked a Pay Later as paid on pickup, or used the Edit
+  button) — a lightweight audit trail, set automatically by a trigger. It
+  doesn't restrict who can update; see the staff-update note below.
+- **`transactions.deleted_at` / `deleted_by` / `delete_reason`** back the
+  Delete button's soft delete. The database itself requires a non-empty
+  `delete_reason` whenever `deleted_at` is set (`transactions_delete_reason_required_check`)
+  — the UI's "reason required" prompt is a friendly form of that, not the
+  only thing enforcing it.
 - Enable **Leaked Password Protection** in Supabase (Dashboard →
   Authentication → Providers → Password) — the one remaining item that has
   to be a manual dashboard toggle rather than a migration.
@@ -225,8 +246,11 @@ Beyond RLS and the owner/staff Edge Function checks described above:
 ## Notes / assumptions to confirm with the shop
 
 - Any signed-in staff can see the **full** transaction list (not just their
-  own entries) — needed for pickup lookups — and can update any transaction
-  (e.g. mark paid on pickup). Only the owner can delete a record.
+  own entries) — needed for pickup lookups — and can update or (soft)
+  delete any transaction, not only their own. That's intentional per the
+  shop's workflow (any staff member may need to fix or remove another's
+  entry), and it's why Delete requires a reason and never truly destroys
+  the row — see "Edit and Delete" above.
 - Service default rates (₱195 WDF, ₱90 self-service, ₱220 comforter) and the
   add-ons in the examples were starting points — confirm actual current
   pricing with the shop and adjust from Dashboard → Service Pricing /

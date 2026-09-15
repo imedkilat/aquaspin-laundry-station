@@ -7,12 +7,23 @@ interface Options {
   dateFrom?: string
   dateTo?: string
   limit?: number
+  // Soft-deleted rows are excluded by default. Pass true (Owner Dashboard's
+  // "Show deleted" toggle) to include them alongside active rows.
+  includeDeleted?: boolean
 }
 
-const SELECT = '*, services ( code, label )'
+// Three separate FKs from transactions to profiles (created_by, updated_by,
+// deleted_by) need explicit relationship hints so PostgREST knows which is
+// which. Non-owners only ever see their own profile row here (RLS), so
+// these resolve to null for anyone else's transactions -- fine, since the
+// UI only shows this to owners.
+const SELECT = `*, services ( code, label ),
+  created_by_profile:profiles!transactions_created_by_fkey ( full_name ),
+  updated_by_profile:profiles!transactions_updated_by_fkey ( full_name ),
+  deleted_by_profile:profiles!transactions_deleted_by_fkey ( full_name )`
 
 export function useTransactions(options: Options = {}) {
-  const { dateFrom, dateTo, limit = 200 } = options
+  const { dateFrom, dateTo, limit = 200, includeDeleted = false } = options
   const [rows, setRows] = useState<TransactionWithService[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -26,6 +37,7 @@ export function useTransactions(options: Options = {}) {
 
     if (dateFrom) query = query.gte('transaction_date', dateFrom)
     if (dateTo) query = query.lte('transaction_date', dateTo)
+    if (!includeDeleted) query = query.is('deleted_at', null)
 
     query.then(({ data, error }) => {
       if (error) {
@@ -35,7 +47,7 @@ export function useTransactions(options: Options = {}) {
       setRows((data as unknown as TransactionWithService[]) ?? [])
       setLoading(false)
     })
-  }, [dateFrom, dateTo, limit])
+  }, [dateFrom, dateTo, limit, includeDeleted])
 
   useEffect(() => {
     reload()

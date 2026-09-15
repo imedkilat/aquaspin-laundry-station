@@ -2,9 +2,12 @@ import { useEffect, useState } from 'react'
 import TransactionForm from '../components/TransactionForm'
 import TransactionTable from '../components/TransactionTable'
 import { useTransactions } from '../hooks/useTransactions'
+import { useAuth } from '../lib/auth-context'
 import { shopDate } from '../lib/date'
 
 export default function StaffView() {
+  const { profile } = useAuth()
+  const isOwner = profile?.role === 'owner'
   const [todayStr, setTodayStr] = useState(shopDate())
   const { rows, loading, reload } = useTransactions({ dateFrom: todayStr, dateTo: todayStr })
 
@@ -49,7 +52,7 @@ export default function StaffView() {
             {loading ? 'Refreshing…' : '↻ Refresh'}
           </button>
         </div>
-        <TransactionTable rows={rows} loading={loading} />
+        <TransactionTable rows={rows} loading={loading} isOwner={isOwner} />
       </div>
     </div>
   )

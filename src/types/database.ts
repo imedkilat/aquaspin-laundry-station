@@ -76,11 +76,18 @@ export type Transaction = {
   created_by: string | null
   created_at: string
   updated_at: string
+  updated_by: string | null
   client_request_id: string | null
+  deleted_at: string | null
+  deleted_by: string | null
+  delete_reason: string | null
 }
 
 export type TransactionWithService = Transaction & {
   services: Pick<Service, 'code' | 'label'> | null
+  created_by_profile: Pick<Profile, 'full_name'> | null
+  updated_by_profile: Pick<Profile, 'full_name'> | null
+  deleted_by_profile: Pick<Profile, 'full_name'> | null
 }
 
 // Minimal Database type so supabase-js typed queries work without the
@@ -176,7 +183,11 @@ export type Database = {
           created_by?: string | null
           created_at?: string
           updated_at?: string
+          updated_by?: string | null
           client_request_id?: string | null
+          deleted_at?: string | null
+          deleted_by?: string | null
+          delete_reason?: string | null
         }
         Update: {
           id?: string
@@ -202,7 +213,11 @@ export type Database = {
           created_by?: string | null
           created_at?: string
           updated_at?: string
+          updated_by?: string | null
           client_request_id?: string | null
+          deleted_at?: string | null
+          deleted_by?: string | null
+          delete_reason?: string | null
         }
         Relationships: []
       }
