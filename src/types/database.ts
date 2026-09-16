@@ -272,7 +272,7 @@ export type Database = {
           transaction_date?: string
           service_id?: string | null
           kg?: number | null
-          no_of_loads?: number
+          no_of_loads?: number | null
           base_amount?: number
           add_ons?: number
           add_on_items?: TransactionAddOnItem[]
