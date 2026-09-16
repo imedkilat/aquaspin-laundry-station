@@ -70,13 +70,13 @@ The reference snapshots under `supabase/reconciliation/` remain non-executable h
 - GCash schema precedes transaction-code cleanup/backfill;
 - all 16 exact production-ledger versions remain represented locally.
 
-The final version-normalization fix is commit `8e599c105b9d0f172a6efa0322f897935a04cf3b`.
+The version-normalization fix is commit `8e599c105b9d0f172a6efa0322f897935a04cf3b`.
 
-An independent execution of the guard against the exact branch migration set passed:
+On exact branch head `e1d021ef3a76ab0b548d710df55401223deed88d`, Vercel executed the guard and reported:
 
 `Migration history check passed (20 migration files, unique normalized versions, canonical base present, production ledger represented).`
 
-The exact final commit did not receive a normal Vercel build because the Hobby project hit Vercel's build-rate limit. That Vercel status is a platform-quota failure, not a migration-guard or application-build failure. Earlier branch heads proved the `prebuild` hook and normal TypeScript/Vite build path work; do not label `8e599c1...` itself Vercel-READY until Vercel actually rebuilds it.
+The same deployment then completed `tsc -b && vite build` and reached `READY`. The only build output was the existing Vite chunk-size warning; there was no migration-guard or TypeScript/build failure.
 
 ## Hosted staging clean app-schema rebuild — Sep 16, 2026
 
