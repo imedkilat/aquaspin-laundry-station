@@ -1,16 +1,13 @@
 import { useRef, useState } from 'react'
 import { supabase } from '../lib/supabase'
-import { useAuth } from '../lib/auth-context'
 import type { TransactionWithService } from '../types/database'
 
 const peso = (n: number) =>
   `₱${n.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 
-// A soft delete (sets deleted_at/deleted_by/delete_reason via UPDATE), not
-// a real SQL DELETE. The row disappears from the normal table view but
-// stays in the database with a full accountability trail an owner can
-// review later. A reason is mandatory -- the database itself rejects a
-// deleted_at with no delete_reason, this is just the friendly form of that.
+// A soft delete only sends the deletion timestamp + reason. Postgres assigns
+// deleted_by from auth.uid(), so a browser/direct API caller cannot spoof who
+// deleted the transaction.
 export default function DeleteTransactionModal({
   transaction,
   onClose,
@@ -18,7 +15,6 @@ export default function DeleteTransactionModal({
   transaction: TransactionWithService
   onClose: () => void
 }) {
-  const { profile } = useAuth()
   const [reason, setReason] = useState('')
   const [deleting, setDeleting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -42,7 +38,6 @@ export default function DeleteTransactionModal({
         .from('transactions')
         .update({
           deleted_at: new Date().toISOString(),
-          deleted_by: profile?.id ?? null,
           delete_reason: trimmedReason,
         })
         .eq('id', transaction.id)
@@ -75,7 +70,7 @@ export default function DeleteTransactionModal({
         </div>
 
         <p className="text-xs text-slate-500 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-400">
-          This removes it from the transaction list, but the record is kept with your name, the time, and this
+          This removes it from the transaction list, but the record is kept with your account, the time, and this
           reason, so the owner can review it later.
         </p>
 
