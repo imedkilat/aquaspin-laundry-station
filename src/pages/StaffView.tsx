@@ -4,6 +4,7 @@ import TransactionTable from '../components/TransactionTable'
 import EditTransactionModal from '../components/EditTransactionModal'
 import DeleteTransactionModal from '../components/DeleteTransactionModal'
 import ActionErrorBoundary from '../components/ActionErrorBoundary'
+import { InlineAlert } from '../components/UiFeedback'
 import { useTransactions } from '../hooks/useTransactions'
 import { useAuth } from '../lib/auth-context'
 import { shopDate } from '../lib/date'
@@ -15,7 +16,7 @@ export default function StaffView() {
   const [todayStr, setTodayStr] = useState(shopDate())
   const [editingTransaction, setEditingTransaction] = useState<TransactionWithService | null>(null)
   const [deletingTransaction, setDeletingTransaction] = useState<TransactionWithService | null>(null)
-  const { rows, loading, reload } = useTransactions({ dateFrom: todayStr, dateTo: todayStr })
+  const { rows, loading, error, realtimeState, reload } = useTransactions({ dateFrom: todayStr, dateTo: todayStr })
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -32,23 +33,23 @@ export default function StaffView() {
       setTodayStr(currentShopDate)
       return
     }
-    reload()
+    void reload()
   }
 
   const closeEdit = () => {
     setEditingTransaction(null)
-    reload()
+    void reload()
   }
 
   const closeDelete = () => {
     setDeletingTransaction(null)
-    reload()
+    void reload()
   }
 
   return (
     <>
       <div className="space-y-6">
-        <TransactionForm onAdded={reload} />
+        <TransactionForm onAdded={() => void reload()} />
 
         <div className="bg-white rounded-2xl border border-slate-200 p-5 dark:bg-slate-900 dark:border-slate-800">
           <div className="flex items-center justify-between gap-3 mb-3 flex-wrap">
@@ -67,6 +68,20 @@ export default function StaffView() {
               {loading ? 'Refreshing…' : '↻ Refresh'}
             </button>
           </div>
+
+          <div className="mb-3 space-y-2">
+            {error && (
+              <InlineAlert variant="error" title="Transactions could not be refreshed" actionLabel="Try again" onAction={() => void reload()}>
+                {error} Your existing screen stays available and no transaction was deleted.
+              </InlineAlert>
+            )}
+            {!error && (realtimeState === 'disconnected' || realtimeState === 'error') && (
+              <InlineAlert variant="warning" title="Live sync is temporarily offline" actionLabel="Refresh now" onAction={() => void reload()}>
+                You can keep using Aquaspin, but changes from other staff may take longer to appear. Use Refresh until live sync reconnects.
+              </InlineAlert>
+            )}
+          </div>
+
           <TransactionTable
             rows={rows}
             loading={loading}
@@ -79,21 +94,13 @@ export default function StaffView() {
 
       {editingTransaction && (
         <ActionErrorBoundary key={`edit-boundary-${editingTransaction.id}`} onClose={closeEdit}>
-          <EditTransactionModal
-            key={`edit-${editingTransaction.id}`}
-            transaction={editingTransaction}
-            onClose={closeEdit}
-          />
+          <EditTransactionModal key={`edit-${editingTransaction.id}`} transaction={editingTransaction} onClose={closeEdit} />
         </ActionErrorBoundary>
       )}
 
       {deletingTransaction && (
         <ActionErrorBoundary key={`delete-boundary-${deletingTransaction.id}`} onClose={closeDelete}>
-          <DeleteTransactionModal
-            key={`delete-${deletingTransaction.id}`}
-            transaction={deletingTransaction}
-            onClose={closeDelete}
-          />
+          <DeleteTransactionModal key={`delete-${deletingTransaction.id}`} transaction={deletingTransaction} onClose={closeDelete} />
         </ActionErrorBoundary>
       )}
     </>
