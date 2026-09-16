@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from 'react'
 import { supabase } from '../lib/supabase'
+import { makeRealtimeTopic } from '../lib/realtime'
 import type { TransactionWithService } from '../types/database'
 
 interface Options {
@@ -54,10 +55,12 @@ export function useTransactions(options: Options = {}) {
   }, [reload])
 
   // Live updates: any staff/owner adding, editing, or deleting a transaction
-  // reflects here immediately, across every open dashboard/tablet.
+  // reflects here immediately, across every open dashboard/tablet. Each
+  // mounted subscription gets its own topic so multiple tables/modals and
+  // React StrictMode cannot collide inside one browser instance.
   useEffect(() => {
     const channel = supabase
-      .channel('transactions-realtime')
+      .channel(makeRealtimeTopic('transactions-realtime'))
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'transactions' },
@@ -66,7 +69,7 @@ export function useTransactions(options: Options = {}) {
       .subscribe()
 
     return () => {
-      supabase.removeChannel(channel)
+      void supabase.removeChannel(channel)
     }
   }, [reload])
 
