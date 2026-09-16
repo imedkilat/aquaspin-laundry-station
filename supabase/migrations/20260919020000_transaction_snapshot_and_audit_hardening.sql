@@ -25,12 +25,21 @@ declare
   item_quantity numeric;
   item_line_total numeric(10,2);
   normalized_total numeric(10,2) := 0;
-  client_add_ons numeric(10,2) := coalesce(new.add_ons, 0);
-  manual_adjustment numeric(10,2) :=
-    coalesce(new.total_amount, 0) - coalesce(new.base_amount, 0) - coalesce(new.add_ons, 0);
-  old_items jsonb := case when tg_op = 'UPDATE' then coalesce(old.add_on_items, '[]'::jsonb) else '[]'::jsonb end;
-  old_add_ons numeric(10,2) := case when tg_op = 'UPDATE' then coalesce(old.add_ons, 0) else 0 end;
+  manual_adjustment numeric(10,2);
+  old_items jsonb;
+  old_add_ons numeric(10,2);
 begin
+  if tg_op = 'UPDATE' then
+    old_items := coalesce(old.add_on_items, '[]'::jsonb);
+    old_add_ons := coalesce(old.add_ons, 0);
+  else
+    old_items := '[]'::jsonb;
+    old_add_ons := 0;
+  end if;
+
+  manual_adjustment :=
+    coalesce(new.total_amount, 0) - coalesce(new.base_amount, 0) - coalesce(new.add_ons, 0);
+
   new.add_on_items := coalesce(new.add_on_items, '[]'::jsonb);
 
   if jsonb_typeof(new.add_on_items) <> 'array' then
@@ -137,8 +146,7 @@ revoke all on function public.normalize_transaction_add_on_snapshot() from publi
 
 drop trigger if exists transactions_10_normalize_add_on_snapshot on public.transactions;
 create trigger transactions_10_normalize_add_on_snapshot
-  before insert or update of add_on_items, add_ons, base_amount, total_amount
-  on public.transactions
+  before insert or update on public.transactions
   for each row execute function public.normalize_transaction_add_on_snapshot();
 
 -- 2. Make audit/identity fields authoritative at the database layer.
@@ -173,20 +181,22 @@ begin
     raise exception 'Transaction request id cannot be changed' using errcode = '42501';
   end if;
 
-  -- Normal active row: deletion attribution is server-generated, never
-  -- accepted from the browser.
+  -- Normal active row: deletion metadata cannot be pre-filled/spoofed.
   if old.deleted_at is null and new.deleted_at is null then
     new.deleted_by := null;
     new.delete_reason := null;
     return new;
   end if;
 
-  -- First transition into soft-deleted state.
+  -- First transition into soft-deleted state. Timestamp + actor are generated
+  -- by Postgres, not trusted from the browser.
   if old.deleted_at is null and new.deleted_at is not null then
-    if nullif(btrim(new.delete_reason), '') is null then
-      raise exception 'A delete reason is required';
+    if nullif(btrim(new.delete_reason), '') is null
+       or char_length(btrim(new.delete_reason)) < 3 then
+      raise exception 'A delete reason of at least 3 characters is required';
     end if;
 
+    new.deleted_at := now();
     new.deleted_by := auth.uid();
     return new;
   end if;
@@ -197,9 +207,10 @@ begin
     raise exception 'Deleted transactions must be restored before editing' using errcode = '42501';
   end if;
 
-  -- Restore transition: owner-only at the database layer.
+  -- Restore transition: owner-only at the database layer. Service-role/admin
+  -- maintenance has auth.uid() = null and remains possible when necessary.
   if old.deleted_at is not null and new.deleted_at is null then
-    if not private.is_owner() then
+    if auth.uid() is not null and not private.is_owner() then
       raise exception 'Only an owner can restore a deleted transaction' using errcode = '42501';
     end if;
 
