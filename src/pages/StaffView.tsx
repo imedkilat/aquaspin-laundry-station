@@ -3,6 +3,7 @@ import TransactionForm from '../components/TransactionForm'
 import TransactionTable from '../components/TransactionTable'
 import EditTransactionModal from '../components/EditTransactionModal'
 import DeleteTransactionModal from '../components/DeleteTransactionModal'
+import ActionErrorBoundary from '../components/ActionErrorBoundary'
 import { useTransactions } from '../hooks/useTransactions'
 import { useAuth } from '../lib/auth-context'
 import { shopDate } from '../lib/date'
@@ -16,8 +17,6 @@ export default function StaffView() {
   const [deletingTransaction, setDeletingTransaction] = useState<TransactionWithService | null>(null)
   const { rows, loading, reload } = useTransactions({ dateFrom: todayStr, dateTo: todayStr })
 
-  // If the shop screen stays open overnight, automatically move the table to
-  // the new Asia/Manila business date instead of leaving yesterday's rows up.
   useEffect(() => {
     const timer = window.setInterval(() => {
       const currentShopDate = shopDate()
@@ -33,6 +32,16 @@ export default function StaffView() {
       setTodayStr(currentShopDate)
       return
     }
+    reload()
+  }
+
+  const closeEdit = () => {
+    setEditingTransaction(null)
+    reload()
+  }
+
+  const closeDelete = () => {
+    setDeletingTransaction(null)
     reload()
   }
 
@@ -68,30 +77,24 @@ export default function StaffView() {
         </div>
       </div>
 
-      {/* Today-page actions are deliberately mounted at the page root instead
-          of inside the reusable table. This isolates them from the transaction
-          table's scroll/layout context and from Dashboard's independent action
-          state. */}
       {editingTransaction && (
-        <EditTransactionModal
-          key={`edit-${editingTransaction.id}`}
-          transaction={editingTransaction}
-          onClose={() => {
-            setEditingTransaction(null)
-            reload()
-          }}
-        />
+        <ActionErrorBoundary key={`edit-boundary-${editingTransaction.id}`} onClose={closeEdit}>
+          <EditTransactionModal
+            key={`edit-${editingTransaction.id}`}
+            transaction={editingTransaction}
+            onClose={closeEdit}
+          />
+        </ActionErrorBoundary>
       )}
 
       {deletingTransaction && (
-        <DeleteTransactionModal
-          key={`delete-${deletingTransaction.id}`}
-          transaction={deletingTransaction}
-          onClose={() => {
-            setDeletingTransaction(null)
-            reload()
-          }}
-        />
+        <ActionErrorBoundary key={`delete-boundary-${deletingTransaction.id}`} onClose={closeDelete}>
+          <DeleteTransactionModal
+            key={`delete-${deletingTransaction.id}`}
+            transaction={deletingTransaction}
+            onClose={closeDelete}
+          />
+        </ActionErrorBoundary>
       )}
     </>
   )
