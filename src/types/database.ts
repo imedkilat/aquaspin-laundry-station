@@ -19,6 +19,8 @@ export type Profile = {
   id: string
   full_name: string
   role: Role
+  contact_phone: string | null
+  avatar_path: string | null
   created_at: string
 }
 
@@ -27,6 +29,7 @@ export type ShopSettings = {
   shop_display_name: string
   contact_phone: string | null
   report_footer: string | null
+  logo_path: string | null
   default_payment_method: PaymentMethod
   default_dashboard_days: number
   require_phone_number: boolean
@@ -39,6 +42,7 @@ export type ShopSettings = {
   staff_can_edit_transactions: boolean
   staff_can_delete_transactions: boolean
   staff_can_view_historical_pay_later: boolean
+  staff_can_edit_own_profile: boolean
   updated_at: string
   updated_by: string | null
 }
@@ -122,12 +126,16 @@ export type Database = {
           id: string
           full_name: string
           role?: Role
+          contact_phone?: string | null
+          avatar_path?: string | null
           created_at?: string
         }
         Update: {
           id?: string
           full_name?: string
           role?: Role
+          contact_phone?: string | null
+          avatar_path?: string | null
           created_at?: string
         }
         Relationships: []
@@ -139,6 +147,7 @@ export type Database = {
           shop_display_name?: string
           contact_phone?: string | null
           report_footer?: string | null
+          logo_path?: string | null
           default_payment_method?: PaymentMethod
           default_dashboard_days?: number
           require_phone_number?: boolean
@@ -151,6 +160,7 @@ export type Database = {
           staff_can_edit_transactions?: boolean
           staff_can_delete_transactions?: boolean
           staff_can_view_historical_pay_later?: boolean
+          staff_can_edit_own_profile?: boolean
           updated_at?: string
           updated_by?: string | null
         }
@@ -158,6 +168,7 @@ export type Database = {
           shop_display_name?: string
           contact_phone?: string | null
           report_footer?: string | null
+          logo_path?: string | null
           default_payment_method?: PaymentMethod
           default_dashboard_days?: number
           require_phone_number?: boolean
@@ -170,6 +181,7 @@ export type Database = {
           staff_can_edit_transactions?: boolean
           staff_can_delete_transactions?: boolean
           staff_can_view_historical_pay_later?: boolean
+          staff_can_edit_own_profile?: boolean
         }
         Relationships: []
       }
@@ -260,7 +272,7 @@ export type Database = {
           transaction_date?: string
           service_id?: string | null
           kg?: number | null
-          no_of_loads?: number | null
+          no_of_loads?: number
           base_amount?: number
           add_ons?: number
           add_on_items?: TransactionAddOnItem[]
