@@ -5,6 +5,7 @@ import Login from './pages/Login'
 import StaffView from './pages/StaffView'
 import OwnerDashboard from './pages/OwnerDashboard'
 import Layout from './components/Layout'
+import GlobalErrorBoundary from './components/GlobalErrorBoundary'
 import { InlineAlert, LoadingPanel } from './components/UiFeedback'
 
 function Gate({ children, ownerOnly = false }: { children: React.ReactNode; ownerOnly?: boolean }) {
@@ -46,19 +47,19 @@ export default function App() {
         <section className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">
           <p className="text-xs font-semibold uppercase tracking-wider text-sky-600">Aquaspin Laundry Station</p>
           <h1 className="mt-2 text-xl font-semibold">App configuration is incomplete</h1>
-          <div className="mt-4">
-            <InlineAlert variant="error" title="Aquaspin cannot connect yet">{supabaseConfigError}</InlineAlert>
-          </div>
+          <div className="mt-4"><InlineAlert variant="error" title="Aquaspin cannot connect yet">{supabaseConfigError}</InlineAlert></div>
         </section>
       </main>
     )
   }
 
   return (
-    <BrowserRouter>
-      <AuthProvider>
-        <AppRoutes />
-      </AuthProvider>
-    </BrowserRouter>
+    <GlobalErrorBoundary>
+      <BrowserRouter>
+        <AuthProvider>
+          <AppRoutes />
+        </AuthProvider>
+      </BrowserRouter>
+    </GlobalErrorBoundary>
   )
 }
