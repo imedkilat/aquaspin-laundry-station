@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import { supabase } from './supabase'
 import type { Profile } from '../types/database'
@@ -7,6 +7,7 @@ interface AuthState {
   session: Session | null
   profile: Profile | null
   loading: boolean
+  refreshProfile: () => Promise<void>
   signOut: () => Promise<void>
 }
 
@@ -34,10 +35,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => listener.subscription.unsubscribe()
   }, [])
 
+  const refreshProfile = useCallback(async () => {
+    if (!session) {
+      setProfile(null)
+      setLoading(false)
+      return
+    }
+
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('id', session.user.id)
+      .single()
+
+    if (error) {
+      // eslint-disable-next-line no-console
+      console.error('Failed to load profile', error)
+      return
+    }
+
+    setProfile(data ?? null)
+  }, [session])
+
   useEffect(() => {
     if (!session) return
     let cancelled = false
     setLoading(true)
+
     supabase
       .from('profiles')
       .select('*')
@@ -52,6 +76,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setProfile(data ?? null)
         setLoading(false)
       })
+
     return () => {
       cancelled = true
     }
@@ -62,7 +87,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   return (
-    <AuthContext.Provider value={{ session, profile, loading, signOut }}>
+    <AuthContext.Provider value={{ session, profile, loading, refreshProfile, signOut }}>
       {children}
     </AuthContext.Provider>
   )
