@@ -31,9 +31,11 @@ export function useTransactions(options: Options = {}) {
     const pageSize = Math.max(1, Math.min(limit, 1000))
 
     const fetchPage = async (offset: number) => {
-      let query = supabase
-        .from('transactions')
-        .select(SELECT)
+      let query = fetchAll
+        ? supabase.from('transactions').select(SELECT, { count: 'exact' })
+        : supabase.from('transactions').select(SELECT)
+
+      query = query
         .order('created_at', { ascending: false })
         .order('id', { ascending: false })
 
@@ -63,7 +65,7 @@ export function useTransactions(options: Options = {}) {
     let offset = 0
 
     while (true) {
-      const { data, error: queryError } = await fetchPage(offset)
+      const { data, error: queryError, count } = await fetchPage(offset)
       if (queryError) {
         setError('Could not load the complete transaction range. Check the internet connection and try again.')
         setLoading(false)
@@ -73,8 +75,11 @@ export function useTransactions(options: Options = {}) {
       const page = (data as unknown as TransactionWithService[]) ?? []
       allRows.push(...page)
 
-      if (page.length < pageSize) break
+      if (page.length === 0) break
       offset += page.length
+
+      if (typeof count === 'number' && allRows.length >= count) break
+      if (count == null && page.length < pageSize) break
     }
 
     setRows(allRows)
