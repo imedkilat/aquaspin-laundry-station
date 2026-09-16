@@ -2,8 +2,10 @@ import { useMemo, useRef, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { useServices } from '../hooks/useServices'
 import { useAddOns } from '../hooks/useAddOns'
+import { useShopSettings } from '../lib/shop-settings-context'
 import type { PaymentMethod, TransactionAddOnItem, TransactionWithService } from '../types/database'
 import { toTitleCaseName } from '../lib/text'
+import { ButtonSpinner, InlineAlert, LoadingPanel } from './UiFeedback'
 
 const peso = (n: number) =>
   `₱${n.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
@@ -61,26 +63,12 @@ function addOnsFromItems(items: TransactionAddOnItem[] | null | undefined): Reco
   return map
 }
 
-// Editing an existing transaction is deliberately event-driven, not
-// effect-driven like the Add form: an effect that recalculates
-// base_amount/total on every render would also fire on mount and silently
-// overwrite a saved transaction's original amount the instant someone
-// opens Edit, if pricing has changed since it was created. Every derived
-// recalculation here only happens inside an onChange handler, in direct
-// response to the person actually changing that field -- never on open.
-export default function EditTransactionModal({
-  transaction,
-  onClose,
-}: {
-  transaction: TransactionWithService
-  onClose: () => void
-}) {
+export default function EditTransactionModal({ transaction, onClose }: { transaction: TransactionWithService; onClose: () => void }) {
   const { services } = useServices()
   const { addOns, loading: addOnsLoading } = useAddOns({ includeInactive: true })
+  const { settings } = useShopSettings()
   const [form, setForm] = useState<FormState>(() => formToState(transaction))
-  const [selectedAddOns, setSelectedAddOns] = useState<Record<string, number>>(() =>
-    addOnsFromItems(transaction.add_on_items)
-  )
+  const [selectedAddOns, setSelectedAddOns] = useState<Record<string, number>>(() => addOnsFromItems(transaction.add_on_items))
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const saveLockRef = useRef(false)
@@ -95,18 +83,20 @@ export default function EditTransactionModal({
       const quantity = selectedAddOns[addOn.id] ?? 0
       if (quantity <= 0) return []
       const normalizedQuantity = addOn.unit_type === 'flat' ? 1 : quantity
-      return [
-        {
-          add_on_id: addOn.id,
-          name: addOn.name,
-          unit_type: addOn.unit_type,
-          unit_price: addOn.price,
-          quantity: normalizedQuantity,
-          line_total: Number((addOn.price * normalizedQuantity).toFixed(2)),
-        },
-      ]
+      const historicalItem = transaction.add_on_items?.find((item) => item.add_on_id === addOn.id)
+      const unitPrice = historicalItem?.unit_price ?? addOn.price
+      const itemName = historicalItem?.name ?? addOn.name
+      const unitType = historicalItem?.unit_type ?? addOn.unit_type
+      return [{
+        add_on_id: addOn.id,
+        name: itemName,
+        unit_type: unitType,
+        unit_price: unitPrice,
+        quantity: normalizedQuantity,
+        line_total: Number((unitPrice * normalizedQuantity).toFixed(2)),
+      }]
     })
-  }, [addOns, selectedAddOns])
+  }, [addOns, selectedAddOns, transaction.add_on_items])
 
   const addOnsTotal = useMemo(
     () => selectedAddOnItems.reduce((sum, item) => sum + item.line_total, 0),
@@ -130,9 +120,6 @@ export default function EditTransactionModal({
   const cashShort = cashDifference != null && cashDifference < 0 ? Math.abs(cashDifference) : 0
   const gcashDifference = isGcashPayment && gcashEntered ? gcashReceived - totalAmount : null
 
-  // Recompute no_of_loads/base_amount for a given kg + service, matching
-  // the Add form's 8kg/load rule -- called only from the kg and service
-  // onChange handlers below, never automatically.
   const recalcFromKg = (kgValue: string, service: typeof selectedService) => {
     if (!service) return { no_of_loads: '', base_amount: '' }
     if (service.pricing_type === 'per_load_by_weight' && service.max_kg_per_load) {
@@ -194,7 +181,9 @@ export default function EditTransactionModal({
       const quantity = next[addOn.id] ?? 0
       if (quantity <= 0) return sum
       const normalizedQuantity = addOn.unit_type === 'flat' ? 1 : quantity
-      return sum + addOn.price * normalizedQuantity
+      const historicalItem = transaction.add_on_items?.find((item) => item.add_on_id === addOn.id)
+      const unitPrice = historicalItem?.unit_price ?? addOn.price
+      return sum + unitPrice * normalizedQuantity
     }, 0)
     setForm((f) => ({
       ...f,
@@ -232,14 +221,24 @@ export default function EditTransactionModal({
         setError('Customer name is required.')
         return
       }
-
+      if (settings.require_phone_number && !form.phone_number.trim()) {
+        setError('Phone number is required by the Owner settings.')
+        return
+      }
       if (!form.service_id) {
         setError('Select a service before entering Kg or saving the transaction.')
         return
       }
-
       if (isWeightBased && (!form.kg || Number(form.kg) <= 0)) {
         setError('Enter the Kg after selecting the service so Loads and Base Amount can be calculated.')
+        return
+      }
+      if (settings.require_pickup_date && !form.pickup_date) {
+        setError('Pickup date is required by the Owner settings.')
+        return
+      }
+      if (settings.require_notes_for_pay_later && form.payment_method === 'pay_later' && !form.notes.trim()) {
+        setError('Notes are required for Pay Later transactions by the Owner settings.')
         return
       }
 
@@ -271,11 +270,6 @@ export default function EditTransactionModal({
 
       setSaving(true)
 
-      // Optimistic concurrency guard: the update only succeeds if the row is
-      // still the same version that was opened in this modal. A save/delete in
-      // any other browser, tab, owner account, or staff account changes
-      // updated_at, making this atomic update affect zero rows instead of
-      // silently overwriting somebody else's newer work.
       const { data: updatedRows, error: updateError } = await supabase
         .from('transactions')
         .update({
@@ -304,8 +298,11 @@ export default function EditTransactionModal({
       setSaving(false)
 
       if (updateError) {
-        if (updateError.message.toLowerCase().includes('transactions_gcash_reference_unique_idx')) {
+        const lower = updateError.message.toLowerCase()
+        if (lower.includes('transactions_gcash_reference_unique_idx')) {
           setError('That GCash Transaction # is already attached to another transaction.')
+        } else if (lower.includes('staff transaction editing is disabled')) {
+          setError('Transaction editing is currently disabled for Staff by the Owner.')
         } else {
           setError(updateError.message)
         }
@@ -319,6 +316,7 @@ export default function EditTransactionModal({
 
       onClose()
     } finally {
+      setSaving(false)
       saveLockRef.current = false
     }
   }
@@ -330,36 +328,23 @@ export default function EditTransactionModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
-      <div
-        className="w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-2xl bg-white p-5 space-y-5 dark:bg-slate-900 border border-slate-200 dark:border-slate-800"
-        onClick={(e) => e.stopPropagation()}
-      >
+      <div className="w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-2xl bg-white p-5 space-y-5 dark:bg-slate-900 border border-slate-200 dark:border-slate-800" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between gap-3">
           <div>
-            <h2 className="font-semibold text-slate-900 dark:text-slate-100">
-              Edit Transaction — {transaction.transaction_code || `#${String(transaction.transaction_no).padStart(4, '0')}`}
-            </h2>
+            <h2 className="font-semibold text-slate-900 dark:text-slate-100">Edit Transaction — {transaction.transaction_code || `#${String(transaction.transaction_no).padStart(4, '0')}`}</h2>
             <p className="text-xs text-slate-500 mt-0.5">Changes apply immediately and are logged under Last Updated By.</p>
           </div>
-          <button type="button" onClick={onClose} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 text-xl leading-none px-1">
-            ×
-          </button>
+          <button type="button" onClick={onClose} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 text-xl leading-none px-1">×</button>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
             <label className={labelClass}>Customer Name *</label>
-            <input
-              required
-              value={form.customer_name}
-              onChange={update('customer_name')}
-              onBlur={() => setForm((f) => ({ ...f, customer_name: toTitleCaseName(f.customer_name) }))}
-              className={inputClass}
-            />
+            <input required value={form.customer_name} onChange={update('customer_name')} onBlur={() => setForm((f) => ({ ...f, customer_name: toTitleCaseName(f.customer_name) }))} className={inputClass} />
           </div>
           <div>
-            <label className={labelClass}>Phone Number</label>
-            <input value={form.phone_number} onChange={update('phone_number')} className={inputClass} placeholder="09xxxxxxxxx" />
+            <label className={labelClass}>Phone Number{settings.require_phone_number ? ' *' : ''}</label>
+            <input required={settings.require_phone_number} value={form.phone_number} onChange={update('phone_number')} className={inputClass} placeholder="09xxxxxxxxx" />
           </div>
 
           <div>
@@ -370,52 +355,23 @@ export default function EditTransactionModal({
             <label className={labelClass}>Service *</label>
             <select required value={form.service_id} onChange={handleServiceChange} className={inputClass}>
               <option value="">Select service…</option>
-              {services.map((s) => (
-                <option key={s.id} value={s.id}>{s.label} ({s.code})</option>
-              ))}
+              {services.map((s) => <option key={s.id} value={s.id}>{s.label} ({s.code})</option>)}
             </select>
           </div>
 
           <div>
             <label className={labelClass}>Kg{isWeightBased ? ' *' : ''}</label>
-            <input
-              type="number"
-              step="0.1"
-              min={isWeightBased ? '0.1' : '0'}
-              required={Boolean(form.service_id) && isWeightBased}
-              disabled={!form.service_id}
-              value={form.kg}
-              onChange={handleKgChange}
-              placeholder={!form.service_id ? 'Select service first' : undefined}
-              className={`${inputClass} disabled:opacity-50 disabled:cursor-not-allowed`}
-            />
+            <input type="number" step="0.1" min={isWeightBased ? '0.1' : '0'} required={Boolean(form.service_id) && isWeightBased} disabled={!form.service_id} value={form.kg} onChange={handleKgChange} placeholder={!form.service_id ? 'Select service first' : undefined} className={`${inputClass} disabled:opacity-50 disabled:cursor-not-allowed`} />
             {!form.service_id && <p className="mt-1 text-xs text-slate-500">Select a service first to enable Kg.</p>}
           </div>
           <div>
             <label className={labelClass}>No. of Loads{isWeightBased ? ' · Auto' : ''}</label>
-            <input
-              type="number"
-              min="0"
-              disabled={!form.service_id}
-              value={form.no_of_loads}
-              onChange={isWeightBased || !form.service_id ? undefined : update('no_of_loads')}
-              readOnly={isWeightBased || !form.service_id}
-              className={isWeightBased || !form.service_id ? `${autoInputClass} disabled:opacity-50` : inputClass}
-            />
+            <input type="number" min="0" disabled={!form.service_id} value={form.no_of_loads} onChange={isWeightBased || !form.service_id ? undefined : update('no_of_loads')} readOnly={isWeightBased || !form.service_id} className={isWeightBased || !form.service_id ? `${autoInputClass} disabled:opacity-50` : inputClass} />
           </div>
 
           <div>
             <label className={labelClass}>Base Amount (₱){isWeightBased ? ' · Auto' : ''}</label>
-            <input
-              type="number"
-              step="0.01"
-              min="0"
-              disabled={!form.service_id}
-              value={form.base_amount}
-              onChange={isWeightBased || !form.service_id ? undefined : handleBaseAmountChange}
-              readOnly={isWeightBased || !form.service_id}
-              className={isWeightBased || !form.service_id ? `${autoInputClass} disabled:opacity-50` : inputClass}
-            />
+            <input type="number" step="0.01" min="0" disabled={!form.service_id} value={form.base_amount} onChange={isWeightBased || !form.service_id ? undefined : handleBaseAmountChange} readOnly={isWeightBased || !form.service_id} className={isWeightBased || !form.service_id ? `${autoInputClass} disabled:opacity-50` : inputClass} />
           </div>
           <div>
             <label className={labelClass}>Add-ons Total (₱) · Auto</label>
@@ -427,13 +383,13 @@ export default function EditTransactionModal({
           <div className="flex items-center justify-between gap-3 mb-3">
             <div>
               <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Add-ons</h3>
-              <p className="text-xs text-slate-500">Inactive items are shown (marked) so an existing selection isn't lost.</p>
+              <p className="text-xs text-slate-500">Existing add-ons keep their historical unit price even if the catalog price changed later.</p>
             </div>
             {selectedAddOnItems.length > 0 && <span className="text-sm font-semibold text-sky-600">{peso(addOnsTotal)}</span>}
           </div>
 
           {addOnsLoading ? (
-            <p className="text-sm text-slate-400 py-3">Loading add-ons…</p>
+            <LoadingPanel compact label="Loading add-ons…" slowLabel="Still loading add-ons…" />
           ) : addOns.length === 0 ? (
             <p className="text-sm text-slate-400 py-3">No add-ons configured yet.</p>
           ) : (
@@ -442,42 +398,28 @@ export default function EditTransactionModal({
                 const selected = (selectedAddOns[addOn.id] ?? 0) > 0
                 const quantity = selectedAddOns[addOn.id] ?? 1
                 const effectiveQuantity = addOn.unit_type === 'flat' ? 1 : quantity
-                const lineTotal = addOn.price * effectiveQuantity
+                const historicalItem = transaction.add_on_items?.find((item) => item.add_on_id === addOn.id)
+                const displayPrice = historicalItem?.unit_price ?? addOn.price
+                const lineTotal = displayPrice * effectiveQuantity
                 const decimalQuantity = addOn.unit_type === 'kg'
 
                 return (
                   <div key={addOn.id} className={`rounded-lg border p-3 ${selected ? 'border-sky-300 bg-sky-50/60 dark:border-sky-800 dark:bg-sky-950/20' : 'border-slate-200 dark:border-slate-700'}`}>
                     <label className="flex items-start gap-3 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={selected}
-                        onChange={(e) => toggleAddOn(addOn.id, e.target.checked)}
-                        className="mt-1 h-4 w-4"
-                      />
+                      <input type="checkbox" checked={selected} onChange={(e) => toggleAddOn(addOn.id, e.target.checked)} className="mt-1 h-4 w-4" />
                       <span className="flex-1">
                         <span className="flex items-center justify-between gap-3">
-                          <span className="font-medium text-sm text-slate-900 dark:text-slate-100">
-                            {addOn.name}{!addOn.active && <span className="text-slate-400"> (inactive)</span>}
-                          </span>
-                          <span className="text-sm font-medium text-slate-700 dark:text-slate-300">{peso(addOn.price)} / {addOn.unit_type}</span>
+                          <span className="font-medium text-sm text-slate-900 dark:text-slate-100">{historicalItem?.name ?? addOn.name}{!addOn.active && <span className="text-slate-400"> (inactive)</span>}</span>
+                          <span className="text-sm font-medium text-slate-700 dark:text-slate-300">{peso(displayPrice)} / {historicalItem?.unit_type ?? addOn.unit_type}</span>
                         </span>
                         {selected && (
                           <span className="mt-3 flex items-end justify-between gap-3">
                             <span className="w-28">
                               <span className="block text-xs text-slate-500 mb-1">Quantity</span>
-                              <input
-                                type="number"
-                                min={decimalQuantity ? '0.1' : '1'}
-                                step={decimalQuantity ? '0.1' : '1'}
-                                disabled={addOn.unit_type === 'flat'}
-                                value={effectiveQuantity}
-                                onChange={(e) => updateAddOnQuantity(addOn.id, e.target.value, decimalQuantity)}
-                                onClick={(e) => e.stopPropagation()}
-                                className={`${inputClass} py-1.5 disabled:opacity-60`}
-                              />
+                              <input type="number" min={decimalQuantity ? '0.1' : '1'} step={decimalQuantity ? '0.1' : '1'} disabled={(historicalItem?.unit_type ?? addOn.unit_type) === 'flat'} value={effectiveQuantity} onChange={(e) => updateAddOnQuantity(addOn.id, e.target.value, decimalQuantity)} onClick={(e) => e.stopPropagation()} className={`${inputClass} py-1.5 disabled:opacity-60`} />
                             </span>
                             <span className="text-right">
-                              <span className="block text-xs text-slate-500">{effectiveQuantity} {unitLabel(addOn.unit_type, effectiveQuantity)}</span>
+                              <span className="block text-xs text-slate-500">{effectiveQuantity} {unitLabel(historicalItem?.unit_type ?? addOn.unit_type, effectiveQuantity)}</span>
                               <strong className="text-sm text-slate-900 dark:text-slate-100">{peso(lineTotal)}</strong>
                             </span>
                           </span>
@@ -493,51 +435,27 @@ export default function EditTransactionModal({
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
-            <label className={labelClass}>Total (₱)</label>
-            <input
-              type="number"
-              step="0.01"
-              min="0"
-              value={form.total_amount}
-              onChange={update('total_amount')}
-              className={inputClass}
-            />
+            <label className={labelClass}>Total (₱){settings.allow_manual_total_override ? '' : ' · Auto'}</label>
+            <input type="number" step="0.01" min="0" value={form.total_amount} readOnly={!settings.allow_manual_total_override} onChange={settings.allow_manual_total_override ? update('total_amount') : undefined} className={settings.allow_manual_total_override ? inputClass : autoInputClass} />
+            {!settings.allow_manual_total_override && <p className="mt-1 text-xs text-slate-500">Manual Total override is disabled by the Owner.</p>}
           </div>
           <div>
             <label className={labelClass}>Payment Method *</label>
             <select required value={form.payment_method} onChange={update('payment_method')} className={inputClass}>
-              <option value="paid">Cash</option>
-              <option value="gcash">GCash</option>
-              <option value="pay_later">Pay Later</option>
+              <option value="paid">Cash</option><option value="gcash">GCash</option><option value="pay_later">Pay Later</option>
             </select>
           </div>
 
           <div>
             <label className={labelClass}>Cash Received (₱){isCashPayment ? ' *' : ''}</label>
-            <input
-              type="number"
-              step="0.01"
-              min="0"
-              disabled={!isCashPayment}
-              value={form.cash_amount}
-              onChange={update('cash_amount')}
-              className={`${inputClass} disabled:opacity-50 disabled:cursor-not-allowed`}
-            />
+            <input type="number" step="0.01" min="0" disabled={!isCashPayment} value={form.cash_amount} onChange={update('cash_amount')} className={`${inputClass} disabled:opacity-50 disabled:cursor-not-allowed`} />
             {isCashPayment && cashEntered && cashShort > 0 && <p className="mt-1 text-xs font-medium text-red-600">Short by {peso(cashShort)}.</p>}
             {isCashPayment && cashEntered && changeDue > 0 && <p className="mt-1 text-xs font-medium text-amber-700">Change due: {peso(changeDue)}</p>}
           </div>
 
           <div>
             <label className={labelClass}>GCash Received (₱){isGcashPayment ? ' *' : ''}</label>
-            <input
-              type="number"
-              step="0.01"
-              min="0"
-              disabled={!isGcashPayment}
-              value={form.gcash_amount}
-              onChange={update('gcash_amount')}
-              className={`${inputClass} disabled:opacity-50 disabled:cursor-not-allowed`}
-            />
+            <input type="number" step="0.01" min="0" disabled={!isGcashPayment} value={form.gcash_amount} onChange={update('gcash_amount')} className={`${inputClass} disabled:opacity-50 disabled:cursor-not-allowed`} />
             {isGcashPayment && gcashEntered && gcashDifference !== 0 && <p className="mt-1 text-xs font-medium text-red-600">Must match {peso(totalAmount)}.</p>}
           </div>
 
@@ -549,44 +467,24 @@ export default function EditTransactionModal({
           )}
 
           <div>
-            <label className={labelClass}>Pickup Date</label>
+            <label className={labelClass}>Pickup Date{settings.require_pickup_date ? ' *' : ''}</label>
             <div className="flex gap-2">
-              <input
-                type="date"
-                value={form.pickup_date}
-                onChange={(e) =>
-                  setForm((f) => ({ ...f, pickup_date: e.target.value, pickup_time: e.target.value ? f.pickup_time : '' }))
-                }
-                className={`${inputClass} flex-1`}
-              />
-              <input
-                type="time"
-                value={form.pickup_time}
-                onChange={update('pickup_time')}
-                disabled={!form.pickup_date}
-                className={`${inputClass} w-32 disabled:opacity-50 disabled:cursor-not-allowed`}
-              />
+              <input type="date" required={settings.require_pickup_date} value={form.pickup_date} onChange={(e) => setForm((f) => ({ ...f, pickup_date: e.target.value, pickup_time: e.target.value ? f.pickup_time : '' }))} className={`${inputClass} flex-1`} />
+              <input type="time" value={form.pickup_time} onChange={update('pickup_time')} disabled={!form.pickup_date} className={`${inputClass} w-32 disabled:opacity-50 disabled:cursor-not-allowed`} />
             </div>
           </div>
           <div>
-            <label className={labelClass}>Notes</label>
-            <input value={form.notes} onChange={update('notes')} className={inputClass} />
+            <label className={labelClass}>Notes{settings.require_notes_for_pay_later && form.payment_method === 'pay_later' ? ' *' : ''}</label>
+            <input required={settings.require_notes_for_pay_later && form.payment_method === 'pay_later'} value={form.notes} onChange={update('notes')} className={inputClass} />
           </div>
         </div>
 
-        {error && <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</p>}
+        {error && <InlineAlert variant="error" title="Changes were not saved">{error}</InlineAlert>}
 
         <div className="flex items-center justify-end gap-2">
-          <button type="button" onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">
-            Cancel
-          </button>
-          <button
-            type="button"
-            onClick={handleSave}
-            disabled={saving}
-            className="bg-sky-600 hover:bg-sky-700 disabled:opacity-60 text-white font-medium rounded-lg px-4 py-2 text-sm transition"
-          >
-            {saving ? 'Saving…' : 'Save Changes'}
+          <button type="button" onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">Cancel</button>
+          <button type="button" onClick={() => void handleSave()} disabled={saving} className="inline-flex items-center gap-2 bg-sky-600 hover:bg-sky-700 disabled:opacity-60 text-white font-medium rounded-lg px-4 py-2 text-sm transition">
+            {saving && <ButtonSpinner />}{saving ? 'Saving…' : 'Save Changes'}
           </button>
         </div>
       </div>
