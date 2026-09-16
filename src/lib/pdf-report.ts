@@ -37,6 +37,9 @@ type PdfReportOptions = {
   dateTo: string
   paymentMethod: PaymentMethod | 'all'
   search: string
+  shopName?: string
+  contactPhone?: string | null
+  reportFooter?: string | null
 }
 
 export function openTransactionPdfReport({
@@ -45,6 +48,9 @@ export function openTransactionPdfReport({
   dateTo,
   paymentMethod,
   search,
+  shopName = import.meta.env.VITE_SHOP_NAME || 'Aquaspin Laundry Station',
+  contactPhone,
+  reportFooter,
 }: PdfReportOptions) {
   const activeRows = rows.filter((row) => !row.deleted_at)
   const sales = activeRows.reduce((sum, row) => sum + (row.total_amount || 0), 0)
@@ -59,7 +65,6 @@ export function openTransactionPdfReport({
     .reduce((sum, row) => sum + (row.total_amount || 0), 0)
 
   const filterLabel = paymentMethod === 'all' ? 'All payments' : paymentLabel(paymentMethod)
-  const shopName = import.meta.env.VITE_SHOP_NAME || 'Aquaspin Laundry Station'
   const filename = `aquaspin-report-${dateFrom}-to-${dateTo}`
 
   const tableRows = activeRows
@@ -99,6 +104,7 @@ export function openTransactionPdfReport({
     body { font-family: Arial, Helvetica, sans-serif; color: #0f172a; margin: 0; font-size: 11px; }
     h1 { margin: 0; font-size: 22px; }
     .sub { color: #64748b; margin-top: 4px; }
+    .contact { color: #475569; margin-top: 3px; }
     .meta { margin-top: 12px; display: flex; gap: 18px; flex-wrap: wrap; color: #334155; }
     .stats { margin: 18px 0; display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
     .stat { border: 1px solid #cbd5e1; border-radius: 8px; padding: 9px; }
@@ -110,7 +116,7 @@ export function openTransactionPdfReport({
     td.num { text-align: right; }
     td.strong { font-weight: 700; }
     .empty { padding: 30px; text-align: center; color: #64748b; border: 1px dashed #cbd5e1; }
-    .footer { margin-top: 16px; color: #94a3b8; font-size: 9px; }
+    .footer { margin-top: 16px; color: #64748b; font-size: 9px; }
     @media print {
       button { display: none !important; }
       body { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
@@ -120,6 +126,7 @@ export function openTransactionPdfReport({
 <body>
   <h1>${escapeHtml(shopName)}</h1>
   <div class="sub">Transaction Report</div>
+  ${contactPhone ? `<div class="contact">Contact: ${escapeHtml(contactPhone)}</div>` : ''}
   <div class="meta">
     <div><strong>Period:</strong> ${escapeHtml(dateFrom)} to ${escapeHtml(dateTo)}</div>
     <div><strong>Payment:</strong> ${escapeHtml(filterLabel)}</div>
@@ -148,7 +155,7 @@ export function openTransactionPdfReport({
         </table>`
   }
 
-  <div class="footer">Generated from Aquaspin Laundry Station. Deleted transactions are excluded from this report.</div>
+  <div class="footer">${escapeHtml(reportFooter || 'Generated from Aquaspin Laundry Station. Deleted transactions are excluded from this report.')}</div>
   <script>
     window.addEventListener('load', () => {
       setTimeout(() => window.print(), 200)
