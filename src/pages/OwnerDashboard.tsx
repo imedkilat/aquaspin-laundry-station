@@ -1,24 +1,28 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { Navigate } from 'react-router-dom'
 import { useTransactions } from '../hooks/useTransactions'
 import TransactionTable from '../components/TransactionTable'
 import StaffAccountsManager from '../components/StaffAccountsManager'
 import ServicePricingManager from '../components/ServicePricingManager'
 import AddOnsManager from '../components/AddOnsManager'
-import { ButtonSpinner, InlineAlert } from '../components/UiFeedback'
+import OwnerSettingsManager from '../components/OwnerSettingsManager'
+import { ButtonSpinner, InlineAlert, LoadingPanel } from '../components/UiFeedback'
 import type { PaymentMethod } from '../types/database'
 import { shopDate, shopDateDaysAgo } from '../lib/date'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/auth-context'
+import { useShopSettings } from '../lib/shop-settings-context'
 import { edgeFunctionErrorMessage } from '../lib/edge-functions'
 import { openTransactionPdfReport } from '../lib/pdf-report'
 
 const peso = (n: number) =>
   `₱${n.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 
-type Tab = 'overview' | 'staff' | 'pricing' | 'addons'
+type Tab = 'overview' | 'staff' | 'pricing' | 'addons' | 'settings'
 
 export default function OwnerDashboard() {
   const { profile } = useAuth()
+  const { settings, loading: settingsLoading } = useShopSettings()
   const isOwner = profile?.role === 'owner'
 
   const [tab, setTab] = useState<Tab>('overview')
@@ -29,20 +33,40 @@ export default function OwnerDashboard() {
   const [exporting, setExporting] = useState(false)
   const [exportMessage, setExportMessage] = useState<string | null>(null)
   const exportingRef = useRef(false)
+  const appliedDefaultRangeRef = useRef(false)
   const [showDeleted, setShowDeleted] = useState(false)
 
+  useEffect(() => {
+    if (settingsLoading || appliedDefaultRangeRef.current) return
+    setDateFrom(shopDateDaysAgo(Math.max(0, settings.default_dashboard_days - 1)))
+    setDateTo(shopDate())
+    appliedDefaultRangeRef.current = true
+  }, [settings.default_dashboard_days, settingsLoading])
+
+  useEffect(() => {
+    if (!isOwner && tab !== 'overview') setTab('overview')
+  }, [isOwner, tab])
+
+  if (!isOwner && settingsLoading) {
+    return <LoadingPanel label="Checking Staff Dashboard access…" slowLabel="Still checking access… your connection may be slow." />
+  }
+
+  if (!isOwner && !settings.staff_can_access_dashboard) {
+    return <Navigate to="/" replace />
+  }
+
+  const todayOnlyForStaff = !isOwner && !settings.staff_can_view_full_history
+  const effectiveDateFrom = todayOnlyForStaff ? shopDate() : dateFrom
+  const effectiveDateTo = todayOnlyForStaff ? shopDate() : dateTo
+
   const { rows, loading, error, realtimeState, reload } = useTransactions({
-    dateFrom,
-    dateTo,
+    dateFrom: effectiveDateFrom,
+    dateTo: effectiveDateTo,
     limit: 1000,
     includeDeleted: isOwner && showDeleted,
   })
 
   const activeRows = useMemo(() => rows.filter((r) => !r.deleted_at), [rows])
-
-  useEffect(() => {
-    if (!isOwner && tab !== 'overview') setTab('overview')
-  }, [isOwner, tab])
 
   const filtered = useMemo(() => {
     return rows.filter((r) => {
@@ -73,7 +97,7 @@ export default function OwnerDashboard() {
   }, [activeRows])
 
   const exportSpreadsheet = async (outputFormat: 'csv' | 'google_sheets') => {
-    if (exportingRef.current) return
+    if (!isOwner || exportingRef.current) return
     exportingRef.current = true
     setExporting(true)
     setExportMessage(null)
@@ -131,9 +155,19 @@ export default function OwnerDashboard() {
   }
 
   const exportPdf = () => {
+    if (!isOwner) return
     setExportMessage(null)
     try {
-      openTransactionPdfReport({ rows: filtered, dateFrom, dateTo, paymentMethod: methodFilter, search })
+      openTransactionPdfReport({
+        rows: filtered,
+        dateFrom,
+        dateTo,
+        paymentMethod: methodFilter,
+        search,
+        shopName: settings.shop_display_name,
+        contactPhone: settings.contact_phone,
+        reportFooter: settings.report_footer,
+      })
       setExportMessage('PDF report opened. Choose “Save as PDF” in the print dialog.')
     } catch (pdfError) {
       setExportMessage(pdfError instanceof Error ? pdfError.message : 'Could not open the PDF report.')
@@ -158,6 +192,7 @@ export default function OwnerDashboard() {
             <button onClick={() => setTab('staff')} className={tabClass(tab === 'staff')}>Staff Accounts</button>
             <button onClick={() => setTab('pricing')} className={tabClass(tab === 'pricing')}>Service Pricing</button>
             <button onClick={() => setTab('addons')} className={tabClass(tab === 'addons')}>Add-ons</button>
+            <button onClick={() => setTab('settings')} className={tabClass(tab === 'settings')}>Settings</button>
           </>
         )}
       </div>
@@ -165,6 +200,16 @@ export default function OwnerDashboard() {
       {tab === 'overview' && (
         <>
           <div className="space-y-2">
+            {todayOnlyForStaff && (
+              <InlineAlert variant="info" title="Staff history is limited to today">
+                The Owner has limited Staff transaction visibility to today's records. Historical data remains protected by database access rules.
+              </InlineAlert>
+            )}
+            {!isOwner && settings.staff_can_view_full_history && !settings.staff_can_view_historical_pay_later && (
+              <InlineAlert variant="info" title="Historical Pay Later accounts are Owner-only">
+                Today's Pay Later transactions remain visible, but older Pay Later accounts are hidden from Staff.
+              </InlineAlert>
+            )}
             {error && (
               <InlineAlert variant="error" title="Dashboard data could not be refreshed" actionLabel="Try again" onAction={() => void reload()}>
                 {error} Existing rows remain visible so you can review what was already loaded.
@@ -183,7 +228,7 @@ export default function OwnerDashboard() {
               <p className="mt-1 text-2xl font-semibold text-slate-900 dark:text-slate-100">{peso(stats.salesToday)}</p>
               <p className="mt-1 text-xs text-slate-400">{stats.countToday} transactions today</p>
             </div>
-            <PaymentFilterCard label="Selected Sales" value={peso(stats.salesRange)} hint={`${activeRows.length} transactions · click for all`} active={methodFilter === 'all'} onClick={() => setMethodFilter('all')} />
+            <PaymentFilterCard label={todayOnlyForStaff ? "Today's Sales" : 'Selected Sales'} value={peso(stats.salesRange)} hint={`${activeRows.length} transactions · click for all`} active={methodFilter === 'all'} onClick={() => setMethodFilter('all')} />
             <PaymentFilterCard label="Cash" value={peso(stats.cashTotal)} hint={`${stats.cashCount} customers · click to view`} active={methodFilter === 'paid'} onClick={() => setMethodFilter('paid')} />
             <PaymentFilterCard label="GCash" value={peso(stats.gcashTotal)} hint={`${stats.gcashCount} customers · click to view`} active={methodFilter === 'gcash'} onClick={() => setMethodFilter('gcash')} />
             <PaymentFilterCard label="Pay Later" value={peso(stats.payLaterTotal)} hint={`${stats.payLaterCount} accounts · click to view`} active={methodFilter === 'pay_later'} onClick={() => setMethodFilter('pay_later')} />
@@ -226,15 +271,20 @@ export default function OwnerDashboard() {
               </InlineAlert>
             )}
 
+            {!todayOnlyForStaff && (
+              <div className="flex flex-wrap items-end gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1 dark:text-slate-400">From</label>
+                  <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm dark:border-slate-700 dark:bg-slate-950" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1 dark:text-slate-400">To</label>
+                  <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm dark:border-slate-700 dark:bg-slate-950" />
+                </div>
+              </div>
+            )}
+
             <div className="flex flex-wrap items-end gap-3">
-              <div>
-                <label className="block text-xs font-medium text-slate-600 mb-1 dark:text-slate-400">From</label>
-                <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm dark:border-slate-700 dark:bg-slate-950" />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-slate-600 mb-1 dark:text-slate-400">To</label>
-                <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm dark:border-slate-700 dark:bg-slate-950" />
-              </div>
               <div>
                 <label className="block text-xs font-medium text-slate-600 mb-1 dark:text-slate-400">Payment</label>
                 <select value={methodFilter} onChange={(e) => setMethodFilter(e.target.value as PaymentMethod | 'all')} className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm dark:border-slate-700 dark:bg-slate-950">
@@ -255,6 +305,7 @@ export default function OwnerDashboard() {
       {isOwner && tab === 'staff' && <StaffAccountsManager />}
       {isOwner && tab === 'pricing' && <ServicePricingManager />}
       {isOwner && tab === 'addons' && <AddOnsManager />}
+      {isOwner && tab === 'settings' && <OwnerSettingsManager />}
     </div>
   )
 }
