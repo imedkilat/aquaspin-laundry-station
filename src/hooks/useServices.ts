@@ -3,26 +3,25 @@ import { supabase } from '../lib/supabase'
 import { makeRealtimeTopic } from '../lib/realtime'
 import type { Service } from '../types/database'
 
-export function useServices() {
+export function useServices(options: { includeInactive?: boolean } = {}) {
+  const { includeInactive = false } = options
   const [services, setServices] = useState<Service[]>([])
   const [loading, setLoading] = useState(true)
 
   const reload = useCallback(() => {
     setLoading(true)
-    supabase
-      .from('services')
-      .select('*')
-      .eq('active', true)
-      .order('label')
-      .then(({ data, error }) => {
-        if (error) {
-          // eslint-disable-next-line no-console
-          console.error('Failed to load services', error)
-        }
-        setServices(data ?? [])
-        setLoading(false)
-      })
-  }, [])
+    let query = supabase.from('services').select('*').order('label')
+    if (!includeInactive) query = query.eq('active', true)
+
+    query.then(({ data, error }) => {
+      if (error) {
+        // eslint-disable-next-line no-console
+        console.error('Failed to load services', error)
+      }
+      setServices(data ?? [])
+      setLoading(false)
+    })
+  }, [includeInactive])
 
   useEffect(() => {
     reload()
@@ -35,7 +34,7 @@ export function useServices() {
   // callbacks to a channel that is already subscribed.
   useEffect(() => {
     const channel = supabase
-      .channel(makeRealtimeTopic('services-realtime'))
+      .channel(makeRealtimeTopic(`services-realtime-${includeInactive ? 'all' : 'active'}`))
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'services' },
@@ -46,7 +45,7 @@ export function useServices() {
     return () => {
       void supabase.removeChannel(channel)
     }
-  }, [reload])
+  }, [includeInactive, reload])
 
   return { services, loading, reload }
 }
