@@ -2,22 +2,15 @@ import { useEffect, useState, useCallback } from 'react'
 import { supabase } from '../lib/supabase'
 import { makeRealtimeTopic } from '../lib/realtime'
 import type { TransactionWithService } from '../types/database'
+import type { RealtimeState } from './useServices'
 
 interface Options {
-  // Optional date filter (YYYY-MM-DD). When omitted, loads the most recent 200 rows.
   dateFrom?: string
   dateTo?: string
   limit?: number
-  // Soft-deleted rows are excluded by default. Pass true (Owner Dashboard's
-  // "Show deleted" toggle) to include them alongside active rows.
   includeDeleted?: boolean
 }
 
-// Three separate FKs from transactions to profiles (created_by, updated_by,
-// deleted_by) need explicit relationship hints so PostgREST knows which is
-// which. Non-owners only ever see their own profile row here (RLS), so
-// these resolve to null for anyone else's transactions -- fine, since the
-// UI only shows this to owners.
 const SELECT = `*, services ( code, label ),
   created_by_profile:profiles!transactions_created_by_fkey ( full_name ),
   updated_by_profile:profiles!transactions_updated_by_fkey ( full_name ),
@@ -27,9 +20,13 @@ export function useTransactions(options: Options = {}) {
   const { dateFrom, dateTo, limit = 200, includeDeleted = false } = options
   const [rows, setRows] = useState<TransactionWithService[]>([])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [realtimeState, setRealtimeState] = useState<RealtimeState>('connecting')
 
-  const reload = useCallback(() => {
+  const reload = useCallback(async () => {
     setLoading(true)
+    setError(null)
+
     let query = supabase
       .from('transactions')
       .select(SELECT)
@@ -40,38 +37,40 @@ export function useTransactions(options: Options = {}) {
     if (dateTo) query = query.lte('transaction_date', dateTo)
     if (!includeDeleted) query = query.is('deleted_at', null)
 
-    query.then(({ data, error }) => {
-      if (error) {
-        // eslint-disable-next-line no-console
-        console.error('Failed to load transactions', error)
-      }
-      setRows((data as unknown as TransactionWithService[]) ?? [])
+    const { data, error: queryError } = await query
+    if (queryError) {
+      setError('Could not load transactions. Check the internet connection and try again.')
       setLoading(false)
-    })
+      return
+    }
+
+    setRows((data as unknown as TransactionWithService[]) ?? [])
+    setLoading(false)
   }, [dateFrom, dateTo, limit, includeDeleted])
 
   useEffect(() => {
-    reload()
+    void reload()
   }, [reload])
 
-  // Live updates: any staff/owner adding, editing, or deleting a transaction
-  // reflects here immediately, across every open dashboard/tablet. Each
-  // mounted subscription gets its own topic so multiple tables/modals and
-  // React StrictMode cannot collide inside one browser instance.
   useEffect(() => {
+    setRealtimeState('connecting')
     const channel = supabase
       .channel(makeRealtimeTopic('transactions-realtime'))
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'transactions' },
-        () => reload()
+        () => void reload()
       )
-      .subscribe()
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') setRealtimeState('connected')
+        else if (status === 'CHANNEL_ERROR') setRealtimeState('error')
+        else if (status === 'TIMED_OUT' || status === 'CLOSED') setRealtimeState('disconnected')
+      })
 
     return () => {
       void supabase.removeChannel(channel)
     }
   }, [reload])
 
-  return { rows, loading, reload }
+  return { rows, loading, error, realtimeState, reload }
 }
