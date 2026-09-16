@@ -1,5 +1,5 @@
-import { readdirSync } from 'node:fs';
-import { basename, resolve } from 'node:path';
+import { readFileSync, readdirSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 const migrationsDir = resolve('supabase/migrations');
 const files = readdirSync(migrationsDir)
@@ -36,6 +36,21 @@ const requireBefore = (firstSuffix, secondSuffix) => {
   }
 };
 
+const baseMigration = '20260914000000_base_schema.sql';
+if (files[0] !== baseMigration) {
+  errors.push(`${baseMigration} must be the first migration on a clean rebuild`);
+}
+
+try {
+  const schema = readFileSync(resolve('supabase/schema.sql'), 'utf8');
+  const versionedBase = readFileSync(resolve('supabase/migrations', baseMigration), 'utf8');
+  if (schema !== versionedBase) {
+    errors.push(`${baseMigration} must byte-match supabase/schema.sql`);
+  }
+} catch (error) {
+  errors.push(`unable to compare base schema: ${error.message}`);
+}
+
 // transaction_codes_and_test_cleanup reads gcash_reference, so the GCash
 // schema migration must always run first on a clean rebuild.
 requireBefore(
@@ -49,4 +64,4 @@ if (errors.length > 0) {
   process.exit(1);
 }
 
-console.log(`Migration history check passed (${files.length} migration files, unique ordered versions).`);
+console.log(`Migration history check passed (${files.length} migration files, unique ordered versions, canonical base present).`);
