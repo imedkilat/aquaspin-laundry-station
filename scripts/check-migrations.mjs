@@ -2,15 +2,15 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 const migrationsDir = resolve('supabase/migrations');
-const files = readdirSync(migrationsDir)
-  .filter((name) => name.endsWith('.sql'))
-  .sort((a, b) => a.localeCompare(b));
+const rawFiles = readdirSync(migrationsDir)
+  .filter((name) => name.endsWith('.sql'));
 
 const versionPattern = /^(\d+)_/;
 const versions = new Map();
 const errors = [];
+const migrations = [];
 
-for (const file of files) {
+for (const file of rawFiles) {
   const match = file.match(versionPattern);
   if (!match) {
     errors.push(`${file}: migration filename must start with a numeric version followed by _`);
@@ -24,20 +24,28 @@ for (const file of files) {
   } else {
     versions.set(version, file);
   }
+
+  migrations.push({ file, version, numericVersion: BigInt(version) });
 }
 
+migrations.sort((a, b) => {
+  if (a.numericVersion < b.numericVersion) return -1;
+  if (a.numericVersion > b.numericVersion) return 1;
+  return a.file.localeCompare(b.file);
+});
+
 const requireBefore = (firstSuffix, secondSuffix) => {
-  const first = files.find((name) => name.endsWith(firstSuffix));
-  const second = files.find((name) => name.endsWith(secondSuffix));
+  const first = migrations.find((migration) => migration.file.endsWith(firstSuffix));
+  const second = migrations.find((migration) => migration.file.endsWith(secondSuffix));
   if (!first || !second) return;
 
-  if (files.indexOf(first) >= files.indexOf(second)) {
-    errors.push(`${first} must sort before ${second}`);
+  if (first.numericVersion >= second.numericVersion) {
+    errors.push(`${first.file} must have an earlier migration version than ${second.file}`);
   }
 };
 
 const baseMigration = '20260914000000_base_schema.sql';
-if (files[0] !== baseMigration) {
+if (migrations[0]?.file !== baseMigration) {
   errors.push(`${baseMigration} must be the first migration on a clean rebuild`);
 }
 
@@ -64,4 +72,4 @@ if (errors.length > 0) {
   process.exit(1);
 }
 
-console.log(`Migration history check passed (${files.length} migration files, unique ordered versions, canonical base present).`);
+console.log(`Migration history check passed (${migrations.length} migration files, unique numeric versions, canonical base present).`);
