@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { AuthProvider, useAuth } from './lib/auth-context'
+import { ShopSettingsProvider } from './lib/shop-settings-context'
 import { supabaseConfigError } from './lib/supabase'
 import Login from './pages/Login'
 import StaffView from './pages/StaffView'
@@ -57,7 +58,9 @@ export default function App() {
     <GlobalErrorBoundary>
       <BrowserRouter>
         <AuthProvider>
-          <AppRoutes />
+          <ShopSettingsProvider>
+            <AppRoutes />
+          </ShopSettingsProvider>
         </AuthProvider>
       </BrowserRouter>
     </GlobalErrorBoundary>
