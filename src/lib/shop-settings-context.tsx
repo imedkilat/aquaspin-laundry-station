@@ -9,6 +9,7 @@ export const DEFAULT_SHOP_SETTINGS: ShopSettings = {
   shop_display_name: SHOP_NAME || 'Aquaspin Laundry Station',
   contact_phone: null,
   report_footer: null,
+  logo_path: null,
   default_payment_method: 'pay_later',
   default_dashboard_days: 7,
   require_phone_number: false,
@@ -21,6 +22,7 @@ export const DEFAULT_SHOP_SETTINGS: ShopSettings = {
   staff_can_edit_transactions: true,
   staff_can_delete_transactions: true,
   staff_can_view_historical_pay_later: true,
+  staff_can_edit_own_profile: true,
   updated_at: new Date(0).toISOString(),
   updated_by: null,
 }
@@ -65,7 +67,7 @@ export function ShopSettingsProvider({ children }: { children: ReactNode }) {
       return
     }
 
-    setSettings(data ?? DEFAULT_SHOP_SETTINGS)
+    setSettings({ ...DEFAULT_SHOP_SETTINGS, ...(data ?? {}) })
     setError(null)
     setLoading(false)
   }, [session])
