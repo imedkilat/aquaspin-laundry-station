@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "prebuild": "npm run check:migrations",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "check:migrations": "node scripts/check-migrations.mjs",
