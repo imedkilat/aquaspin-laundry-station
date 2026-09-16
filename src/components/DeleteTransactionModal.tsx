@@ -37,7 +37,10 @@ export default function DeleteTransactionModal({
       setError(null)
       setDeleting(true)
 
-      const { error: updateError } = await supabase
+      // Optimistic concurrency guard: only delete the exact version that was
+      // opened in this modal. If another browser/tab edited or deleted the row
+      // first, updated_at no longer matches and this update safely affects 0 rows.
+      const { data: deletedRows, error: updateError } = await supabase
         .from('transactions')
         .update({
           deleted_at: new Date().toISOString(),
@@ -45,11 +48,18 @@ export default function DeleteTransactionModal({
           delete_reason: trimmedReason,
         })
         .eq('id', transaction.id)
+        .eq('updated_at', transaction.updated_at)
+        .select('id')
 
       setDeleting(false)
 
       if (updateError) {
         setError(updateError.message)
+        return
+      }
+
+      if (!deletedRows || deletedRows.length === 0) {
+        setError('This transaction changed in another browser or by another staff member. Close this dialog, refresh the list, and review the latest version before deleting.')
         return
       }
 
