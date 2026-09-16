@@ -5,14 +5,15 @@ All database data below is synthetic, in an isolated in-memory PostgreSQL instan
 Supabase auth/storage are minimally shimmed; actual repository policies, SQL functions,
 triggers and migrations execute. No production credentials or connection are used.
 
-**35 automated checks PASS; 0 automated assertion failures.** Staff soft-delete is now
+**37 automated checks PASS; 0 automated assertion failures.** Staff soft-delete is now
 tested through the secure RPC and no longer has a known FAIL. The old direct
 `UPDATE ... RETURNING` behavior remains intentionally unavailable because deleted rows
 are hidden by RLS.
 
 | Test | Result | Evidence / scope |
 | --- | --- | --- |
-| Full baseline plus forward migrations | PASS | Schema and all 13 baseline migrations replayed before both follow-up migrations |
+| Full baseline plus forward migrations | PASS | Schema and all 13 baseline migrations replayed before all three follow-up migrations |
+| Live-schema drift reconciliation | PASS | Legacy soft-delete overload removed; hardened overload retained; authenticated-only EXECUTE; baseline absent SMS columns and drifted SMS columns both exercised |
 | Legacy nullable customer and initial status | PASS | NULL customer, received status, unchanged old updated_at, honest baseline ledger; deleted legacy included |
 | Canonical customer creation | PASS | Random CUS code, creator attribution, immutable public code |
 | Normalized phone lookup | PASS | Three requested PH forms plus punctuation; invalid format returns NULL |
@@ -29,6 +30,7 @@ are hidden by RLS.
 | ready_for_pickup → completed | PASS | Status, token, actor and ledger |
 | Owner override / reopen | PASS | Terminal transition denied without reasoned owner override |
 | Hold / resume / cancel | PASS | Reasons required; payment values unchanged |
+| Resumed lifecycle floor | PASS | received→washing→on_hold→washing→drying→ready_for_pickup→completed works without stale hold reason |
 | Invalid / skipped / same status / NULL token | PASS | RPC rejects with expected errors |
 | Raw status mutation | PASS | Direct UPDATE denied, status+delete bypass denied, noninitial INSERT rejected |
 | Stale browser safety | PASS | Stale status rejected without ledger append; old edit token updates zero rows; edit invalidates status token |
@@ -37,6 +39,7 @@ are hidden by RLS.
 | Staff soft-delete RPC | PASS | Staff delete permission, safe success metadata, hidden deleted row, repeated delete rejection |
 | Owner soft-delete RPC | PASS | Owner delete success; stale token rejected; reason required; restore remains Owner-only |
 | Forward status skips | PASS | Staff received→ready, washing→ready, drying→completed with reasons; backward/reopen denied |
+| SMS audit least privilege | PASS | Authenticated UPDATE is denied for sms_sent_at, sms_sent_by and sms_message_id when drifted columns exist |
 | Append-only history | PASS | Client insert/update/delete/truncate denied; administrator UPDATE blocked by trigger; FK prevents receipt hard-delete |
 | Scoped summary/history/status RPC | PASS | Staff full-history and historical-Pay-Later switches limit query and mutation |
 | Cash / GCash / Pay Later | PASS | Valid inserts; missing GCash reference and insufficient cash rejected |
@@ -46,7 +49,7 @@ are hidden by RLS.
 | Export/RPC SQL dependencies | PASS | Existing export columns selectable and rate-limiter signature exists; not a live export test |
 | Function grants / Realtime membership | PASS | Authenticated helper EXECUTE true; anonymous status RPC false; each publication member exactly once |
 | Monotonic timestamps / rollback | PASS | Two writes in one SQL transaction get different tokens; rollback removes status changes and ledger entries |
-| Backfill / rerun | PASS | Dry run changes nothing; commit links 1, leaves 17, reports 2 ambiguous phone groups; exact snapshots retained; rerun links 0 |
+| Backfill / rerun | PASS | Dry run changes nothing; commit links 1, leaves 19, reports 2 ambiguous phone groups; exact snapshots retained; rerun links 0 |
 | Direct staff soft-delete with RETURNING | PASS (denied intentionally) | Deleted-row RLS hiding is preserved; callers must use `soft_delete_transaction` |
 | `git diff --check` | PASS | No whitespace errors |
 | Frontend dependency installation | PASS | Retry succeeded with unchanged pinned app dependencies after transient tarball 404 |

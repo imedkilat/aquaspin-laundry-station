@@ -75,9 +75,34 @@ try {
   await q("update public.transactions set deleted_at=now(), delete_reason='Duplicate entry' where id=$1", [legacyDeleted.id]);
   await admin();
   const migrations = filenames.filter(f => f.includes('customer_status_'));
-  assert.equal(migrations.length, 2, 'Both forward customer/status migrations must exist');
+  assert.equal(migrations.length, 3, 'All forward customer/status migrations must exist');
   await test('apply full baseline and new forward migration', async () => {
-    for (const file of migrations) await db.exec(await read('supabase/migrations/' + file));
+    for (const file of migrations.slice(0, 2)) await db.exec(await read('supabase/migrations/' + file));
+  });
+  await test('reconcile legacy soft-delete RPC and drifted SMS audit columns', async () => {
+    const before = await one("select count(*)::int as count from pg_attribute where attrelid='public.transactions'::regclass and attname in ('sms_sent_at','sms_sent_by','sms_message_id') and not attisdropped");
+    assert.equal(before.count, 0, 'Baseline schema has no optional SMS audit columns');
+    await db.exec('alter table public.transactions add column sms_sent_at timestamptz, add column sms_sent_by uuid, add column sms_message_id text');
+    await db.exec(`
+      create function public.soft_delete_transaction(uuid, text, timestamptz)
+      returns boolean language sql immutable as $$ select false $$;
+      revoke all on function public.soft_delete_transaction(uuid, text, timestamptz) from public, anon, authenticated;
+      grant execute on function public.soft_delete_transaction(uuid, text, timestamptz) to authenticated;
+    `);
+    await db.exec(await read('supabase/migrations/' + migrations[2]));
+    assert.equal((await one("select to_regprocedure('public.soft_delete_transaction(uuid,text,timestamptz)') is null gone")).gone, true);
+    assert.equal((await one("select to_regprocedure('public.soft_delete_transaction(uuid,timestamptz,text)') is not null hardened")).hardened, true);
+    const rpcGrants = await one("select has_function_privilege('authenticated','public.soft_delete_transaction(uuid,timestamptz,text)','execute') as auth_ok, has_function_privilege('anon','public.soft_delete_transaction(uuid,timestamptz,text)','execute') as anon_ok");
+    assert.equal(rpcGrants.auth_ok, true); assert.equal(rpcGrants.anon_ok, false);
+    for (const column of ['sms_sent_at', 'sms_sent_by', 'sms_message_id']) {
+      assert.equal((await one(`select has_column_privilege('authenticated','public.transactions','${column}','UPDATE') allowed`)).allowed, false);
+    }
+    await asUser(staff);
+    assert.equal((await q('select id from transactions where id=$1', [legacyDeleted.id])).length, 0);
+    assert.equal((await q('select id from transaction_status_history where transaction_id=$1', [legacyDeleted.id])).length, 0);
+    await asUser(owner);
+    assert.equal((await q('select id from transactions where id=$1', [legacyDeleted.id])).length, 1);
+    assert.ok((await q('select id from transaction_status_history where transaction_id=$1', [legacyDeleted.id])).length > 0);
   });
   await asUser(owner);
   await test('legacy NULL customer, received status and honest baseline history', async () => {
@@ -176,6 +201,25 @@ try {
     flow = await status(flow, 'drying', 'Resume after manual wash');
     flow = await status(flow, 'cancelled', 'Customer requested cancellation');
     assert.equal(flow.payment_method, 'pay_later'); assert.equal(Number(flow.total_amount), 0);
+  });
+  await test('hold history does not contaminate resumed forward transitions', async () => {
+    await setting('staff_can_edit_transactions', true); await asUser(staff);
+    let resumed = await transaction({ created_by: staff, customer_name: 'Hold resume lifecycle' });
+    resumed = await status(resumed, 'washing');
+    resumed = await status(resumed, 'on_hold', 'Machine maintenance');
+    resumed = await status(resumed, 'washing', 'Maintenance complete');
+    resumed = await status(resumed, 'drying');
+    resumed = await status(resumed, 'ready_for_pickup');
+    resumed = await status(resumed, 'completed');
+    assert.equal(resumed.order_status, 'completed');
+    let skipped = await transaction({ created_by: staff, customer_name: 'Hold resume skip' });
+    skipped = await status(skipped, 'washing');
+    skipped = await status(skipped, 'on_hold', 'Machine maintenance');
+    skipped = await status(skipped, 'washing', 'Maintenance complete');
+    await assert.rejects(status(skipped, 'ready_for_pickup'), e => e.code === '22023');
+    skipped = await status(skipped, 'ready_for_pickup', 'Off-machine wash and dry complete');
+    assert.equal(skipped.order_status, 'ready_for_pickup');
+    await asUser(owner);
   });
   await test('invalid status, skips, same status and missing concurrency token rejected', async () => {
     const t = await fresh(cash.id);

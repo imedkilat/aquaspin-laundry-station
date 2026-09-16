@@ -25,6 +25,20 @@ movement, terminal reopen, and explicit owner override remain Owner-only with a 
 hold, cancel, and hold-resume require reasons. Status values and ledger immutability are
 unchanged, and service IDs/codes are not embedded in the rules.
 
+The forward migration `20260921030000_customer_status_live_drift_followup.sql` reconciles
+the known live-schema drift without importing unrelated migrations (`customer_sms_notifications`
+or `fix_staff_soft_delete_rls`). It drops only the
+legacy `soft_delete_transaction(uuid,text,timestamptz)` overload, leaving the hardened
+`soft_delete_transaction(uuid,timestamptz,text)` callable by authenticated users. It
+also rebuilds the authenticated transaction UPDATE column grant from `pg_attribute`,
+excluding `order_status` and the optional `sms_sent_at`, `sms_sent_by`, and
+`sms_message_id` audit fields when those columns exist.
+
+When the current status is not `on_hold`, status ranking uses that current status. A
+historical hold floor is consulted only while the row is currently on hold, so a resumed
+order can take ordinary forward steps without a stale hold reason. Intentional forward
+skips still require a reason.
+
 Customer `active` changes are Owner-only. Staff may still create/edit customer details
 when `staff_can_manage_customers` is enabled, but cannot deactivate or reactivate records.
 History and snapshots remain intact.
@@ -158,7 +172,7 @@ or overwrite links. Identity matching is deterministic; newly allocated IDs are 
 Current constraints can reject historically invalid receipts: the whole script rolls
 back rather than disabling integrity checks. Run within a maintenance window.
 
-Fixture result: **1 linked, 17 unlinked, 2 ambiguous phone groups**; second committed run
+Fixture result: **1 linked, 19 unlinked, 2 ambiguous phone groups**; second committed run
 links 0. These counts describe synthetic tests only, not production.
 
 ## Order lifecycle and concurrency
@@ -249,8 +263,9 @@ exposure. Publication membership does not alter the locked-down `realtime` schem
 
 ## Database object inventory
 
-Two new forward migrations: `20260921010000_customer_status_backend.sql` and
-`20260921020000_customer_status_followup.sql`. Generated with
+Three new forward migrations: `20260921010000_customer_status_backend.sql`,
+`20260921020000_customer_status_followup.sql`, and
+`20260921030000_customer_status_live_drift_followup.sql`. Generated with
 Supabase CLI 2.117.0, then sequenced after the baseline's already-future-dated September 20
 migrations. No applied migration is edited.
 
@@ -300,6 +315,9 @@ migrations. No applied migration is edited.
   authenticated EXECUTE only (plus function owner).
 - New `public.soft_delete_transaction(uuid,timestamptz,text)`; authenticated EXECUTE
   only (plus function owner). It returns success metadata, never the deleted row.
+- Legacy `public.soft_delete_transaction(uuid,text,timestamptz)` is explicitly removed
+  by exact signature. Authenticated UPDATE grants exclude `order_status` and optional
+  SMS audit columns (`sms_sent_at`, `sms_sent_by`, `sms_message_id`) when present.
 - New invoker views: `customer_summary`, `customer_transaction_history`; authenticated SELECT.
 
 **RLS policies**
@@ -341,7 +359,7 @@ node node_modules/typescript/bin/tsc --ignoreConfig --noEmit --skipLibCheck --mo
 ```
 
 The harness uses in-memory PGlite PostgreSQL and minimal Supabase auth/storage shims.
-It executes the full repository baseline plus the new migration and issues SQL as actual
+It executes the full repository baseline plus all three customer/status migrations and issues SQL as actual
 anon/authenticated roles, including realistic Supabase default table grants. It cannot
 connect to a live database. It is not a substitute for staging Supabase integration.
 
@@ -369,7 +387,7 @@ Before production approval:
    owner/staff JWTs, disconnection/reconnection, and live publication settings.
 6. Approve directory/notes visibility, default staff customer permission, summary billing
    semantics, hold-resume rules, and owner skips for wash-only/dry-only services.
-7. Independently review/apply only the new migration. No `db push`, production deployment,
+7. Independently review/apply only the customer/status migrations. No `db push`, production deployment,
    or auto-merge is authorized by this PR. Keep PR #1 and unrelated local SMS work separate.
 
 Rollback guidance: if migration fails, its transaction rolls back. After successful
