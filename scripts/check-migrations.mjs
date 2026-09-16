@@ -66,10 +66,40 @@ requireBefore(
   '_transaction_codes_and_test_cleanup.sql',
 );
 
+// These versions are the exact migration IDs currently recorded in the
+// Aquaspin production Supabase ledger. Keeping them represented locally is
+// required before `migration list` / `db push` can ever become deterministic.
+const productionLedgerVersions = [
+  '20260915',
+  '20260915174106',
+  '20260915180704',
+  '20260915181029',
+  '20260915181129',
+  '20260915190757',
+  '20260915191400',
+  '20260915191412',
+  '20260915192554',
+  '20260915192604',
+  '20260916',
+  '20260916015627',
+  '20260916024806',
+  '20260916031013',
+  '20260916032655',
+  '20260916125702',
+];
+
+for (const version of productionLedgerVersions) {
+  if (!versions.has(version)) {
+    errors.push(`missing production-ledger migration version ${version}`);
+  }
+}
+
 if (errors.length > 0) {
   console.error('Migration history check failed:');
   for (const error of errors) console.error(`- ${error}`);
   process.exit(1);
 }
 
-console.log(`Migration history check passed (${migrations.length} migration files, unique numeric versions, canonical base present).`);
+console.log(
+  `Migration history check passed (${migrations.length} migration files, unique numeric versions, canonical base present, production ledger represented).`,
+);
