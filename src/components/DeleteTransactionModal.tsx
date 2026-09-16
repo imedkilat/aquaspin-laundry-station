@@ -1,13 +1,15 @@
 import { useRef, useState } from 'react'
 import { supabase } from '../lib/supabase'
+import { useAuth } from '../lib/auth-context'
 import type { TransactionWithService } from '../types/database'
 
 const peso = (n: number) =>
   `₱${n.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 
-// A soft delete only sends the deletion timestamp + reason. Postgres assigns
-// deleted_by from auth.uid(), so a browser/direct API caller cannot spoof who
-// deleted the transaction.
+// Soft-delete fallback sends deleted_by for compatibility with databases that
+// have not received the hardening migration yet. Once the migration is live,
+// Postgres overwrites deleted_at/deleted_by from the authenticated session so
+// browser-supplied attribution cannot be spoofed.
 export default function DeleteTransactionModal({
   transaction,
   onClose,
@@ -15,6 +17,7 @@ export default function DeleteTransactionModal({
   transaction: TransactionWithService
   onClose: () => void
 }) {
+  const { profile } = useAuth()
   const [reason, setReason] = useState('')
   const [deleting, setDeleting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -38,6 +41,7 @@ export default function DeleteTransactionModal({
         .from('transactions')
         .update({
           deleted_at: new Date().toISOString(),
+          deleted_by: profile?.id ?? null,
           delete_reason: trimmedReason,
         })
         .eq('id', transaction.id)
