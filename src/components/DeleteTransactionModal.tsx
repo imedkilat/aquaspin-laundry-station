@@ -1,15 +1,21 @@
 import { useRef, useState } from 'react'
 import { supabase } from '../lib/supabase'
-import { useAuth } from '../lib/auth-context'
 import type { TransactionWithService } from '../types/database'
 
 const peso = (n: number) =>
   `₱${n.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 
-// Soft-delete fallback sends deleted_by for compatibility with databases that
-// have not received the hardening migration yet. Once the migration is live,
-// Postgres overwrites deleted_at/deleted_by from the authenticated session so
-// browser-supplied attribution cannot be spoofed.
+// Soft-delete goes through the soft_delete_transaction() RPC rather than a
+// direct UPDATE. Postgres row-level security requires the *resulting* row of
+// an UPDATE to stay visible under the table's own SELECT policy for the
+// acting role -- and a soft-deleted row is invisible to Staff under
+// transactions_select_scoped. A direct Staff UPDATE setting deleted_at would
+// therefore always be rejected by Postgres itself, regardless of the
+// staff_can_delete_transactions setting. The RPC runs as SECURITY DEFINER
+// (so it bypasses that particular RLS check) while re-enforcing the exact
+// same permission, visibility, and optimistic-concurrency rules by hand.
+// Owner deletes go through the same RPC for one consistent, audited path;
+// deleted_by/deleted_at/delete_reason are always set server-side.
 export default function DeleteTransactionModal({
   transaction,
   onClose,
@@ -17,7 +23,6 @@ export default function DeleteTransactionModal({
   transaction: TransactionWithService
   onClose: () => void
 }) {
-  const { profile } = useAuth()
   const [reason, setReason] = useState('')
   const [deleting, setDeleting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -39,26 +44,22 @@ export default function DeleteTransactionModal({
 
       // Optimistic concurrency guard: only delete the exact version that was
       // opened in this modal. If another browser/tab edited or deleted the row
-      // first, updated_at no longer matches and this update safely affects 0 rows.
-      const { data: deletedRows, error: updateError } = await supabase
-        .from('transactions')
-        .update({
-          deleted_at: new Date().toISOString(),
-          deleted_by: profile?.id ?? null,
-          delete_reason: trimmedReason,
-        })
-        .eq('id', transaction.id)
-        .eq('updated_at', transaction.updated_at)
-        .select('id')
+      // first, updated_at no longer matches and the RPC safely affects 0 rows
+      // (returned as null) instead of deleting the wrong version.
+      const { data: deletedRow, error: rpcError } = await supabase.rpc('soft_delete_transaction', {
+        p_id: transaction.id,
+        p_reason: trimmedReason,
+        p_expected_updated_at: transaction.updated_at,
+      })
 
       setDeleting(false)
 
-      if (updateError) {
-        setError(updateError.message)
+      if (rpcError) {
+        setError(rpcError.message)
         return
       }
 
-      if (!deletedRows || deletedRows.length === 0) {
+      if (!deletedRow) {
         setError('This transaction changed in another browser or by another staff member. Close this dialog, refresh the list, and review the latest version before deleting.')
         return
       }

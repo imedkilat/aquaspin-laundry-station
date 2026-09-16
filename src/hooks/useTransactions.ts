@@ -15,7 +15,8 @@ interface Options {
 const SELECT = `*, services ( code, label ),
   created_by_profile:profiles!transactions_created_by_fkey ( full_name ),
   updated_by_profile:profiles!transactions_updated_by_fkey ( full_name ),
-  deleted_by_profile:profiles!transactions_deleted_by_fkey ( full_name )`
+  deleted_by_profile:profiles!transactions_deleted_by_fkey ( full_name ),
+  sms_sent_by_profile:profiles!transactions_sms_sent_by_fkey ( full_name )`
 
 export function useTransactions(options: Options = {}) {
   const { dateFrom, dateTo, limit = 200, includeDeleted = false, fetchAll = false } = options
