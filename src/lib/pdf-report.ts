@@ -66,6 +66,7 @@ export function openTransactionPdfReport({
 
   const filterLabel = paymentMethod === 'all' ? 'All payments' : paymentLabel(paymentMethod)
   const filename = `aquaspin-report-${dateFrom}-to-${dateTo}`
+  const logoUrl = document.querySelector<HTMLImageElement>('header img[alt$=" logo"]')?.src ?? null
 
   const tableRows = activeRows
     .map(
@@ -103,6 +104,8 @@ export function openTransactionPdfReport({
     * { box-sizing: border-box; }
     body { font-family: Arial, Helvetica, sans-serif; color: #0f172a; margin: 0; font-size: 11px; }
     h1 { margin: 0; font-size: 22px; }
+    .brand { display: flex; align-items: center; gap: 10px; }
+    .brand-logo { width: 48px; height: 48px; object-fit: contain; border: 1px solid #e2e8f0; border-radius: 10px; padding: 4px; }
     .sub { color: #64748b; margin-top: 4px; }
     .contact { color: #475569; margin-top: 3px; }
     .meta { margin-top: 12px; display: flex; gap: 18px; flex-wrap: wrap; color: #334155; }
@@ -124,9 +127,14 @@ export function openTransactionPdfReport({
   </style>
 </head>
 <body>
-  <h1>${escapeHtml(shopName)}</h1>
-  <div class="sub">Transaction Report</div>
-  ${contactPhone ? `<div class="contact">Contact: ${escapeHtml(contactPhone)}</div>` : ''}
+  <div class="brand">
+    ${logoUrl ? `<img class="brand-logo" src="${escapeHtml(logoUrl)}" alt="Shop logo" />` : ''}
+    <div>
+      <h1>${escapeHtml(shopName)}</h1>
+      <div class="sub">Transaction Report</div>
+      ${contactPhone ? `<div class="contact">Contact: ${escapeHtml(contactPhone)}</div>` : ''}
+    </div>
+  </div>
   <div class="meta">
     <div><strong>Period:</strong> ${escapeHtml(dateFrom)} to ${escapeHtml(dateTo)}</div>
     <div><strong>Payment:</strong> ${escapeHtml(filterLabel)}</div>
@@ -158,7 +166,7 @@ export function openTransactionPdfReport({
   <div class="footer">${escapeHtml(reportFooter || 'Generated from Aquaspin Laundry Station. Deleted transactions are excluded from this report.')}</div>
   <script>
     window.addEventListener('load', () => {
-      setTimeout(() => window.print(), 200)
+      setTimeout(() => window.print(), 250)
     })
   </script>
 </body>
