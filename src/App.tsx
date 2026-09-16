@@ -5,14 +5,17 @@ import Login from './pages/Login'
 import StaffView from './pages/StaffView'
 import OwnerDashboard from './pages/OwnerDashboard'
 import Layout from './components/Layout'
+import { InlineAlert, LoadingPanel } from './components/UiFeedback'
 
 function Gate({ children, ownerOnly = false }: { children: React.ReactNode; ownerOnly?: boolean }) {
   const { session, profile, loading } = useAuth()
 
   if (loading) {
     return (
-      <div className="min-h-svh flex items-center justify-center text-slate-400 text-sm">
-        Loading…
+      <div className="min-h-svh flex items-center justify-center bg-slate-50 px-4 dark:bg-slate-950">
+        <div className="w-full max-w-md">
+          <LoadingPanel label="Opening Aquaspin…" slowLabel="Still signing you in… your connection may be slow." />
+        </div>
       </div>
     )
   }
@@ -28,26 +31,9 @@ function AppRoutes() {
 
   return (
     <Routes>
-      <Route
-        path="/login"
-        element={!loading && session ? <Navigate to="/" replace /> : <Login />}
-      />
-      <Route
-        path="/"
-        element={
-          <Gate>
-            <StaffView />
-          </Gate>
-        }
-      />
-      <Route
-        path="/dashboard"
-        element={
-          <Gate>
-            <OwnerDashboard />
-          </Gate>
-        }
-      />
+      <Route path="/login" element={!loading && session ? <Navigate to="/" replace /> : <Login />} />
+      <Route path="/" element={<Gate><StaffView /></Gate>} />
+      <Route path="/dashboard" element={<Gate><OwnerDashboard /></Gate>} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   )
@@ -56,13 +42,13 @@ function AppRoutes() {
 export default function App() {
   if (supabaseConfigError) {
     return (
-      <main className="min-h-svh flex items-center justify-center bg-slate-50 px-6 text-slate-900">
-        <section className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-          <p className="text-xs font-semibold uppercase tracking-wider text-sky-600">
-            Aquaspin Laundry Station
-          </p>
+      <main className="min-h-svh flex items-center justify-center bg-slate-50 px-6 text-slate-900 dark:bg-slate-950 dark:text-slate-100">
+        <section className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+          <p className="text-xs font-semibold uppercase tracking-wider text-sky-600">Aquaspin Laundry Station</p>
           <h1 className="mt-2 text-xl font-semibold">App configuration is incomplete</h1>
-          <p className="mt-3 text-sm leading-6 text-slate-600">{supabaseConfigError}</p>
+          <div className="mt-4">
+            <InlineAlert variant="error" title="Aquaspin cannot connect yet">{supabaseConfigError}</InlineAlert>
+          </div>
         </section>
       </main>
     )
