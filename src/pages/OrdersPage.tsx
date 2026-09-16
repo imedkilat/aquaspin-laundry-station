@@ -4,9 +4,10 @@ import DeleteTransactionModal from '../components/DeleteTransactionModal'
 import EditTransactionModal from '../components/EditTransactionModal'
 import TransactionTable from '../components/TransactionTable'
 import { InlineAlert } from '../components/UiFeedback'
+import { useShopDate } from '../hooks/useShopDate'
 import { useTransactions } from '../hooks/useTransactions'
 import { useAuth } from '../lib/auth-context'
-import { shopDate, shopDateDaysAgo } from '../lib/date'
+import { shopDateDaysAgo } from '../lib/date'
 import { useShopSettings } from '../lib/shop-settings-context'
 import type { PaymentMethod, TransactionWithService } from '../types/database'
 
@@ -17,8 +18,8 @@ export default function OrdersPage() {
   const { profile } = useAuth()
   const { settings } = useShopSettings()
   const isOwner = profile?.role === 'owner'
-  const historyRestricted = !isOwner && !settings.staff_can_view_full_history
-  const today = shopDate()
+  const historyRestricted = !isOwner && (!settings.staff_can_access_dashboard || !settings.staff_can_view_full_history)
+  const today = useShopDate()
 
   const [dateFrom, setDateFrom] = useState(today)
   const [dateTo, setDateTo] = useState(today)
@@ -36,6 +37,7 @@ export default function OrdersPage() {
     dateTo: effectiveDateTo,
     limit: 1000,
     includeDeleted: isOwner && showDeleted,
+    fetchAll: true,
   })
 
   const filtered = useMemo(() => {
@@ -72,7 +74,7 @@ export default function OrdersPage() {
 
   const setRange = (days: number) => {
     setDateFrom(shopDateDaysAgo(days - 1))
-    setDateTo(shopDate())
+    setDateTo(today)
   }
 
   return (
@@ -87,7 +89,7 @@ export default function OrdersPage() {
         <div className="space-y-2">
           {historyRestricted && (
             <InlineAlert variant="info" title="Staff history is limited to today">
-              The Owner has limited Staff transaction visibility to today's records. Historical records remain protected by database access rules.
+              Historical orders require both Dashboard access and Full History permission. Today's operational records remain available to Staff.
             </InlineAlert>
           )}
           {error && (
