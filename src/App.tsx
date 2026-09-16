@@ -5,6 +5,7 @@ import { supabaseConfigError } from './lib/supabase'
 import Login from './pages/Login'
 import StaffView from './pages/StaffView'
 import OwnerDashboard from './pages/OwnerDashboard'
+import ProfilePage from './pages/ProfilePage'
 import Layout from './components/Layout'
 import GlobalErrorBoundary from './components/GlobalErrorBoundary'
 import { InlineAlert, LoadingPanel } from './components/UiFeedback'
@@ -36,6 +37,7 @@ function AppRoutes() {
       <Route path="/login" element={!loading && session ? <Navigate to="/" replace /> : <Login />} />
       <Route path="/" element={<Gate><StaffView /></Gate>} />
       <Route path="/dashboard" element={<Gate><OwnerDashboard /></Gate>} />
+      <Route path="/profile" element={<Gate><ProfilePage /></Gate>} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   )
