@@ -111,13 +111,15 @@ end;
 $$;
 
 revoke all on function private.has_staff_permission(text) from public, anon, authenticated;
+grant execute on function private.has_staff_permission(text) to authenticated;
 
 -- Staff always retain access to today's active operational rows. Historical
 -- access only exists when the Owner enables Dashboard + Full History. Pay
--- Later history has its own additional switch. Owners remain unrestricted.
+-- Later history has its own additional switch. Soft-deleted rows stay Owner-only.
 create or replace function private.can_view_transaction(
   p_transaction_date date,
-  p_payment_method text
+  p_payment_method text,
+  p_deleted_at timestamptz
 )
 returns boolean
 language plpgsql
@@ -128,6 +130,10 @@ as $$
 begin
   if auth.uid() is null or private.is_owner() then
     return true;
+  end if;
+
+  if p_deleted_at is not null then
+    return false;
   end if;
 
   if p_transaction_date = (now() at time zone 'Asia/Manila')::date then
@@ -148,7 +154,8 @@ begin
 end;
 $$;
 
-revoke all on function private.can_view_transaction(date, text) from public, anon, authenticated;
+revoke all on function private.can_view_transaction(date, text, timestamptz) from public, anon, authenticated;
+grant execute on function private.can_view_transaction(date, text, timestamptz) to authenticated;
 
 -- Replace broad transaction policies with settings-aware policies.
 drop policy if exists transactions_select_all_staff on public.transactions;
@@ -157,7 +164,7 @@ create policy transactions_select_scoped
   on public.transactions
   for select
   to authenticated
-  using (private.can_view_transaction(transaction_date, payment_method));
+  using (private.can_view_transaction(transaction_date, payment_method, deleted_at));
 
 drop policy if exists transactions_insert_staff on public.transactions;
 create policy transactions_insert_staff
@@ -238,6 +245,7 @@ set search_path = public, pg_temp
 as $$
 declare
   s public.shop_settings%rowtype;
+  financial_fields_changed boolean;
 begin
   select * into s from public.shop_settings where id = 1;
   if not found then
@@ -259,7 +267,23 @@ begin
     raise exception 'Notes are required for Pay Later transactions';
   end if;
 
+  financial_fields_changed := tg_op = 'INSERT';
+  if tg_op = 'UPDATE' then
+    financial_fields_changed :=
+      new.base_amount is distinct from old.base_amount
+      or new.add_ons is distinct from old.add_ons
+      or new.total_amount is distinct from old.total_amount
+      or new.service_id is distinct from old.service_id
+      or new.kg is distinct from old.kg
+      or new.no_of_loads is distinct from old.no_of_loads
+      or new.add_on_items is distinct from old.add_on_items;
+  end if;
+
+  -- Old transactions that historically used a manual adjustment remain
+  -- editable for non-financial corrections. Once financial fields change,
+  -- strict mode requires Total = Base + Add-ons.
   if not s.allow_manual_total_override
+     and financial_fields_changed
      and abs(coalesce(new.total_amount, 0) - (coalesce(new.base_amount, 0) + coalesce(new.add_ons, 0))) > 0.005 then
     raise exception 'Manual Total override is disabled by shop settings';
   end if;
