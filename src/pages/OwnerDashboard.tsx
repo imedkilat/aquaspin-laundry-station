@@ -9,6 +9,7 @@ import { shopDate, shopDateDaysAgo } from '../lib/date'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/auth-context'
 import { edgeFunctionErrorMessage } from '../lib/edge-functions'
+import { openTransactionPdfReport } from '../lib/pdf-report'
 
 const peso = (n: number) =>
   `₱${n.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
@@ -136,6 +137,22 @@ export default function OwnerDashboard() {
     setExportMessage(`Exported ${data.row_count ?? filtered.length} transactions via n8n.`)
   }
 
+  const exportPdf = () => {
+    setExportMessage(null)
+    try {
+      openTransactionPdfReport({
+        rows: filtered,
+        dateFrom,
+        dateTo,
+        paymentMethod: methodFilter,
+        search,
+      })
+      setExportMessage('PDF report opened. Choose “Save as PDF” in the print dialog.')
+    } catch (error) {
+      setExportMessage(error instanceof Error ? error.message : 'Could not open the PDF report.')
+    }
+  }
+
   const tabClass = (active: boolean) =>
     `px-3 py-1.5 rounded-lg text-sm font-medium transition ${
       active
@@ -205,6 +222,13 @@ export default function OwnerDashboard() {
               <div className="flex items-center gap-2 flex-wrap">
                 {isOwner && (
                   <>
+                    <button
+                      type="button"
+                      onClick={exportPdf}
+                      className="rounded-lg border border-violet-300 px-3 py-1.5 text-sm font-medium text-violet-700 hover:bg-violet-50 dark:border-violet-800 dark:text-violet-300 dark:hover:bg-violet-950/40"
+                    >
+                      ⇩ Export PDF
+                    </button>
                     <button
                       type="button"
                       onClick={() => exportSpreadsheet('csv')}
