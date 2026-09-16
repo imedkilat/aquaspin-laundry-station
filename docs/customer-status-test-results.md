@@ -5,21 +5,22 @@ All database data below is synthetic, in an isolated in-memory PostgreSQL instan
 Supabase auth/storage are minimally shimmed; actual repository policies, SQL functions,
 triggers and migrations execute. No production credentials or connection are used.
 
-**32 automated checks PASS; 0 automated assertion failures.** A separate requested
-operational regression, staff soft-delete with RETURNING, **FAILS on baseline and on
-the new schema**. The parity test passes because this PR does not introduce that failure.
-Do not interpret the passing suite as proof that staff deletion is working.
+**35 automated checks PASS; 0 automated assertion failures.** Staff soft-delete is now
+tested through the secure RPC and no longer has a known FAIL. The old direct
+`UPDATE ... RETURNING` behavior remains intentionally unavailable because deleted rows
+are hidden by RLS.
 
 | Test | Result | Evidence / scope |
 | --- | --- | --- |
-| Full baseline plus forward migration | PASS | Schema and all 13 baseline migrations replayed before new migration |
+| Full baseline plus forward migrations | PASS | Schema and all 13 baseline migrations replayed before both follow-up migrations |
 | Legacy nullable customer and initial status | PASS | NULL customer, received status, unchanged old updated_at, honest baseline ledger; deleted legacy included |
 | Canonical customer creation | PASS | Random CUS code, creator attribution, immutable public code |
 | Normalized phone lookup | PASS | Three requested PH forms plus punctuation; invalid format returns NULL |
 | Shared phone | PASS | Two distinct customers coexist under one normalized phone |
 | Customer snapshot preservation | PASS | Canonical name/phone edits leave receipt name/phone unchanged |
-| Summary and Pay Later balance | PASS | 2 visits, billed 300, outstanding 150, last visit, history rows |
+| Summary financial semantics | PASS | 2 visits, billed 300, collected 150, outstanding 150, last visit; cash change excluded |
 | Deactivation | PASS | History retained, new links denied, customer hard-delete denied |
+| Owner-only customer deactivation | PASS | Staff active changes rejected; Owner deactivates/reactivates; history retained |
 | Staff and owner customer permissions | PASS | Disabled staff INSERT/UPDATE blocked; reads retained; owner writes allowed; enabled staff create works |
 | Unauthenticated / missing-profile access | PASS | Anonymous, NULL subject and missing-profile clients rejected |
 | received → washing | PASS | Status, token, actor and ledger |
@@ -33,6 +34,9 @@ Do not interpret the passing suite as proof that staff deletion is working.
 | Stale browser safety | PASS | Stale status rejected without ledger append; old edit token updates zero rows; edit invalidates status token |
 | Staff status permissions | PASS | Edit-disabled denied even with delete permission; override denied; permitted staff actor recorded |
 | Owner soft-delete / restore / audit | PASS | Deleted status update denied; owner sees history; staff cannot; totals exclude deleted; restore retains status |
+| Staff soft-delete RPC | PASS | Staff delete permission, safe success metadata, hidden deleted row, repeated delete rejection |
+| Owner soft-delete RPC | PASS | Owner delete success; stale token rejected; reason required; restore remains Owner-only |
+| Forward status skips | PASS | Staff received→ready, washing→ready, drying→completed with reasons; backward/reopen denied |
 | Append-only history | PASS | Client insert/update/delete/truncate denied; administrator UPDATE blocked by trigger; FK prevents receipt hard-delete |
 | Scoped summary/history/status RPC | PASS | Staff full-history and historical-Pay-Later switches limit query and mutation |
 | Cash / GCash / Pay Later | PASS | Valid inserts; missing GCash reference and insufficient cash rejected |
@@ -42,12 +46,11 @@ Do not interpret the passing suite as proof that staff deletion is working.
 | Export/RPC SQL dependencies | PASS | Existing export columns selectable and rate-limiter signature exists; not a live export test |
 | Function grants / Realtime membership | PASS | Authenticated helper EXECUTE true; anonymous status RPC false; each publication member exactly once |
 | Monotonic timestamps / rollback | PASS | Two writes in one SQL transaction get different tokens; rollback removes status changes and ledger entries |
-| Staff deletion baseline parity | PASS | Same 42501 before and after migration |
-| Backfill / rerun | PASS | Dry run changes nothing; commit links 1, leaves 12, reports 2 ambiguous phone groups; exact snapshots retained; rerun links 0 |
-| Staff soft-delete with RETURNING succeeds | **FAIL — pre-existing** | Both baseline and new schema return 42501 under authenticated staff, despite delete permission. Existing RLS hides new deleted row. Unrelated local fix intentionally excluded. |
+| Backfill / rerun | PASS | Dry run changes nothing; commit links 1, leaves 17, reports 2 ambiguous phone groups; exact snapshots retained; rerun links 0 |
+| Direct staff soft-delete with RETURNING | PASS (denied intentionally) | Deleted-row RLS hiding is preserved; callers must use `soft_delete_transaction` |
 | `git diff --check` | PASS | No whitespace errors |
 | Frontend dependency installation | PASS | Retry succeeded with unchanged pinned app dependencies after transient tarball 404 |
-| TypeScript | PASS | `tsc -b` completed before Vite's sandbox subprocess restriction |
+| TypeScript | PASS | `tsc -b` completed as part of the successful production build |
 | Supabase TypeScript API contracts | PASS | Compile-only `tests/backend/contracts.ts`: customer insert, summary query and RPC infer correct results; raw status/history writes rejected by types |
 | Vite build | PASS | `npm run build` exit 0 outside sandbox; 101 modules, 6.06 seconds; local artifact only |
 | Frontend lint | PASS | `npm run lint` exit 0; existing React effect/fast-refresh warnings reported |

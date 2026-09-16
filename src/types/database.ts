@@ -333,6 +333,14 @@ export type Database = {
         }
         Returns: Transaction
       }
+      soft_delete_transaction: {
+        Args: {
+          p_transaction_id: string
+          p_expected_updated_at: string
+          p_delete_reason: string
+        }
+        Returns: { success: boolean; transaction_id: string; updated_at: string }[]
+      }
     }
     Enums: { [_ in never]: never }
     CompositeTypes: { [_ in never]: never }

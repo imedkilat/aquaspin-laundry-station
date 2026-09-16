@@ -37,6 +37,9 @@ async function fresh(id) { return one('select *, updated_at::text as token from 
 async function status(t, next, reason = null, override = false) {
   return one('select *, updated_at::text as token from public.set_transaction_status($1,$2,$3,$4,$5)', [t.id, next, t.token, reason, override]);
 }
+async function softDelete(t, reason = 'Routine deletion') {
+  return one('select * from public.soft_delete_transaction($1,$2,$3)', [t.id, t.token, reason]);
+}
 
 try {
   // Minimal Supabase platform shims; application schema, functions and RLS are real SQL.
@@ -59,7 +62,7 @@ try {
   const filenames = (await readdir(new URL('supabase/migrations/', root))).sort();
   // Historical filenames are not chronological: AQ codes depend on the shorter GCash migration.
   const early = ['20260915_add_service_pricing_rules.sql', '20260916_add_gcash_reference.sql', '20260916_enable_services_realtime.sql'];
-  const baseline = [...early, ...filenames.filter(f => !early.includes(f) && !f.includes('customer_status_backend'))];
+  const baseline = [...early, ...filenames.filter(f => !early.includes(f) && !f.includes('customer_status_'))];
   for (const file of baseline) await db.exec(await read('supabase/migrations/' + file));
   await db.exec(`insert into auth.users(id,email) values ('${owner}','owner@test.local'), ('${staff}','staff@test.local');`);
   // Test fixture bootstrapping before customer/status changes; honor existing profile guard.
@@ -70,16 +73,9 @@ try {
   const legacy = await transaction();
   const legacyDeleted = await transaction({ customer_name: 'Deleted legacy' });
   await q("update public.transactions set deleted_at=now(), delete_reason='Duplicate entry' where id=$1", [legacyDeleted.id]);
-  await asUser(staff);
-  const staffReceipt = await transaction({ created_by: staff, customer_name: 'Staff deletion baseline' });
-  let baselineStaffDeleteCode = null;
-  try {
-    await q("update transactions set deleted_at=now(),delete_reason='Duplicate entry' where id=$1 returning id", [staffReceipt.id]);
-  } catch (error) { baselineStaffDeleteCode = error.code; }
-  console.log('Baseline staff soft-delete with RETURNING:', baselineStaffDeleteCode ?? 'allowed');
   await admin();
-  const migrations = filenames.filter(f => f.includes('customer_status_backend'));
-  assert.equal(migrations.length, 1, 'Exactly one new migration must exist');
+  const migrations = filenames.filter(f => f.includes('customer_status_'));
+  assert.equal(migrations.length, 2, 'Both forward customer/status migrations must exist');
   await test('apply full baseline and new forward migration', async () => {
     for (const file of migrations) await db.exec(await read('supabase/migrations/' + file));
   });
@@ -118,8 +114,8 @@ try {
   });
   await test('customer summary totals, visits, last visit and Pay Later balance', async () => {
     const s = await one('select * from customer_summary where customer_id=$1', [customer.id]);
-    assert.equal(s.total_transactions, 2); assert.equal(Number(s.total_amount_spent), 300);
-    assert.equal(Number(s.outstanding_pay_later_balance), 150); assert.ok(s.last_visit);
+    assert.equal(s.total_transactions, 2); assert.equal(Number(s.total_billed), 300);
+    assert.equal(Number(s.total_collected), 150); assert.equal(Number(s.outstanding_balance), 150); assert.ok(s.last_visit);
     assert.equal((await q('select id from customer_transaction_history where customer_id=$1', [customer.id])).length, 2);
   });
   await test('deactivate preserves history, rejects new links and hard deletion', async () => {
@@ -137,6 +133,18 @@ try {
     await setting('staff_can_manage_customers', true); await asUser(staff);
     assert.ok((await one("insert into customers(full_name) values ('Staff created') returning id")).id);
     await asUser(owner);
+  });
+  await test('staff cannot deactivate/reactivate; owner lifecycle retains history', async () => {
+    await asUser(staff);
+    await rejects('update customers set active=false where id=$1', [customer.id], '42501');
+    await asUser(owner);
+    await q('update customers set active=false where id=$1', [customer.id]);
+    assert.equal((await one('select active from customers where id=$1', [customer.id])).active, false);
+    await asUser(staff);
+    await rejects("insert into customers(full_name,active) values ('Inactive attempt',false)", [], '42501');
+    await asUser(owner);
+    await q('update customers set active=true where id=$1', [customer.id]);
+    assert.equal((await one('select active from customers where id=$1', [customer.id])).active, true);
   });
   await test('unauthenticated and missing-profile users cannot use new endpoints', async () => {
     await asUser(null, 'anon'); await rejects('select * from customers', [], '42501');
@@ -157,7 +165,7 @@ try {
     });
   }
   await test('terminal status requires reasoned owner override/reopen', async () => {
-    await assert.rejects(status(flow, 'received'), e => e.code === '22023');
+    await assert.rejects(status(flow, 'received'), e => ['22023', '42501'].includes(e.code));
     await assert.rejects(status(flow, 'received', null, true), e => e.code === '42501');
     flow = await status(flow, 'received', 'Rewash approved', true);
   });
@@ -200,14 +208,56 @@ try {
     assert.equal((await status(t, 'washing')).updated_by, staff); await asUser(owner);
   });
   await test('soft delete blocks status; owner sees ledger; restore preserves lifecycle', async () => {
-    await q("update transactions set deleted_at=now(),delete_reason='Duplicate entry' where id=$1", [debt.id]);
+    const deletion = await softDelete(await fresh(debt.id), 'Duplicate entry');
+    assert.equal(deletion.success, true); assert.equal(deletion.transaction_id, debt.id);
+    assert.equal(Object.hasOwn(deletion, 'deleted_at'), false);
     const t = await fresh(debt.id); await assert.rejects(status(t, 'drying'), e => e.code === '42501');
     assert.ok((await q('select id from transaction_status_history where transaction_id=$1', [t.id])).length >= 2);
     const s = await one('select * from customer_summary where customer_id=$1', [customer.id]);
-    assert.equal(s.total_transactions, 1); assert.equal(Number(s.outstanding_pay_later_balance), 0);
+    assert.equal(s.total_transactions, 1); assert.equal(Number(s.outstanding_balance), 0);
     await asUser(staff); assert.equal((await q('select id from transaction_status_history where transaction_id=$1', [t.id])).length, 0);
     await asUser(owner); await q('update transactions set deleted_at=null where id=$1', [t.id]);
     assert.equal((await fresh(t.id)).order_status, 'washing');
+  });
+  await test('soft-delete RPC staff/owner permissions, stale token and repeated delete', async () => {
+    await asUser(staff);
+    const staffDelete = await transaction({ created_by: staff, customer_name: 'Staff delete RPC' });
+    const deleted = await softDelete(await fresh(staffDelete.id), 'Staff requested deletion');
+    assert.equal(deleted.success, true);
+    assert.equal((await q('select id from transactions where id=$1', [staffDelete.id])).length, 0);
+    await asUser(owner);
+    await assert.rejects(softDelete(await fresh(staffDelete.id), 'Again'), e => e.code === '22023');
+    await assert.rejects(softDelete({ id: cash.id, token: '2000-01-01T00:00:00.000000Z' }, 'Stale'), e => e.code === '40001');
+    const ownerDelete = await transaction({ customer_name: 'Owner delete RPC' });
+    assert.equal((await softDelete(await fresh(ownerDelete.id), 'Owner cleanup')).success, true);
+    await asUser(staff);
+    await setting('staff_can_delete_transactions', false);
+    await asUser(staff);
+    const denied = await transaction({ created_by: staff, customer_name: 'Denied delete RPC' });
+    await assert.rejects(softDelete(await fresh(denied.id), 'Denied'), e => e.code === '42501');
+    await setting('staff_can_delete_transactions', true);
+    await asUser(staff);
+    assert.equal((await q('update transactions set deleted_at=null where id=$1 returning id', [ownerDelete.id])).length, 0);
+    await asUser(owner);
+    await q('update transactions set deleted_at=null where id=$1', [ownerDelete.id]);
+  });
+  await test('permitted staff forward skips require reasons; backward staff movement is denied', async () => {
+    await asUser(staff);
+    let skip = await transaction({ created_by: staff, customer_name: 'Skip received to ready' });
+    skip = await status(skip, 'ready_for_pickup', 'Self-service wash and dry completed');
+    assert.equal(skip.order_status, 'ready_for_pickup');
+    await assert.rejects(status(skip, 'washing'), e => e.code === '42501');
+    let skip2 = await transaction({ created_by: staff, customer_name: 'Skip washing to ready' });
+    skip2 = await status(skip2, 'washing');
+    skip2 = await status(skip2, 'ready_for_pickup', 'Air dry completed off-machine');
+    assert.equal(skip2.order_status, 'ready_for_pickup');
+    let skip3 = await transaction({ created_by: staff, customer_name: 'Skip drying to complete' });
+    skip3 = await status(skip3, 'washing');
+    skip3 = await status(skip3, 'drying');
+    skip3 = await status(skip3, 'completed', 'Customer collected directly');
+    assert.equal(skip3.order_status, 'completed');
+    await assert.rejects(status(skip3, 'washing', 'Reopen'), e => e.code === '42501');
+    await asUser(owner);
   });
   await test('ledger is append-only, cannot forge or truncate; hard delete cannot erase history', async () => {
     await rejects('update transaction_status_history set reason=$1', ['forged'], '42501');
@@ -221,7 +271,7 @@ try {
     const historical = await transaction({ transaction_date: '2020-01-01', customer_id: customer.id, base_amount: 500, total_amount: 500 });
     await setting('staff_can_view_full_history', false); await asUser(staff);
     assert.equal((await q('select id from customer_transaction_history where id=$1', [historical.id])).length, 0);
-    assert.equal(Number((await one('select * from customer_summary where customer_id=$1', [customer.id])).total_amount_spent), 300);
+    assert.equal(Number((await one('select * from customer_summary where customer_id=$1', [customer.id])).total_billed), 300);
     await assert.rejects(status(historical, 'washing'), e => e.code === '42501');
     await setting('staff_can_view_full_history', true); await setting('staff_can_view_historical_pay_later', false); await asUser(staff);
     assert.equal((await q('select id from customer_transaction_history where id=$1', [historical.id])).length, 0);
@@ -281,14 +331,14 @@ try {
     assert.equal((await fresh(t.id)).order_status, 'received');
     assert.equal((await q('select id from transaction_status_history where transaction_id=$1',[t.id])).length,1);
   });
-  await test('staff soft-delete behavior matches audited baseline', async () => {
+  await test('raw staff soft-delete remains RLS-protected; RPC is required', async () => {
     await asUser(staff);
     const t = await transaction({ created_by:staff, customer_name:'Staff delete regression', phone_number:null });
     let code = null;
-    try { await q("update transactions set deleted_at=now(),delete_reason='Duplicate entry' where id=$1 returning id",[t.id]); }
+    let rows = [];
+    try { rows = await q("update transactions set deleted_at=now(),delete_reason='Duplicate entry' where id=$1 returning id",[t.id]); }
     catch (error) { code = error.code; }
-    assert.equal(code, baselineStaffDeleteCode);
-    if (code) console.log(`KNOWN BASELINE LIMITATION: staff soft-delete with RETURNING fails ${code} before and after this migration.`);
+    assert.ok(code === '42501' || rows.length === 0);
     await asUser(owner);
   });
   await test('backfill dry run, conservative matching, ambiguity, snapshot preservation and rerun', async () => {

@@ -29,7 +29,8 @@ export type CustomerSummary = {
   customer_id: string
   customer_code: string
   total_transactions: number
-  total_amount_spent: number
-  outstanding_pay_later_balance: number
+  total_billed: number
+  total_collected: number
+  outstanding_balance: number
   last_visit: string | null
 }

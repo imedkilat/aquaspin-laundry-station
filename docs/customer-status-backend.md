@@ -4,6 +4,31 @@ Review-only backend foundation based on `43133661056b357a0950cd4fdf08b6d3bc34c7a
 No production database connection, data mutation, deployment, or merge is part of this change.
 Frontend PR #1 (`feat/phase1-core-operations-shell`) remains separate.
 
+## Follow-up delta in PR #3
+
+The follow-up migration `20260921020000_customer_status_followup.sql` fixes the baseline
+staff soft-delete UX without weakening RLS. `soft_delete_transaction(uuid,timestamptz,text)`
+checks employee profile, visibility, delete permission, active state, reason, and the
+existing `updated_at` token, then atomically soft-deletes and returns only `{success,
+transaction_id, updated_at}`. It never returns the hidden receipt. Owners and permitted
+staff use this RPC; Owner restore behavior remains unchanged.
+
+`customer_summary` now exposes `total_transactions`, `total_billed`, `total_collected`,
+`outstanding_balance`, and `last_visit`. Collected is
+`least(total_amount, cash_amount + gcash_amount)` and outstanding is billed minus that
+amount, clamped at zero. Cash change cannot inflate revenue. Deleted receipts remain
+excluded and the view remains security-invoker.
+
+Operational status transitions now allow permitted staff to skip forward to any later
+operational stage with a reason. The normal adjacent step remains reason-free. Backward
+movement, terminal reopen, and explicit owner override remain Owner-only with a reason;
+hold, cancel, and hold-resume require reasons. Status values and ledger immutability are
+unchanged, and service IDs/codes are not embedded in the rules.
+
+Customer `active` changes are Owner-only. Staff may still create/edit customer details
+when `staff_can_manage_customers` is enabled, but cannot deactivate or reactivate records.
+History and snapshots remain intact.
+
 ## Architecture audit before implementation
 
 Read `supabase/schema.sql`, all 13 tracked baseline migrations, transaction types,
@@ -77,7 +102,8 @@ newly attached to a transaction. Customers have no client DELETE privilege or po
 
 Owners manage all customers. Staff with an existing employee profile can read the
 directory, including inactive entries, for operational lookup. The default-true
-`staff_can_manage_customers` setting gates staff INSERT/UPDATE, including deactivation.
+`staff_can_manage_customers` setting gates staff INSERT/UPDATE of normal customer details;
+the lifecycle trigger reserves active/inactive changes for Owners.
 It does not grant transaction visibility or editing. Customer notes are visible to staff
 who can read the directory; do not store owner-only information there. The frontend
 toggle is deferred; owners can configure the setting through the existing settings API.
@@ -85,11 +111,12 @@ toggle is deferred; owners can configure the setting through the existing settin
 The `customer_summary` security-invoker view returns:
 
 - `total_transactions`: number of linked, nondeleted, caller-visible receipts (visits).
-- `total_amount_spent`: sum of their billed `total_amount`, **including unpaid charges**;
-  this is lifetime billed value, not cash collections or cash tendered/change.
-- `outstanding_pay_later_balance`: sum of `greatest(total_amount - cash_amount - gcash_amount, 0)`
-  only where `payment_method = 'pay_later'`. Current forms normally zero tender fields
-  for Pay Later; subtraction also handles recorded partial payments conservatively.
+- `total_billed`: sum of billed `total_amount`, including unpaid charges.
+- `total_collected`: sum of `least(total_amount, cash_amount + gcash_amount)`, so cash
+  change never counts as revenue.
+- `outstanding_balance`: sum of `greatest(total_amount - least(total_amount,
+  cash_amount + gcash_amount), 0)` across all payment methods. Fully paid Cash/GCash
+  receipts contribute zero; Pay Later and partial payments contribute their balance.
 - `last_visit`: maximum `transaction_date` across those receipts, not insertion time.
 
 Operational cancellation does not cancel a financial obligation. Cancelled receipts
@@ -131,7 +158,7 @@ or overwrite links. Identity matching is deterministic; newly allocated IDs are 
 Current constraints can reject historically invalid receipts: the whole script rolls
 back rather than disabling integrity checks. Run within a maintenance window.
 
-Fixture result: **1 linked, 12 unlinked, 2 ambiguous phone groups**; second committed run
+Fixture result: **1 linked, 17 unlinked, 2 ambiguous phone groups**; second committed run
 links 0. These counts describe synthetic tests only, not production.
 
 ## Order lifecycle and concurrency
@@ -143,15 +170,14 @@ default and does not update each receipt or change its existing edit token.
 
 | From | Normal destinations | Reason |
 | --- | --- | --- |
-| received | washing, on_hold, cancelled | Required for hold/cancel |
-| washing | drying, on_hold, cancelled | Required for hold/cancel |
-| drying | ready_for_pickup, on_hold, cancelled | Required for hold/cancel |
+| received | washing, drying, ready_for_pickup, on_hold, cancelled | Adjacent step needs no reason; forward skips require reason |
+| washing | drying, ready_for_pickup, completed, on_hold, cancelled | Adjacent step needs no reason; forward skips require reason |
+| drying | ready_for_pickup, completed, on_hold, cancelled | Adjacent step needs no reason; forward skips require reason |
 | ready_for_pickup | completed, on_hold, cancelled | Required for hold/cancel |
 | on_hold | received, washing, drying, ready_for_pickup, cancelled | Always required |
 | completed / cancelled | None without owner override | Owner override always requires reason |
 
-Hold may resume at any nonterminal operational stage so staff can record work performed
-during the interruption. Owners can explicitly override/reopen to any **different**
+Hold may resume at the held stage or a later operational stage, with a reason. Owners can explicitly override/reopen to any **different**
 valid state with a reason, including skipping wash/dry for services that do not use both.
 Same-state calls are rejected without adding noise to the ledger. These rules need shop
 review, especially self-service wash-only/dry-only orders; no frontend behavior is assumed.
@@ -223,7 +249,8 @@ exposure. Publication membership does not alter the locked-down `realtime` schem
 
 ## Database object inventory
 
-One new forward migration: `20260921010000_customer_status_backend.sql`. Generated with
+Two new forward migrations: `20260921010000_customer_status_backend.sql` and
+`20260921020000_customer_status_followup.sql`. Generated with
 Supabase CLI 2.117.0, then sequenced after the baseline's already-future-dated September 20
 migrations. No applied migration is edited.
 
@@ -271,6 +298,8 @@ migrations. No applied migration is edited.
   `reject_status_history_mutation()`; no PUBLIC/anon/authenticated EXECUTE.
 - New `public.set_transaction_status(uuid,text,timestamptz,text,boolean)`;
   authenticated EXECUTE only (plus function owner).
+- New `public.soft_delete_transaction(uuid,timestamptz,text)`; authenticated EXECUTE
+  only (plus function owner). It returns success metadata, never the deleted row.
 - New invoker views: `customer_summary`, `customer_transaction_history`; authenticated SELECT.
 
 **RLS policies**
@@ -280,6 +309,8 @@ migrations. No applied migration is edited.
 - `customers_update`: identical permission predicate for USING and WITH CHECK.
 - `transaction_status_history_select`: authenticated caller must see the parent receipt.
   No customer DELETE or history write policies. Existing transaction RLS stays unchanged.
+- `customers_owner_lifecycle` trigger makes active/inactive changes Owner-only while
+  leaving staff detail edits governed by `staff_can_manage_customers`.
 
 **Triggers**
 
@@ -291,6 +322,8 @@ migrations. No applied migration is edited.
   added `transactions_10_normalize_add_on_snapshot_insert` for INSERT.
 - Replaced `transactions_12_enforce_shop_preferences` with UPDATE OF intake/commercial/deletion
   columns; added `transactions_12_enforce_shop_preferences_insert` for INSERT.
+- `customers_owner_lifecycle`: rejects staff create-as-inactive and staff deactivation/
+  reactivation. `soft_delete_transaction` uses existing transaction audit triggers.
 
 ## Validation and production gate
 
