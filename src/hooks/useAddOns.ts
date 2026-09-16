@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
+import { makeRealtimeTopic } from '../lib/realtime'
 import type { AddOn } from '../types/database'
 
 export function useAddOns(options: { includeInactive?: boolean } = {}) {
@@ -28,7 +29,7 @@ export function useAddOns(options: { includeInactive?: boolean } = {}) {
 
   useEffect(() => {
     const channel = supabase
-      .channel(`add-ons-realtime-${includeInactive ? 'all' : 'active'}`)
+      .channel(makeRealtimeTopic(`add-ons-realtime-${includeInactive ? 'all' : 'active'}`))
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'add_ons_catalog' },
@@ -37,7 +38,7 @@ export function useAddOns(options: { includeInactive?: boolean } = {}) {
       .subscribe()
 
     return () => {
-      supabase.removeChannel(channel)
+      void supabase.removeChannel(channel)
     }
   }, [includeInactive, reload])
 
