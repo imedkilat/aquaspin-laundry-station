@@ -5,26 +5,30 @@ import type { Profile } from '../types/database'
 export function useProfiles() {
   const [profiles, setProfiles] = useState<Profile[]>([])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
 
-  const reload = useCallback(() => {
+  const reload = useCallback(async () => {
     setLoading(true)
-    supabase
+    setError(null)
+
+    const { data, error: queryError } = await supabase
       .from('profiles')
       .select('*')
       .order('created_at')
-      .then(({ data, error }) => {
-        if (error) {
-          // eslint-disable-next-line no-console
-          console.error('Failed to load staff profiles', error)
-        }
-        setProfiles(data ?? [])
-        setLoading(false)
-      })
+
+    if (queryError) {
+      setError('Could not load account access. Check the connection and try again.')
+      setLoading(false)
+      return
+    }
+
+    setProfiles(data ?? [])
+    setLoading(false)
   }, [])
 
   useEffect(() => {
-    reload()
+    void reload()
   }, [reload])
 
-  return { profiles, loading, reload }
+  return { profiles, loading, error, reload }
 }
