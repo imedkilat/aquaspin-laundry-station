@@ -9,6 +9,7 @@ interface Options {
   dateTo?: string
   limit?: number
   includeDeleted?: boolean
+  fetchAll?: boolean
 }
 
 const SELECT = `*, services ( code, label ),
@@ -17,7 +18,7 @@ const SELECT = `*, services ( code, label ),
   deleted_by_profile:profiles!transactions_deleted_by_fkey ( full_name )`
 
 export function useTransactions(options: Options = {}) {
-  const { dateFrom, dateTo, limit = 200, includeDeleted = false } = options
+  const { dateFrom, dateTo, limit = 200, includeDeleted = false, fetchAll = false } = options
   const [rows, setRows] = useState<TransactionWithService[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -27,26 +28,58 @@ export function useTransactions(options: Options = {}) {
     setLoading(true)
     setError(null)
 
-    let query = supabase
-      .from('transactions')
-      .select(SELECT)
-      .order('created_at', { ascending: false })
-      .limit(limit)
+    const pageSize = Math.max(1, Math.min(limit, 1000))
 
-    if (dateFrom) query = query.gte('transaction_date', dateFrom)
-    if (dateTo) query = query.lte('transaction_date', dateTo)
-    if (!includeDeleted) query = query.is('deleted_at', null)
+    const fetchPage = async (offset: number) => {
+      let query = supabase
+        .from('transactions')
+        .select(SELECT)
+        .order('created_at', { ascending: false })
+        .order('id', { ascending: false })
 
-    const { data, error: queryError } = await query
-    if (queryError) {
-      setError('Could not load transactions. Check the internet connection and try again.')
+      if (dateFrom) query = query.gte('transaction_date', dateFrom)
+      if (dateTo) query = query.lte('transaction_date', dateTo)
+      if (!includeDeleted) query = query.is('deleted_at', null)
+
+      return fetchAll
+        ? query.range(offset, offset + pageSize - 1)
+        : query.limit(limit)
+    }
+
+    if (!fetchAll) {
+      const { data, error: queryError } = await fetchPage(0)
+      if (queryError) {
+        setError('Could not load transactions. Check the internet connection and try again.')
+        setLoading(false)
+        return
+      }
+
+      setRows((data as unknown as TransactionWithService[]) ?? [])
       setLoading(false)
       return
     }
 
-    setRows((data as unknown as TransactionWithService[]) ?? [])
+    const allRows: TransactionWithService[] = []
+    let offset = 0
+
+    while (true) {
+      const { data, error: queryError } = await fetchPage(offset)
+      if (queryError) {
+        setError('Could not load the complete transaction range. Check the internet connection and try again.')
+        setLoading(false)
+        return
+      }
+
+      const page = (data as unknown as TransactionWithService[]) ?? []
+      allRows.push(...page)
+
+      if (page.length < pageSize) break
+      offset += page.length
+    }
+
+    setRows(allRows)
     setLoading(false)
-  }, [dateFrom, dateTo, limit, includeDeleted])
+  }, [dateFrom, dateTo, limit, includeDeleted, fetchAll])
 
   useEffect(() => {
     void reload()
