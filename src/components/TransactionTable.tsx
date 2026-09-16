@@ -8,8 +8,6 @@ import DeleteTransactionModal from './DeleteTransactionModal'
 const peso = (n: number) =>
   `₱${n.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 
-// pickup_time comes back from Postgres as "HH:MM:SS" (24h). Render it as a
-// friendly 12h time; fall back gracefully if the format is ever unexpected.
 const formatPickupTime = (time: string) => {
   const [hoursStr, minutesStr] = time.split(':')
   const hours = Number(hoursStr)
@@ -23,19 +21,24 @@ const formatPickupTime = (time: string) => {
 const formatDateTime = (iso: string) =>
   new Date(iso).toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' })
 
+type TransactionTableProps = {
+  rows: TransactionWithService[]
+  loading: boolean
+  isOwner?: boolean
+  onEdit?: (transaction: TransactionWithService) => void
+  onDelete?: (transaction: TransactionWithService) => void
+}
+
 export default function TransactionTable({
   rows,
   loading,
   isOwner = false,
-}: {
-  rows: TransactionWithService[]
-  loading: boolean
-  // Who entered / last edited / deleted a row is only shown to owners --
-  // staff can't see other staff's profile rows under RLS anyway (they can
-  // only ever see their own), so this keeps the column meaningful rather
-  // than showing blanks for anyone but the owner.
-  isOwner?: boolean
-}) {
+  onEdit,
+  onDelete,
+}: TransactionTableProps) {
+  // Dashboard keeps the original self-contained modal behavior. Pages that
+  // need stronger layout isolation (such as Today's Transactions) can own the
+  // action state and pass callbacks instead.
   const [editingTransaction, setEditingTransaction] = useState<TransactionWithService | null>(null)
   const [deletingTransaction, setDeletingTransaction] = useState<TransactionWithService | null>(null)
   const [restoringId, setRestoringId] = useState<string | null>(null)
@@ -47,6 +50,22 @@ export default function TransactionTable({
       .update({ deleted_at: null, deleted_by: null, delete_reason: null })
       .eq('id', id)
     setRestoringId(null)
+  }
+
+  const openEdit = (transaction: TransactionWithService) => {
+    if (onEdit) {
+      onEdit(transaction)
+      return
+    }
+    setEditingTransaction(transaction)
+  }
+
+  const openDelete = (transaction: TransactionWithService) => {
+    if (onDelete) {
+      onDelete(transaction)
+      return
+    }
+    setDeletingTransaction(transaction)
   }
 
   if (loading) {
@@ -157,7 +176,7 @@ export default function TransactionTable({
                           onClick={(event) => {
                             event.preventDefault()
                             event.stopPropagation()
-                            setEditingTransaction(r)
+                            openEdit(r)
                           }}
                           className="text-sky-600 hover:text-sky-700 text-xs font-medium"
                         >
@@ -168,7 +187,7 @@ export default function TransactionTable({
                           onClick={(event) => {
                             event.preventDefault()
                             event.stopPropagation()
-                            setDeletingTransaction(r)
+                            openDelete(r)
                           }}
                           className="text-red-600 hover:text-red-700 text-xs font-medium"
                         >
@@ -184,13 +203,10 @@ export default function TransactionTable({
         </table>
       </div>
 
-      {/* Keep dialogs outside the scroll container. This prevents the table's
-          overflow context from clipping a fixed overlay, while keeping the
-          modal inside the normal React tree (no portal/runtime handoff). */}
-      {editingTransaction && (
+      {!onEdit && editingTransaction && (
         <EditTransactionModal transaction={editingTransaction} onClose={() => setEditingTransaction(null)} />
       )}
-      {deletingTransaction && (
+      {!onDelete && deletingTransaction && (
         <DeleteTransactionModal transaction={deletingTransaction} onClose={() => setDeletingTransaction(null)} />
       )}
     </>
