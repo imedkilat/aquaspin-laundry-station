@@ -157,11 +157,14 @@ export default function EditTransactionModal({
   }
 
   const handleServiceChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const nextService = services.find((s) => s.id === e.target.value) ?? null
-    const { no_of_loads, base_amount } = recalcFromKg(form.kg, nextService)
+    const serviceId = e.target.value
+    const nextService = services.find((s) => s.id === serviceId) ?? null
+    const nextKg = nextService ? form.kg : ''
+    const { no_of_loads, base_amount } = recalcFromKg(nextKg, nextService)
     setForm((f) => ({
       ...f,
-      service_id: e.target.value,
+      service_id: serviceId,
+      kg: nextKg,
       no_of_loads,
       base_amount,
       total_amount: recalcTotal(base_amount, f.add_ons),
@@ -230,6 +233,16 @@ export default function EditTransactionModal({
         return
       }
 
+      if (!form.service_id) {
+        setError('Select a service before entering Kg or saving the transaction.')
+        return
+      }
+
+      if (isWeightBased && (!form.kg || Number(form.kg) <= 0)) {
+        setError('Enter the Kg after selecting the service so Loads and Base Amount can be calculated.')
+        return
+      }
+
       if (form.payment_method === 'paid') {
         if (!cashEntered) {
           setError('Enter the cash received before saving.')
@@ -258,13 +271,18 @@ export default function EditTransactionModal({
 
       setSaving(true)
 
-      const { error: updateError } = await supabase
+      // Optimistic concurrency guard: the update only succeeds if the row is
+      // still the same version that was opened in this modal. A save/delete in
+      // any other browser, tab, owner account, or staff account changes
+      // updated_at, making this atomic update affect zero rows instead of
+      // silently overwriting somebody else's newer work.
+      const { data: updatedRows, error: updateError } = await supabase
         .from('transactions')
         .update({
           customer_name: normalizedCustomerName,
           phone_number: form.phone_number.trim() || null,
           transaction_date: form.transaction_date,
-          service_id: form.service_id || null,
+          service_id: form.service_id,
           kg: form.kg ? Number(form.kg) : null,
           no_of_loads: form.no_of_loads ? Number(form.no_of_loads) : null,
           base_amount: form.base_amount ? Number(form.base_amount) : 0,
@@ -280,6 +298,8 @@ export default function EditTransactionModal({
           notes: form.notes.trim() || null,
         })
         .eq('id', transaction.id)
+        .eq('updated_at', transaction.updated_at)
+        .select('id, updated_at')
 
       setSaving(false)
 
@@ -289,6 +309,11 @@ export default function EditTransactionModal({
         } else {
           setError(updateError.message)
         }
+        return
+      }
+
+      if (!updatedRows || updatedRows.length === 0) {
+        setError('This transaction was updated or deleted by another user after you opened it. Close this editor, refresh/reopen the transaction, and review the latest version before saving.')
         return
       }
 
@@ -342,8 +367,8 @@ export default function EditTransactionModal({
             <input type="date" required value={form.transaction_date} onChange={update('transaction_date')} className={inputClass} />
           </div>
           <div>
-            <label className={labelClass}>Service</label>
-            <select value={form.service_id} onChange={handleServiceChange} className={inputClass}>
+            <label className={labelClass}>Service *</label>
+            <select required value={form.service_id} onChange={handleServiceChange} className={inputClass}>
               <option value="">Select service…</option>
               {services.map((s) => (
                 <option key={s.id} value={s.id}>{s.label} ({s.code})</option>
@@ -357,21 +382,25 @@ export default function EditTransactionModal({
               type="number"
               step="0.1"
               min={isWeightBased ? '0.1' : '0'}
-              required={isWeightBased}
+              required={Boolean(form.service_id) && isWeightBased}
+              disabled={!form.service_id}
               value={form.kg}
               onChange={handleKgChange}
-              className={inputClass}
+              placeholder={!form.service_id ? 'Select service first' : undefined}
+              className={`${inputClass} disabled:opacity-50 disabled:cursor-not-allowed`}
             />
+            {!form.service_id && <p className="mt-1 text-xs text-slate-500">Select a service first to enable Kg.</p>}
           </div>
           <div>
             <label className={labelClass}>No. of Loads{isWeightBased ? ' · Auto' : ''}</label>
             <input
               type="number"
               min="0"
+              disabled={!form.service_id}
               value={form.no_of_loads}
-              onChange={isWeightBased ? undefined : update('no_of_loads')}
-              readOnly={isWeightBased}
-              className={isWeightBased ? autoInputClass : inputClass}
+              onChange={isWeightBased || !form.service_id ? undefined : update('no_of_loads')}
+              readOnly={isWeightBased || !form.service_id}
+              className={isWeightBased || !form.service_id ? `${autoInputClass} disabled:opacity-50` : inputClass}
             />
           </div>
 
@@ -381,10 +410,11 @@ export default function EditTransactionModal({
               type="number"
               step="0.01"
               min="0"
+              disabled={!form.service_id}
               value={form.base_amount}
-              onChange={isWeightBased ? undefined : handleBaseAmountChange}
-              readOnly={isWeightBased}
-              className={isWeightBased ? autoInputClass : inputClass}
+              onChange={isWeightBased || !form.service_id ? undefined : handleBaseAmountChange}
+              readOnly={isWeightBased || !form.service_id}
+              className={isWeightBased || !form.service_id ? `${autoInputClass} disabled:opacity-50` : inputClass}
             />
           </div>
           <div>
