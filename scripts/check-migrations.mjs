@@ -7,8 +7,23 @@ const rawFiles = readdirSync(migrationsDir)
 
 const versionPattern = /^(\d+)_/;
 const versions = new Map();
+const normalizedVersions = new Map();
 const errors = [];
 const migrations = [];
+
+const normalizeVersion = (version) => {
+  // Aquaspin has two legacy day-level migration IDs (`YYYYMMDD`) in the
+  // production ledger alongside normal Supabase timestamp IDs
+  // (`YYYYMMDDHHMMSS`). Treat day-level IDs as midnight on that day so
+  // chronological ordering remains correct without changing the remote IDs.
+  if (/^\d{8}$/.test(version)) return `${version}000000`;
+  if (/^\d{14}$/.test(version)) return version;
+
+  errors.push(
+    `migration version ${version} must use YYYYMMDD or YYYYMMDDHHMMSS format`,
+  );
+  return null;
+};
 
 for (const file of rawFiles) {
   const match = file.match(versionPattern);
@@ -25,7 +40,24 @@ for (const file of rawFiles) {
     versions.set(version, file);
   }
 
-  migrations.push({ file, version, numericVersion: BigInt(version) });
+  const normalizedVersion = normalizeVersion(version);
+  if (normalizedVersion === null) continue;
+
+  const normalizedExisting = normalizedVersions.get(normalizedVersion);
+  if (normalizedExisting) {
+    errors.push(
+      `migration versions collide at normalized timestamp ${normalizedVersion}: ${normalizedExisting} and ${file}`,
+    );
+  } else {
+    normalizedVersions.set(normalizedVersion, file);
+  }
+
+  migrations.push({
+    file,
+    version,
+    normalizedVersion,
+    numericVersion: BigInt(normalizedVersion),
+  });
 }
 
 migrations.sort((a, b) => {
@@ -101,5 +133,5 @@ if (errors.length > 0) {
 }
 
 console.log(
-  `Migration history check passed (${migrations.length} migration files, unique numeric versions, canonical base present, production ledger represented).`,
+  `Migration history check passed (${migrations.length} migration files, unique normalized versions, canonical base present, production ledger represented).`,
 );
