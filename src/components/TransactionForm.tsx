@@ -3,11 +3,13 @@ import { supabase } from '../lib/supabase'
 import { useServices } from '../hooks/useServices'
 import { useAddOns } from '../hooks/useAddOns'
 import { useAuth } from '../lib/auth-context'
+import { useShopSettings } from '../lib/shop-settings-context'
 import type { PaymentMethod, TransactionAddOnItem } from '../types/database'
 import { shopDate } from '../lib/date'
 import { toTitleCaseName } from '../lib/text'
+import { ButtonSpinner, InlineAlert, LoadingPanel } from './UiFeedback'
 
-const emptyForm = {
+const makeEmptyForm = (defaultPaymentMethod: PaymentMethod) => ({
   customer_name: '',
   phone_number: '',
   transaction_date: shopDate(),
@@ -20,11 +22,13 @@ const emptyForm = {
   cash_amount: '',
   gcash_amount: '',
   gcash_reference: '',
-  payment_method: 'pay_later' as PaymentMethod,
+  payment_method: defaultPaymentMethod,
   pickup_date: '',
   pickup_time: '',
   notes: '',
-}
+})
+
+type TransactionFormState = ReturnType<typeof makeEmptyForm>
 
 const peso = (n: number) =>
   `₱${n.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
@@ -35,22 +39,19 @@ const unitLabel = (unit: string, quantity = 1) => {
 }
 
 export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
-  const { services } = useServices()
-  const { addOns, loading: addOnsLoading } = useAddOns()
+  const { services, loading: servicesLoading, error: servicesError } = useServices()
+  const { addOns, loading: addOnsLoading, error: addOnsError } = useAddOns()
   const { profile } = useAuth()
-  const [form, setForm] = useState(emptyForm)
+  const { settings } = useShopSettings()
+  const isOwner = profile?.role === 'owner'
+  const canCreate = isOwner || settings.staff_can_create_transactions
+
+  const [form, setForm] = useState<TransactionFormState>(() => makeEmptyForm(settings.default_payment_method))
   const [selectedAddOns, setSelectedAddOns] = useState<Record<string, number>>({})
   const [totalTouched, setTotalTouched] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
-
-  // One idempotency key per open form. Every submit attempt from this form
-  // instance (including a double-click that fires before the button's
-  // `disabled` prop re-renders) reuses the same key, so a duplicate insert
-  // collides on the database's unique index instead of creating a second
-  // transaction. A plain ref (not state) guards re-entrancy synchronously,
-  // before React has a chance to re-render anything.
   const [clientRequestId, setClientRequestId] = useState(() => crypto.randomUUID())
   const submitLockRef = useRef(false)
 
@@ -150,12 +151,16 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
   }, [addOnsTotal])
 
   useEffect(() => {
-    if (totalTouched) return
+    if (totalTouched && settings.allow_manual_total_override) return
     const base = parseFloat(form.base_amount) || 0
     const addOnAmount = parseFloat(form.add_ons) || 0
     setForm((f) => ({ ...f, total_amount: (base + addOnAmount).toFixed(2) }))
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [form.base_amount, form.add_ons, totalTouched])
+  }, [form.base_amount, form.add_ons, totalTouched, settings.allow_manual_total_override])
+
+  useEffect(() => {
+    if (!settings.allow_manual_total_override) setTotalTouched(false)
+  }, [settings.allow_manual_total_override])
 
   useEffect(() => {
     setForm((f) => {
@@ -175,7 +180,7 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
     })
   }, [form.payment_method])
 
-  const update = (field: keyof typeof emptyForm) => (
+  const update = (field: keyof TransactionFormState) => (
     e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>
   ) => setForm((f) => ({ ...f, [field]: e.target.value }))
 
@@ -204,12 +209,16 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
     setSelectedAddOns((current) => ({ ...current, [id]: quantity }))
   }
 
+  const resetForm = () => {
+    setForm(makeEmptyForm(settings.default_payment_method))
+    setSelectedAddOns({})
+    setTotalTouched(false)
+    setClientRequestId(crypto.randomUUID())
+  }
+
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault()
-
-    // Synchronous guard: blocks a second submit fired before React has
-    // re-rendered the button as disabled (e.g. a fast double-click).
-    if (submitLockRef.current) return
+    if (!canCreate || submitLockRef.current) return
     submitLockRef.current = true
 
     try {
@@ -221,14 +230,24 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
         setError('Customer name is required.')
         return
       }
-
+      if (settings.require_phone_number && !form.phone_number.trim()) {
+        setError('Phone number is required by the Owner settings.')
+        return
+      }
       if (!form.service_id) {
         setError('Select a service before entering Kg and saving the transaction.')
         return
       }
-
       if (isWeightBased && (!form.kg || Number(form.kg) <= 0)) {
         setError('Enter the Kg after selecting the service so Loads and Base Amount can be calculated.')
+        return
+      }
+      if (settings.require_pickup_date && !form.pickup_date) {
+        setError('Pickup date is required by the Owner settings.')
+        return
+      }
+      if (settings.require_notes_for_pay_later && form.payment_method === 'pay_later' && !form.notes.trim()) {
+        setError('Notes are required for Pay Later transactions by the Owner settings.')
         return
       }
 
@@ -260,7 +279,7 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
 
       setSubmitting(true)
 
-      const { error } = await supabase.from('transactions').insert({
+      const { error: insertError } = await supabase.from('transactions').insert({
         customer_name: normalizedCustomerName,
         phone_number: form.phone_number.trim() || null,
         transaction_date: form.transaction_date,
@@ -284,21 +303,19 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
 
       setSubmitting(false)
 
-      if (error) {
-        if (error.message.toLowerCase().includes('transactions_gcash_reference_unique_idx')) {
+      if (insertError) {
+        const lower = insertError.message.toLowerCase()
+        if (lower.includes('transactions_gcash_reference_unique_idx')) {
           setError('That GCash Transaction # is already attached to another transaction.')
-        } else if (error.message.toLowerCase().includes('transactions_client_request_id_unique_idx')) {
-          // The exact same submit was already saved (a double-click or a
-          // retried request) -- not a real error, nothing lost.
+        } else if (lower.includes('transactions_client_request_id_unique_idx')) {
           setSuccess(`Added — ${normalizedCustomerName} (duplicate click ignored)`)
-          setForm(emptyForm)
-          setSelectedAddOns({})
-          setTotalTouched(false)
-          setClientRequestId(crypto.randomUUID())
+          resetForm()
           onAdded?.()
           setTimeout(() => setSuccess(null), 4000)
+        } else if (lower.includes('staff transaction creation') || lower.includes('row-level security')) {
+          setError('Transaction creation is currently disabled for Staff by the Owner.')
         } else {
-          setError(error.message)
+          setError(insertError.message)
         }
         return
       }
@@ -307,13 +324,11 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
       const gcashMessage = form.payment_method === 'gcash' ? ` · GCash #${form.gcash_reference.trim()}` : ''
       const addOnMessage = selectedAddOnItems.length > 0 ? ` · Add-ons ${peso(addOnsTotal)}` : ''
       setSuccess(`Added — ${normalizedCustomerName}${addOnMessage}${changeMessage}${gcashMessage}`)
-      setForm(emptyForm)
-      setSelectedAddOns({})
-      setTotalTouched(false)
-      setClientRequestId(crypto.randomUUID())
+      resetForm()
       onAdded?.()
       setTimeout(() => setSuccess(null), 4000)
     } finally {
+      setSubmitting(false)
       submitLockRef.current = false
     }
   }
@@ -323,25 +338,34 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
   const autoInputClass = `${inputClass} bg-slate-50 text-slate-700 cursor-not-allowed dark:bg-slate-800 dark:text-slate-300`
   const labelClass = 'block text-xs font-medium text-slate-600 mb-1 dark:text-slate-400'
 
+  if (!canCreate) {
+    return (
+      <div className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
+        <InlineAlert variant="info" title="Transaction entry is disabled for Staff">
+          The Owner has turned off Staff transaction creation. You can still review the records you are allowed to access below.
+        </InlineAlert>
+      </div>
+    )
+  }
+
   return (
     <form onSubmit={handleSubmit} className="bg-white rounded-2xl border border-slate-200 p-5 space-y-5 dark:bg-slate-900 dark:border-slate-800">
       <h2 className="font-semibold text-slate-900 dark:text-slate-100">Add Customer Transaction</h2>
 
+      {(servicesError || addOnsError) && (
+        <InlineAlert variant="warning" title="Some catalog data could not be refreshed">
+          {servicesError || addOnsError}. Existing loaded options remain available where possible.
+        </InlineAlert>
+      )}
+
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div>
           <label className={labelClass}>Customer Name *</label>
-          <input
-            required
-            value={form.customer_name}
-            onChange={update('customer_name')}
-            onBlur={() => setForm((f) => ({ ...f, customer_name: toTitleCaseName(f.customer_name) }))}
-            className={inputClass}
-            placeholder="Earl Dela Cruz"
-          />
+          <input required value={form.customer_name} onChange={update('customer_name')} onBlur={() => setForm((f) => ({ ...f, customer_name: toTitleCaseName(f.customer_name) }))} className={inputClass} placeholder="Earl Dela Cruz" />
         </div>
         <div>
-          <label className={labelClass}>Phone Number</label>
-          <input value={form.phone_number} onChange={update('phone_number')} className={inputClass} placeholder="09xxxxxxxxx" />
+          <label className={labelClass}>Phone Number{settings.require_phone_number ? ' *' : ''}</label>
+          <input required={settings.require_phone_number} value={form.phone_number} onChange={update('phone_number')} className={inputClass} placeholder="09xxxxxxxxx" />
         </div>
 
         <div>
@@ -350,65 +374,28 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
         </div>
         <div>
           <label className={labelClass}>Service *</label>
-          <select required value={form.service_id} onChange={handleServiceChange} className={inputClass}>
-            <option value="">Select service…</option>
-            {services.map((s) => (
-              <option key={s.id} value={s.id}>{s.label} ({s.code})</option>
-            ))}
+          <select required disabled={servicesLoading} value={form.service_id} onChange={handleServiceChange} className={`${inputClass} disabled:opacity-60`}>
+            <option value="">{servicesLoading ? 'Loading services…' : 'Select service…'}</option>
+            {services.map((s) => <option key={s.id} value={s.id}>{s.label} ({s.code})</option>)}
           </select>
         </div>
 
         <div>
           <label className={labelClass}>Kg{isWeightBased ? ' *' : ''}</label>
-          <input
-            type="number"
-            step="0.1"
-            min={isWeightBased ? '0.1' : '0'}
-            required={Boolean(form.service_id) && isWeightBased}
-            disabled={!form.service_id}
-            value={form.kg}
-            onChange={update('kg')}
-            placeholder={!form.service_id ? 'Select service first' : undefined}
-            className={`${inputClass} disabled:opacity-50 disabled:cursor-not-allowed`}
-          />
+          <input type="number" step="0.1" min={isWeightBased ? '0.1' : '0'} required={Boolean(form.service_id) && isWeightBased} disabled={!form.service_id} value={form.kg} onChange={update('kg')} placeholder={!form.service_id ? 'Select service first' : undefined} className={`${inputClass} disabled:opacity-50 disabled:cursor-not-allowed`} />
           {!form.service_id && <p className="mt-1 text-xs text-slate-500">Select a service first to enable Kg.</p>}
-          {isWeightBased && selectedService?.max_kg_per_load && (
-            <p className="mt-1 text-xs text-sky-700 dark:text-sky-400">Auto rule: up to {selectedService.max_kg_per_load} kg per load</p>
-          )}
+          {isWeightBased && selectedService?.max_kg_per_load && <p className="mt-1 text-xs text-sky-700 dark:text-sky-400">Auto rule: up to {selectedService.max_kg_per_load} kg per load</p>}
         </div>
         <div>
           <label className={labelClass}>No. of Loads{isWeightBased ? ' · Auto' : ''}</label>
-          <input
-            type="number"
-            min="0"
-            disabled={!form.service_id}
-            value={form.no_of_loads}
-            onChange={isWeightBased || !form.service_id ? undefined : update('no_of_loads')}
-            readOnly={isWeightBased || !form.service_id}
-            placeholder={!form.service_id ? 'Select service first' : isWeightBased ? 'Enter kg first' : undefined}
-            className={isWeightBased || !form.service_id ? `${autoInputClass} disabled:opacity-50` : inputClass}
-          />
-          {isWeightBased && form.no_of_loads && (
-            <p className="mt-1 text-xs text-slate-500">{form.kg} kg = {form.no_of_loads} load{form.no_of_loads === '1' ? '' : 's'}, same transaction #</p>
-          )}
+          <input type="number" min="0" disabled={!form.service_id} value={form.no_of_loads} onChange={isWeightBased || !form.service_id ? undefined : update('no_of_loads')} readOnly={isWeightBased || !form.service_id} placeholder={!form.service_id ? 'Select service first' : isWeightBased ? 'Enter kg first' : undefined} className={isWeightBased || !form.service_id ? `${autoInputClass} disabled:opacity-50` : inputClass} />
+          {isWeightBased && form.no_of_loads && <p className="mt-1 text-xs text-slate-500">{form.kg} kg = {form.no_of_loads} load{form.no_of_loads === '1' ? '' : 's'}, same transaction #</p>}
         </div>
 
         <div>
           <label className={labelClass}>Base Amount (₱){isWeightBased ? ' · Auto' : ''}</label>
-          <input
-            type="number"
-            step="0.01"
-            min="0"
-            disabled={!form.service_id}
-            value={form.base_amount}
-            onChange={isWeightBased || !form.service_id ? undefined : update('base_amount')}
-            readOnly={isWeightBased || !form.service_id}
-            placeholder={!form.service_id ? 'Select service first' : undefined}
-            className={isWeightBased || !form.service_id ? `${autoInputClass} disabled:opacity-50` : inputClass}
-          />
-          {isWeightBased && form.no_of_loads && selectedService?.default_rate != null && (
-            <p className="mt-1 text-xs text-slate-500">₱{selectedService.default_rate.toFixed(2)} × {form.no_of_loads} load{form.no_of_loads === '1' ? '' : 's'}</p>
-          )}
+          <input type="number" step="0.01" min="0" disabled={!form.service_id} value={form.base_amount} onChange={isWeightBased || !form.service_id ? undefined : update('base_amount')} readOnly={isWeightBased || !form.service_id} placeholder={!form.service_id ? 'Select service first' : undefined} className={isWeightBased || !form.service_id ? `${autoInputClass} disabled:opacity-50` : inputClass} />
+          {isWeightBased && form.no_of_loads && selectedService?.default_rate != null && <p className="mt-1 text-xs text-slate-500">₱{selectedService.default_rate.toFixed(2)} × {form.no_of_loads} load{form.no_of_loads === '1' ? '' : 's'}</p>}
         </div>
         <div>
           <label className={labelClass}>Add-ons Total (₱) · Auto</label>
@@ -427,7 +414,7 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
         </div>
 
         {addOnsLoading ? (
-          <p className="text-sm text-slate-400 py-3">Loading add-ons…</p>
+          <LoadingPanel compact label="Loading add-ons…" slowLabel="Still loading add-ons…" />
         ) : addOns.length === 0 ? (
           <p className="text-sm text-slate-400 py-3">No active add-ons configured yet.</p>
         ) : (
@@ -442,12 +429,7 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
               return (
                 <div key={addOn.id} className={`rounded-lg border p-3 ${selected ? 'border-sky-300 bg-sky-50/60 dark:border-sky-800 dark:bg-sky-950/20' : 'border-slate-200 dark:border-slate-700'}`}>
                   <label className="flex items-start gap-3 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={selected}
-                      onChange={(e) => toggleAddOn(addOn.id, e.target.checked)}
-                      className="mt-1 h-4 w-4"
-                    />
+                    <input type="checkbox" checked={selected} onChange={(e) => toggleAddOn(addOn.id, e.target.checked)} className="mt-1 h-4 w-4" />
                     <span className="flex-1">
                       <span className="flex items-center justify-between gap-3">
                         <span className="font-medium text-sm text-slate-900 dark:text-slate-100">{addOn.name}</span>
@@ -457,16 +439,7 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
                         <span className="mt-3 flex items-end justify-between gap-3">
                           <span className="w-28">
                             <span className="block text-xs text-slate-500 mb-1">Quantity</span>
-                            <input
-                              type="number"
-                              min={decimalQuantity ? '0.1' : '1'}
-                              step={decimalQuantity ? '0.1' : '1'}
-                              disabled={addOn.unit_type === 'flat'}
-                              value={effectiveQuantity}
-                              onChange={(e) => updateAddOnQuantity(addOn.id, e.target.value, decimalQuantity)}
-                              onClick={(e) => e.stopPropagation()}
-                              className={`${inputClass} py-1.5 disabled:opacity-60`}
-                            />
+                            <input type="number" min={decimalQuantity ? '0.1' : '1'} step={decimalQuantity ? '0.1' : '1'} disabled={addOn.unit_type === 'flat'} value={effectiveQuantity} onChange={(e) => updateAddOnQuantity(addOn.id, e.target.value, decimalQuantity)} onClick={(e) => e.stopPropagation()} className={`${inputClass} py-1.5 disabled:opacity-60`} />
                           </span>
                           <span className="text-right">
                             <span className="block text-xs text-slate-500">{effectiveQuantity} {unitLabel(addOn.unit_type, effectiveQuantity)}</span>
@@ -485,61 +458,39 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div>
-          <label className={labelClass}>Total (₱)</label>
+          <label className={labelClass}>Total (₱){settings.allow_manual_total_override ? '' : ' · Auto'}</label>
           <input
             type="number"
             step="0.01"
             min="0"
             value={form.total_amount}
-            onChange={(e) => {
+            readOnly={!settings.allow_manual_total_override}
+            onChange={settings.allow_manual_total_override ? (e) => {
               setTotalTouched(true)
               setForm((f) => ({ ...f, total_amount: e.target.value }))
-            }}
-            className={inputClass}
+            } : undefined}
+            className={settings.allow_manual_total_override ? inputClass : autoInputClass}
           />
+          {!settings.allow_manual_total_override && <p className="mt-1 text-xs text-slate-500">Locked by Owner settings: Base Amount + Add-ons only.</p>}
         </div>
         <div>
           <label className={labelClass}>Payment Method *</label>
           <select required value={form.payment_method} onChange={update('payment_method')} className={inputClass}>
-            <option value="paid">Cash</option>
-            <option value="gcash">GCash</option>
-            <option value="pay_later">Pay Later</option>
+            <option value="paid">Cash</option><option value="gcash">GCash</option><option value="pay_later">Pay Later</option>
           </select>
         </div>
 
         <div>
           <label className={labelClass}>Cash Received (₱){isCashPayment ? ' *' : ''}</label>
-          <input
-            type="number"
-            step="0.01"
-            min="0"
-            required={isCashPayment}
-            disabled={!isCashPayment}
-            value={form.cash_amount}
-            onChange={update('cash_amount')}
-            className={`${inputClass} disabled:opacity-50 disabled:cursor-not-allowed`}
-            placeholder={isCashPayment ? 'Amount tendered by customer' : 'Select Cash payment'}
-          />
+          <input type="number" step="0.01" min="0" required={isCashPayment} disabled={!isCashPayment} value={form.cash_amount} onChange={update('cash_amount')} className={`${inputClass} disabled:opacity-50 disabled:cursor-not-allowed`} placeholder={isCashPayment ? 'Amount tendered by customer' : 'Select Cash payment'} />
           {isCashPayment && cashEntered && cashShort > 0 && <p className="mt-1 text-xs font-medium text-red-600">Short by {peso(cashShort)}. Transaction cannot be saved.</p>}
           {isCashPayment && cashEntered && cashDifference === 0 && <p className="mt-1 text-xs font-medium text-emerald-600">Exact payment. No change due.</p>}
-          {isCashPayment && cashEntered && changeDue > 0 && (
-            <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-300">Change due: <strong>{peso(changeDue)}</strong></div>
-          )}
+          {isCashPayment && cashEntered && changeDue > 0 && <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-300">Change due: <strong>{peso(changeDue)}</strong></div>}
         </div>
 
         <div>
           <label className={labelClass}>GCash Received (₱){isGcashPayment ? ' *' : ''}</label>
-          <input
-            type="number"
-            step="0.01"
-            min="0"
-            required={isGcashPayment}
-            disabled={!isGcashPayment}
-            value={form.gcash_amount}
-            onChange={update('gcash_amount')}
-            className={`${inputClass} disabled:opacity-50 disabled:cursor-not-allowed`}
-            placeholder={isGcashPayment ? 'GCash amount received' : 'Select GCash payment'}
-          />
+          <input type="number" step="0.01" min="0" required={isGcashPayment} disabled={!isGcashPayment} value={form.gcash_amount} onChange={update('gcash_amount')} className={`${inputClass} disabled:opacity-50 disabled:cursor-not-allowed`} placeholder={isGcashPayment ? 'GCash amount received' : 'Select GCash payment'} />
           {isGcashPayment && gcashEntered && gcashDifference === 0 && <p className="mt-1 text-xs font-medium text-emerald-600">GCash amount matches the total.</p>}
           {isGcashPayment && gcashEntered && gcashDifference !== 0 && <p className="mt-1 text-xs font-medium text-red-600">GCash amount must match {peso(totalAmount)}.</p>}
         </div>
@@ -547,59 +498,29 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
         {isGcashPayment && (
           <div className="sm:col-span-2">
             <label className={labelClass}>GCash Transaction # *</label>
-            <input
-              required
-              value={form.gcash_reference}
-              onChange={update('gcash_reference')}
-              className={inputClass}
-              placeholder="Enter GCash reference / transaction number"
-              autoComplete="off"
-            />
+            <input required value={form.gcash_reference} onChange={update('gcash_reference')} className={inputClass} placeholder="Enter GCash reference / transaction number" autoComplete="off" />
             <p className="mt-1 text-xs text-slate-500">Required for payment tracking and duplicate-reference checking.</p>
           </div>
         )}
 
         <div>
-          <label className={labelClass}>Pickup Date</label>
+          <label className={labelClass}>Pickup Date{settings.require_pickup_date ? ' *' : ''}</label>
           <div className="flex gap-2">
-            <input
-              type="date"
-              value={form.pickup_date}
-              onChange={(e) =>
-                setForm((f) => ({
-                  ...f,
-                  pickup_date: e.target.value,
-                  pickup_time: e.target.value ? f.pickup_time : '',
-                }))
-              }
-              className={`${inputClass} flex-1`}
-            />
-            <input
-              type="time"
-              value={form.pickup_time}
-              onChange={update('pickup_time')}
-              disabled={!form.pickup_date}
-              placeholder="Time"
-              title={!form.pickup_date ? 'Set a pickup date first' : 'Pickup time (optional)'}
-              className={`${inputClass} w-32 disabled:opacity-50 disabled:cursor-not-allowed`}
-            />
+            <input type="date" required={settings.require_pickup_date} value={form.pickup_date} onChange={(e) => setForm((f) => ({ ...f, pickup_date: e.target.value, pickup_time: e.target.value ? f.pickup_time : '' }))} className={`${inputClass} flex-1`} />
+            <input type="time" value={form.pickup_time} onChange={update('pickup_time')} disabled={!form.pickup_date} title={!form.pickup_date ? 'Set a pickup date first' : 'Pickup time (optional)'} className={`${inputClass} w-32 disabled:opacity-50 disabled:cursor-not-allowed`} />
           </div>
         </div>
         <div>
-          <label className={labelClass}>Notes</label>
-          <input value={form.notes} onChange={update('notes')} className={inputClass} />
+          <label className={labelClass}>Notes{settings.require_notes_for_pay_later && form.payment_method === 'pay_later' ? ' *' : ''}</label>
+          <input required={settings.require_notes_for_pay_later && form.payment_method === 'pay_later'} value={form.notes} onChange={update('notes')} className={inputClass} />
         </div>
       </div>
 
-      {error && <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</p>}
-      {success && <p className="text-sm text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2">{success}</p>}
+      {error && <InlineAlert variant="error" title="Transaction was not saved">{error}</InlineAlert>}
+      {success && <InlineAlert variant="success" title="Transaction saved">{success}</InlineAlert>}
 
-      <button
-        type="submit"
-        disabled={submitting}
-        className="bg-sky-600 hover:bg-sky-700 disabled:opacity-60 text-white font-medium rounded-lg px-4 py-2 text-sm transition"
-      >
-        {submitting ? 'Saving…' : 'Add Transaction'}
+      <button type="submit" disabled={submitting || servicesLoading} className="inline-flex items-center gap-2 bg-sky-600 hover:bg-sky-700 disabled:opacity-60 text-white font-medium rounded-lg px-4 py-2 text-sm transition">
+        {submitting && <ButtonSpinner />}{submitting ? 'Saving…' : 'Add Transaction'}
       </button>
     </form>
   )
