@@ -2,16 +2,16 @@ import { useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import PaymentBadge from '../components/PaymentBadge'
 import { InlineAlert, LoadingPanel } from '../components/UiFeedback'
+import { useShopDate } from '../hooks/useShopDate'
 import { useTransactions } from '../hooks/useTransactions'
 import { useAuth } from '../lib/auth-context'
-import { shopDate } from '../lib/date'
 
 const peso = (value: number) =>
   `₱${value.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 
 export default function HomePage() {
   const { profile } = useAuth()
-  const today = shopDate()
+  const today = useShopDate()
   const isOwner = profile?.role === 'owner'
   const { rows, loading, error, realtimeState, reload } = useTransactions({
     dateFrom: today,
