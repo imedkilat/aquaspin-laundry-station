@@ -94,6 +94,7 @@ end;
 $$;
 
 revoke all on function private.has_staff_permission(text) from public, anon, authenticated;
+grant execute on function private.has_staff_permission(text) to authenticated;
 
 -- Staff may update their own safe profile fields. The trigger below prevents
 -- role/identity escalation even if a caller bypasses the browser UI.
