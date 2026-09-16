@@ -22,6 +22,27 @@ export type Profile = {
   created_at: string
 }
 
+export type ShopSettings = {
+  id: number
+  shop_display_name: string
+  contact_phone: string | null
+  report_footer: string | null
+  default_payment_method: PaymentMethod
+  default_dashboard_days: number
+  require_phone_number: boolean
+  require_pickup_date: boolean
+  require_notes_for_pay_later: boolean
+  allow_manual_total_override: boolean
+  staff_can_create_transactions: boolean
+  staff_can_access_dashboard: boolean
+  staff_can_view_full_history: boolean
+  staff_can_edit_transactions: boolean
+  staff_can_delete_transactions: boolean
+  staff_can_view_historical_pay_later: boolean
+  updated_at: string
+  updated_by: string | null
+}
+
 export type Service = {
   id: string
   code: string
@@ -108,6 +129,47 @@ export type Database = {
           full_name?: string
           role?: Role
           created_at?: string
+        }
+        Relationships: []
+      }
+      shop_settings: {
+        Row: ShopSettings
+        Insert: {
+          id?: number
+          shop_display_name?: string
+          contact_phone?: string | null
+          report_footer?: string | null
+          default_payment_method?: PaymentMethod
+          default_dashboard_days?: number
+          require_phone_number?: boolean
+          require_pickup_date?: boolean
+          require_notes_for_pay_later?: boolean
+          allow_manual_total_override?: boolean
+          staff_can_create_transactions?: boolean
+          staff_can_access_dashboard?: boolean
+          staff_can_view_full_history?: boolean
+          staff_can_edit_transactions?: boolean
+          staff_can_delete_transactions?: boolean
+          staff_can_view_historical_pay_later?: boolean
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          shop_display_name?: string
+          contact_phone?: string | null
+          report_footer?: string | null
+          default_payment_method?: PaymentMethod
+          default_dashboard_days?: number
+          require_phone_number?: boolean
+          require_pickup_date?: boolean
+          require_notes_for_pay_later?: boolean
+          allow_manual_total_override?: boolean
+          staff_can_create_transactions?: boolean
+          staff_can_access_dashboard?: boolean
+          staff_can_view_full_history?: boolean
+          staff_can_edit_transactions?: boolean
+          staff_can_delete_transactions?: boolean
+          staff_can_view_historical_pay_later?: boolean
         }
         Relationships: []
       }
