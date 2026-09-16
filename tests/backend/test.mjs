@@ -76,25 +76,36 @@ try {
   await admin();
   const migrations = filenames.filter(f => f.includes('customer_status_'));
   assert.equal(migrations.length, 3, 'All forward customer/status migrations must exist');
-  await test('apply full baseline and new forward migration', async () => {
-    for (const file of migrations.slice(0, 2)) await db.exec(await read('supabase/migrations/' + file));
-  });
-  await test('reconcile legacy soft-delete RPC and drifted SMS audit columns', async () => {
+  await test('migration 1 denies status and SMS direct UPDATE with drifted columns', async () => {
     const before = await one("select count(*)::int as count from pg_attribute where attrelid='public.transactions'::regclass and attname in ('sms_sent_at','sms_sent_by','sms_message_id') and not attisdropped");
     assert.equal(before.count, 0, 'Baseline schema has no optional SMS audit columns');
     await db.exec('alter table public.transactions add column sms_sent_at timestamptz, add column sms_sent_by uuid, add column sms_message_id text');
+    await db.exec(await read('supabase/migrations/' + migrations[0]));
+    for (const column of ['sms_sent_at', 'sms_sent_by', 'sms_message_id', 'order_status']) {
+      assert.equal((await one(`select has_column_privilege('authenticated','public.transactions','${column}','UPDATE') allowed`)).allowed, false);
+    }
+  });
+  await test('migration 2 removes legacy RPC before migration 3', async () => {
     await db.exec(`
       create function public.soft_delete_transaction(uuid, text, timestamptz)
       returns boolean language sql immutable as $$ select false $$;
       revoke all on function public.soft_delete_transaction(uuid, text, timestamptz) from public, anon, authenticated;
       grant execute on function public.soft_delete_transaction(uuid, text, timestamptz) to authenticated;
     `);
+    assert.equal((await one("select to_regprocedure('public.soft_delete_transaction(uuid,text,timestamptz)') is not null present")).present, true);
+    await db.exec(await read('supabase/migrations/' + migrations[1]));
+    assert.equal((await one("select to_regprocedure('public.soft_delete_transaction(uuid,text,timestamptz)') is null gone")).gone, true);
+    assert.equal((await one("select to_regprocedure('public.soft_delete_transaction(uuid,timestamptz,text)') is not null hardened")).hardened, true);
+    const rpcGrants = await one("select has_function_privilege('authenticated','public.soft_delete_transaction(uuid,timestamptz,text)','execute') as auth_ok, has_function_privilege('anon','public.soft_delete_transaction(uuid,timestamptz,text)','execute') as anon_ok");
+    assert.equal(rpcGrants.auth_ok, true); assert.equal(rpcGrants.anon_ok, false);
+  });
+  await test('migration 3 preserves hardened RPC and least-privilege grants', async () => {
     await db.exec(await read('supabase/migrations/' + migrations[2]));
     assert.equal((await one("select to_regprocedure('public.soft_delete_transaction(uuid,text,timestamptz)') is null gone")).gone, true);
     assert.equal((await one("select to_regprocedure('public.soft_delete_transaction(uuid,timestamptz,text)') is not null hardened")).hardened, true);
     const rpcGrants = await one("select has_function_privilege('authenticated','public.soft_delete_transaction(uuid,timestamptz,text)','execute') as auth_ok, has_function_privilege('anon','public.soft_delete_transaction(uuid,timestamptz,text)','execute') as anon_ok");
     assert.equal(rpcGrants.auth_ok, true); assert.equal(rpcGrants.anon_ok, false);
-    for (const column of ['sms_sent_at', 'sms_sent_by', 'sms_message_id']) {
+    for (const column of ['sms_sent_at', 'sms_sent_by', 'sms_message_id', 'order_status']) {
       assert.equal((await one(`select has_column_privilege('authenticated','public.transactions','${column}','UPDATE') allowed`)).allowed, false);
     }
     await asUser(staff);

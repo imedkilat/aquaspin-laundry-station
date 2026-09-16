@@ -5,15 +5,16 @@ All database data below is synthetic, in an isolated in-memory PostgreSQL instan
 Supabase auth/storage are minimally shimmed; actual repository policies, SQL functions,
 triggers and migrations execute. No production credentials or connection are used.
 
-**37 automated checks PASS; 0 automated assertion failures.** Staff soft-delete is now
+**38 automated checks PASS; 0 automated assertion failures.** Staff soft-delete is now
 tested through the secure RPC and no longer has a known FAIL. The old direct
 `UPDATE ... RETURNING` behavior remains intentionally unavailable because deleted rows
 are hidden by RLS.
 
 | Test | Result | Evidence / scope |
 | --- | --- | --- |
-| Full baseline plus forward migrations | PASS | Schema and all 13 baseline migrations replayed before all three follow-up migrations |
-| Live-schema drift reconciliation | PASS | Legacy soft-delete overload removed; hardened overload retained; authenticated-only EXECUTE; baseline absent SMS columns and drifted SMS columns both exercised |
+| Migration 1 deployment stop | PASS | With drifted SMS columns present before migration 1, authenticated UPDATE is denied for SMS audit fields and order_status |
+| Migration 2 deployment stop | PASS | Legacy soft-delete overload is present before migration 2, then removed; hardened overload exists with authenticated-only EXECUTE |
+| Migration 3 deployment stop | PASS | Defensive migration preserves the hardened RPC and least-privilege SMS/order_status grants |
 | Legacy nullable customer and initial status | PASS | NULL customer, received status, unchanged old updated_at, honest baseline ledger; deleted legacy included |
 | Canonical customer creation | PASS | Random CUS code, creator attribution, immutable public code |
 | Normalized phone lookup | PASS | Three requested PH forms plus punctuation; invalid format returns NULL |

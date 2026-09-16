@@ -26,6 +26,8 @@ create trigger customers_owner_lifecycle
   before insert or update of active on public.customers
   for each row execute function private.guard_customer_lifecycle();
 
+drop function if exists public.soft_delete_transaction(uuid, text, timestamptz);
+
 create function public.soft_delete_transaction(
   p_transaction_id uuid,
   p_expected_updated_at timestamptz,

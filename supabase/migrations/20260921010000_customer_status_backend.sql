@@ -125,8 +125,11 @@ declare cols text;
 begin
   select string_agg(quote_ident(attname), ', ' order by attnum) into cols
   from pg_attribute where attrelid = 'public.transactions'::regclass
-    and attnum > 0 and not attisdropped and attname <> 'order_status';
-  execute 'grant update (' || cols || ') on public.transactions to authenticated';
+    and attnum > 0 and not attisdropped
+    and attname not in ('order_status', 'sms_sent_at', 'sms_sent_by', 'sms_message_id');
+  if cols is not null then
+    execute 'grant update (' || cols || ') on public.transactions to authenticated';
+  end if;
 end;
 $$;
 revoke update (order_status) on public.transactions from authenticated;
