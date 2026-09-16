@@ -47,14 +47,9 @@ export default function OwnerDashboard() {
     if (!isOwner && tab !== 'overview') setTab('overview')
   }, [isOwner, tab])
 
-  if (!isOwner && settingsLoading) {
-    return <LoadingPanel label="Checking Staff Dashboard access…" slowLabel="Still checking access… your connection may be slow." />
-  }
-
-  if (!isOwner && !settings.staff_can_access_dashboard) {
-    return <Navigate to="/" replace />
-  }
-
+  // Hooks must run in the same order on every render. Even while Settings is
+  // still loading we subscribe with the safe default scope, then decide below
+  // whether Staff should see the Dashboard at all.
   const todayOnlyForStaff = !isOwner && !settings.staff_can_view_full_history
   const effectiveDateFrom = todayOnlyForStaff ? shopDate() : dateFrom
   const effectiveDateTo = todayOnlyForStaff ? shopDate() : dateTo
@@ -95,6 +90,14 @@ export default function OwnerDashboard() {
       payLaterCount: payLaterRows.length,
     }
   }, [activeRows])
+
+  if (!isOwner && settingsLoading) {
+    return <LoadingPanel label="Checking Staff Dashboard access…" slowLabel="Still checking access… your connection may be slow." />
+  }
+
+  if (!isOwner && !settings.staff_can_access_dashboard) {
+    return <Navigate to="/" replace />
+  }
 
   const exportSpreadsheet = async (outputFormat: 'csv' | 'google_sheets') => {
     if (!isOwner || exportingRef.current) return
