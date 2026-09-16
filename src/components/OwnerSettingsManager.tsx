@@ -1,6 +1,12 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { useShopSettings } from '../lib/shop-settings-context'
+import {
+  SHOP_BRANDING_BUCKET,
+  getShopLogoUrl,
+  imageExtension,
+  validateProfileImage,
+} from '../lib/storage-images'
 import { ButtonSpinner, InlineAlert, LoadingPanel } from './UiFeedback'
 import type { PaymentMethod, ShopSettings } from '../types/database'
 
@@ -11,6 +17,7 @@ export default function OwnerSettingsManager() {
   const { settings, loading, error, realtimeState, reload } = useShopSettings()
   const [draft, setDraft] = useState<ShopSettings>(settings)
   const [saving, setSaving] = useState(false)
+  const [uploadingLogo, setUploadingLogo] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
   const [saveError, setSaveError] = useState<string | null>(null)
 
@@ -47,6 +54,7 @@ export default function OwnerSettingsManager() {
         shop_display_name: name,
         contact_phone: draft.contact_phone?.trim() || null,
         report_footer: draft.report_footer?.trim() || null,
+        logo_path: draft.logo_path || null,
         default_payment_method: draft.default_payment_method,
         default_dashboard_days: dashboardDays,
         require_phone_number: draft.require_phone_number,
@@ -59,6 +67,7 @@ export default function OwnerSettingsManager() {
         staff_can_edit_transactions: draft.staff_can_edit_transactions,
         staff_can_delete_transactions: draft.staff_can_delete_transactions,
         staff_can_view_historical_pay_later: draft.staff_can_view_historical_pay_later,
+        staff_can_edit_own_profile: draft.staff_can_edit_own_profile,
       })
       .eq('id', 1)
 
@@ -73,9 +82,79 @@ export default function OwnerSettingsManager() {
     setMessage('Settings saved. Open Staff browsers will receive the new access rules automatically.')
   }
 
+  const uploadLogo = async (file: File) => {
+    const validationError = validateProfileImage(file)
+    if (validationError) {
+      setSaveError(validationError)
+      return
+    }
+
+    setUploadingLogo(true)
+    setMessage(null)
+    setSaveError(null)
+
+    const previousPath = settings.logo_path
+    const path = `branding/logo-${Date.now()}.${imageExtension(file)}`
+    const { error: uploadError } = await supabase.storage
+      .from(SHOP_BRANDING_BUCKET)
+      .upload(path, file, { cacheControl: '3600', upsert: false, contentType: file.type })
+
+    if (uploadError) {
+      setUploadingLogo(false)
+      setSaveError(uploadError.message)
+      return
+    }
+
+    const { error: updateError } = await supabase
+      .from('shop_settings')
+      .update({ logo_path: path })
+      .eq('id', 1)
+
+    if (updateError) {
+      await supabase.storage.from(SHOP_BRANDING_BUCKET).remove([path])
+      setUploadingLogo(false)
+      setSaveError(updateError.message)
+      return
+    }
+
+    if (previousPath && previousPath !== path) {
+      await supabase.storage.from(SHOP_BRANDING_BUCKET).remove([previousPath])
+    }
+
+    await reload()
+    setUploadingLogo(false)
+    setMessage('Shop logo updated. Open Aquaspin screens will receive the new branding automatically.')
+  }
+
+  const removeLogo = async () => {
+    if (!settings.logo_path) return
+    setUploadingLogo(true)
+    setMessage(null)
+    setSaveError(null)
+
+    const previousPath = settings.logo_path
+    const { error: updateError } = await supabase
+      .from('shop_settings')
+      .update({ logo_path: null })
+      .eq('id', 1)
+
+    if (updateError) {
+      setUploadingLogo(false)
+      setSaveError(updateError.message)
+      return
+    }
+
+    await supabase.storage.from(SHOP_BRANDING_BUCKET).remove([previousPath])
+    await reload()
+    setUploadingLogo(false)
+    setMessage('Shop logo removed. Aquaspin will use the AQ fallback mark.')
+  }
+
   if (loading) {
     return <LoadingPanel label="Loading Owner settings…" slowLabel="Still loading settings… your connection may be slow." />
   }
+
+  const logoUrl = getShopLogoUrl(draft.logo_path)
 
   return (
     <div className="space-y-5">
@@ -91,6 +170,44 @@ export default function OwnerSettingsManager() {
       )}
       {saveError && <InlineAlert variant="error" title="Settings were not saved">{saveError}</InlineAlert>}
       {message && <InlineAlert variant="success" title="Settings updated">{message}</InlineAlert>}
+
+      <section className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
+        <div className="mb-4">
+          <h2 className="font-semibold text-slate-900 dark:text-slate-100">Shop Branding</h2>
+          <p className="mt-1 text-sm text-slate-500">Your logo is a public business asset. Only Owners can upload, replace, or remove it.</p>
+        </div>
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
+          {logoUrl ? (
+            <img src={logoUrl} alt={`${draft.shop_display_name} logo`} className="h-24 w-24 rounded-2xl border border-slate-200 bg-white object-contain p-2 dark:border-slate-700" />
+          ) : (
+            <div className="flex h-24 w-24 items-center justify-center rounded-2xl bg-sky-600 text-2xl font-bold text-white">AQ</div>
+          )}
+          <div className="space-y-2">
+            <p className="text-xs text-slate-500">PNG, JPG/JPEG, or WebP. Maximum 2 MB. Used in the app header and PDF reports.</p>
+            <div className="flex flex-wrap gap-2">
+              <label className={`inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 dark:border-slate-700 dark:text-slate-200 ${uploadingLogo ? 'cursor-not-allowed opacity-50' : 'cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800'}`}>
+                {uploadingLogo && <ButtonSpinner />}{uploadingLogo ? 'Uploading…' : logoUrl ? 'Replace Logo' : 'Upload Logo'}
+                <input
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp"
+                  disabled={uploadingLogo}
+                  className="sr-only"
+                  onChange={(event) => {
+                    const file = event.target.files?.[0]
+                    if (file) void uploadLogo(file)
+                    event.currentTarget.value = ''
+                  }}
+                />
+              </label>
+              {settings.logo_path && (
+                <button type="button" disabled={uploadingLogo} onClick={() => void removeLogo()} className="rounded-lg border border-red-200 px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-50 disabled:opacity-50 dark:border-red-900/70 dark:text-red-300 dark:hover:bg-red-950/30">
+                  Remove Logo
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      </section>
 
       <section className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
         <div className="mb-4">
@@ -152,6 +269,7 @@ export default function OwnerSettingsManager() {
           <SettingToggle checked={draft.staff_can_view_historical_pay_later} disabled={!draft.staff_can_access_dashboard || !draft.staff_can_view_full_history} onChange={(value) => set('staff_can_view_historical_pay_later', value)} title="View historical Pay Later accounts" description="Can be disabled while still letting Staff see today's Pay Later transactions." />
           <SettingToggle checked={draft.staff_can_edit_transactions} onChange={(value) => set('staff_can_edit_transactions', value)} title="Edit transactions" description="Allows normal corrections. Concurrent-edit protection still applies." />
           <SettingToggle checked={draft.staff_can_delete_transactions} onChange={(value) => set('staff_can_delete_transactions', value)} title="Soft-delete transactions" description="Allows Staff to remove a transaction with a required reason. Permanent delete remains unavailable." />
+          <SettingToggle checked={draft.staff_can_edit_own_profile} onChange={(value) => set('staff_can_edit_own_profile', value)} title="Edit own profile" description="Allows Staff to change only their own photo, full name, and contact number. Email, role, and access permissions stay locked." />
         </div>
       </section>
 
@@ -161,7 +279,7 @@ export default function OwnerSettingsManager() {
           <p className="mt-1 text-sm text-slate-500">These controls are intentionally non-delegable so a Staff account cannot gain administrative power.</p>
         </div>
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
-          {['Staff accounts & role changes', 'Service pricing & service catalog', 'Add-ons catalog management', 'Restore deleted transactions', 'PDF / CSV / Google Sheets exports', 'Security & access settings'].map((label) => (
+          {['Staff accounts & role changes', 'Service pricing & service catalog', 'Add-ons catalog management', 'Shop branding', 'Restore deleted transactions', 'PDF / CSV / Google Sheets exports', 'Security & access settings'].map((label) => (
             <div key={label} className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-600 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-300">
               <span aria-hidden="true">🔒</span><span>{label}</span>
             </div>
