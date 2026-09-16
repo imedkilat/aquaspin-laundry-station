@@ -1,0 +1,1 @@
+alter table public.transactions validate constraint transactions_delete_reason_required_check;
