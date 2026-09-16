@@ -2,14 +2,17 @@ import type { ReactNode } from 'react'
 import { NavLink } from 'react-router-dom'
 import { useAuth } from '../lib/auth-context'
 import { useShopSettings } from '../lib/shop-settings-context'
+import { getShopLogoUrl } from '../lib/storage-images'
 import ThemeToggle from './ThemeToggle'
 import NetworkStatusBanner from './NetworkStatusBanner'
+import ProfileAvatar from './ProfileAvatar'
 
 export default function Layout({ children }: { children: ReactNode }) {
   const { profile, signOut } = useAuth()
   const { settings } = useShopSettings()
   const isOwner = profile?.role === 'owner'
   const canOpenDashboard = isOwner || settings.staff_can_access_dashboard
+  const logoUrl = getShopLogoUrl(settings.logo_path)
 
   const linkClass = ({ isActive }: { isActive: boolean }) =>
     `px-3 py-1.5 rounded-lg text-sm font-medium transition ${isActive ? 'bg-sky-600 text-white' : 'text-slate-600 hover:bg-slate-200 dark:text-slate-300 dark:hover:bg-slate-800'}`
@@ -19,17 +22,25 @@ export default function Layout({ children }: { children: ReactNode }) {
       <NetworkStatusBanner />
       <header className="bg-white border-b border-slate-200 dark:bg-slate-900 dark:border-slate-800">
         <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between gap-4 flex-wrap">
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-lg bg-sky-600 text-white flex items-center justify-center font-bold text-sm">AQ</div>
-            <div>
-              <p className="font-semibold text-slate-900 leading-tight dark:text-slate-100">{settings.shop_display_name}</p>
-              <p className="text-xs text-slate-500 leading-tight dark:text-slate-400">{profile?.full_name} · {isOwner ? 'Owner' : 'Staff'}</p>
+          <div className="flex items-center gap-3 min-w-0">
+            {logoUrl ? (
+              <img src={logoUrl} alt={`${settings.shop_display_name} logo`} className="h-10 w-10 rounded-lg border border-slate-200 bg-white object-contain p-1 dark:border-slate-700" />
+            ) : (
+              <div className="w-9 h-9 rounded-lg bg-sky-600 text-white flex items-center justify-center font-bold text-sm">AQ</div>
+            )}
+            <div className="min-w-0">
+              <p className="font-semibold text-slate-900 leading-tight dark:text-slate-100 truncate">{settings.shop_display_name}</p>
+              <p className="text-xs text-slate-500 leading-tight dark:text-slate-400 truncate">{profile?.full_name} · {isOwner ? 'Owner' : 'Staff'}</p>
             </div>
           </div>
 
           <nav className="flex items-center gap-2 flex-wrap">
             <NavLink to="/" end className={linkClass}>Add Transaction</NavLink>
             {canOpenDashboard && <NavLink to="/dashboard" className={linkClass}>Dashboard</NavLink>}
+            <NavLink to="/profile" className={({ isActive }) => `${linkClass({ isActive })} inline-flex items-center gap-2`}>
+              <ProfileAvatar path={profile?.avatar_path} name={profile?.full_name} size="sm" />
+              <span className="hidden sm:inline">Profile</span>
+            </NavLink>
             <ThemeToggle />
             <button onClick={signOut} className="px-3 py-1.5 rounded-lg text-sm font-medium text-slate-500 hover:bg-slate-200 transition dark:text-slate-400 dark:hover:bg-slate-800">Sign out</button>
           </nav>
