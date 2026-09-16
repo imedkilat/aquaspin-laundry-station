@@ -252,6 +252,13 @@ begin
     return new;
   end if;
 
+  -- Deleting/restoring old rows is an audit operation, not a new customer
+  -- intake. New requirements must never strand legacy records that predate
+  -- phone/pickup/note rules.
+  if tg_op = 'UPDATE' and old.deleted_at is distinct from new.deleted_at then
+    return new;
+  end if;
+
   if s.require_phone_number
      and nullif(btrim(coalesce(new.phone_number, '')), '') is null then
     raise exception 'Phone number is required by shop settings';
