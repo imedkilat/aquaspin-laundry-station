@@ -72,11 +72,13 @@ The reference snapshots under `supabase/reconciliation/` remain non-executable h
 
 The version-normalization fix is commit `8e599c105b9d0f172a6efa0322f897935a04cf3b`.
 
-On exact branch head `e1d021ef3a76ab0b548d710df55401223deed88d`, Vercel executed the guard and reported:
+On executable branch head `e1d021ef3a76ab0b548d710df55401223deed88d`, Vercel executed the guard and reported:
 
 `Migration history check passed (20 migration files, unique normalized versions, canonical base present, production ledger represented).`
 
 The same deployment then completed `tsc -b && vite build` and reached `READY`. The only build output was the existing Vite chunk-size warning; there was no migration-guard or TypeScript/build failure.
+
+Later commits after `e1d021e...` only update this reconciliation documentation. Vercel may show a Hobby build-rate-limit status on those docs-only heads; no executable migration, script, application, or package file changed after the verified green build.
 
 ## Hosted staging clean app-schema rebuild — Sep 16, 2026
 
