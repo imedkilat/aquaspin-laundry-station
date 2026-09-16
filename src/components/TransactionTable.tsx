@@ -1,5 +1,4 @@
 import { useState } from 'react'
-import { createPortal } from 'react-dom'
 import type { TransactionWithService } from '../types/database'
 import { supabase } from '../lib/supabase'
 import PaymentBadge from './PaymentBadge'
@@ -185,16 +184,15 @@ export default function TransactionTable({
         </table>
       </div>
 
-      {editingTransaction &&
-        createPortal(
-          <EditTransactionModal transaction={editingTransaction} onClose={() => setEditingTransaction(null)} />,
-          document.body
-        )}
-      {deletingTransaction &&
-        createPortal(
-          <DeleteTransactionModal transaction={deletingTransaction} onClose={() => setDeletingTransaction(null)} />,
-          document.body
-        )}
+      {/* Keep dialogs outside the scroll container. This prevents the table's
+          overflow context from clipping a fixed overlay, while keeping the
+          modal inside the normal React tree (no portal/runtime handoff). */}
+      {editingTransaction && (
+        <EditTransactionModal transaction={editingTransaction} onClose={() => setEditingTransaction(null)} />
+      )}
+      {deletingTransaction && (
+        <DeleteTransactionModal transaction={deletingTransaction} onClose={() => setDeletingTransaction(null)} />
+      )}
     </>
   )
 }
