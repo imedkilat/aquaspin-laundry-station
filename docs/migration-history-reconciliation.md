@@ -2,205 +2,204 @@
 
 ## Purpose
 
-Aquaspin production currently has a valid working schema, but the repository migration filenames and Supabase production migration ledger are not in one-to-one sync. This document records the observed drift and the safe path to reconcile it without replaying historical DDL blindly against production.
+Aquaspin production has a working schema, but its historical Supabase migration ledger had drifted away from the repository: several repo migrations used different timestamps, two legacy migrations used short `YYYYMMDD` versions, some production-only migrations were missing locally, and the base schema lived outside the migration chain.
+
+This branch makes the repository history reproducible and maps it back to the production ledger without changing production.
 
 **Production project:** `yhckdhidchxsypfeyzxj`
 
 **Staging project used for hosted rehearsal:** `wmubrkhgncrtwdlsusea`
 
-**Safety rule:** do not run `supabase db push` against production until the production migration ledger is deliberately reconciled. Repository normalization alone does not make the remote history safe to replay.
+**Safety rule:** do not run blind `supabase db push` against production until the remaining production-ledger reconciliation gate is explicitly approved.
 
-## Repository normalization in this branch
+## Canonical repository history
 
-### Canonical base migration
+### Versioned base
 
-The repository previously kept the actual base database DDL only in `supabase/schema.sql`. No `supabase/config.toml` references that file, so Supabase CLI would not apply it as part of `supabase db reset` / `supabase db push`. The later migrations therefore depended on tables/functions that were not created by the migration chain itself.
-
-This branch adds:
+`supabase/schema.sql` was previously not part of the executable migration chain. This branch adds:
 
 - `20260914000000_base_schema.sql`
 
-Its contents byte-match `supabase/schema.sql`, making the base profiles/services/transactions/RLS/Auth-trigger/Realtime foundation part of versioned migration history.
+The file byte-matches `supabase/schema.sql`, so profiles, services, transactions, initial RLS/Auth trigger, and initial Realtime membership can now be reconstructed from versioned migration code.
 
-### Duplicate migration version / dependency order
+### Early untracked historical setup
 
-Two repository migrations shared the same Supabase version prefix `20260916`, and one dependency was therefore ambiguous on a clean rebuild. This branch renames them:
-
-- `20260916_add_gcash_reference.sql` → `20260916012000_add_gcash_reference.sql`
-- `20260916_enable_services_realtime.sql` → `20260916014000_enable_services_realtime.sql`
-
-The SQL bodies are unchanged.
-
-The required early order is now:
+Four schema stages already exist in production but are not recorded there under these canonical local IDs:
 
 1. `20260914000000_base_schema.sql`
-2. `20260915_add_service_pricing_rules.sql`
-3. `20260916010000_add_ons_catalog_and_profile_repair.sql`
-4. `20260916012000_add_gcash_reference.sql`
-5. `20260916013000_transaction_codes_and_test_cleanup.sql`
-6. `20260916014000_enable_services_realtime.sql`
+2. `20260915160000_add_ons_catalog_and_profile_repair.sql`
+3. `20260915161000_add_gcash_reference.sql`
+4. `20260915162000_transaction_codes_and_test_cleanup.sql`
 
-`transaction_codes_and_test_cleanup` reads `gcash_reference`, so the GCash migration must precede it.
+The GCash migration is intentionally before transaction-code backfill because that backfill reads/enforces `gcash_reference`.
 
-### Automated migration guard
+### Production-ledger versions restored locally
 
-A repository guard exists at `scripts/check-migrations.mjs` and is exposed as:
+The repository now contains local migrations matching every version currently recorded in the production ledger:
 
-```bash
-npm run check:migrations
-```
+- `20260915_add_service_pricing_rules.sql`
+- `20260915174106_transaction_payment_integrity_checks.sql`
+- `20260915180704_remove_owner_test_transactions.sql`
+- `20260915181029_security_hardening_pass.sql`
+- `20260915181129_index_transactions_updated_by.sql`
+- `20260915190757_add_transaction_pickup_time.sql`
+- `20260915191400_realtime_business_guardrails.sql`
+- `20260915191412_validate_business_guardrail_checks.sql`
+- `20260915192554_transaction_edit_delete_audit.sql`
+- `20260915192604_validate_delete_reason_check.sql`
+- `20260916_enable_services_realtime.sql`
+- `20260916015627_transaction_snapshot_and_audit_hardening.sql`
+- `20260916024806_customer_sms_notifications.sql`
+- `20260916031013_owner_settings_and_staff_permissions.sql`
+- `20260916032655_fix_staff_soft_delete_rls.sql`
+- `20260916125702_shop_branding_and_user_profiles.sql`
 
-It fails on:
+Where production had split cleanup/index/validation/SMS/legacy soft-delete history, the original statements were recovered read-only from `supabase_migrations.schema_migrations` instead of being guessed.
 
-- migration filenames without numeric versions;
-- duplicate migration versions;
-- a missing/non-first `20260914000000_base_schema.sql`;
-- drift between the base migration and `supabase/schema.sql`;
-- the known GCash → transaction-code dependency inversion.
+The reference snapshots under `supabase/reconciliation/` remain non-executable historical evidence. The canonical executable copies are now represented under `supabase/migrations/`.
 
-`prebuild` runs this guard before every normal app build, so Vercel/CI will fail before TypeScript/Vite if migration-history invariants regress.
+## Migration guard
 
-On Sep 16, Vercel ran the guard at branch head and reported:
+`scripts/check-migrations.mjs` is run by `prebuild` and checks:
 
-`Migration history check passed (14 migration files, unique ordered versions, canonical base present).`
+- migration filenames use `YYYYMMDD` or `YYYYMMDDHHMMSS` numeric versions;
+- legacy day-only versions are normalized to midnight for chronological comparisons (`YYYYMMDD` → `YYYYMMDD000000`);
+- no raw or normalized version collisions exist;
+- `20260914000000_base_schema.sql` is the first migration;
+- the base migration byte-matches `supabase/schema.sql`;
+- GCash schema precedes transaction-code cleanup/backfill;
+- all 16 exact production-ledger versions remain represented locally.
 
-The subsequent TypeScript/Vite production build also completed successfully.
+The final version-normalization fix is commit `8e599c105b9d0f172a6efa0322f897935a04cf3b`.
 
-## Production migration ledger observed on Sep 16, 2026
+An independent execution of the guard against the exact branch migration set passed:
 
-The live Supabase ledger currently contains:
+`Migration history check passed (20 migration files, unique normalized versions, canonical base present, production ledger represented).`
 
-| Production version | Production name | Repository relationship |
-| --- | --- | --- |
-| `20260915` | `add_service_pricing_rules` | Direct repository counterpart exists. |
-| `20260915174106` | `transaction_payment_integrity_checks` | Repository counterpart exists under `20260917010000_...`. |
-| `20260915180704` | `remove_owner_test_transactions` | Production-only historical cleanup; effect is historical/data-specific. |
-| `20260915181029` | `security_hardening_pass` | Repository counterpart exists under `20260917020000_...`. |
-| `20260915181129` | `index_transactions_updated_by` | Effect is already represented by the repository security-hardening migration. |
-| `20260915190757` | `add_transaction_pickup_time` | Repository counterpart exists under `20260918010000_...`. |
-| `20260915191400` | `realtime_business_guardrails` | Repository counterpart exists under `20260918020000_...`. |
-| `20260915191412` | `validate_business_guardrail_checks` | Production-only validation step. Current live guardrail checks are validated where expected. |
-| `20260915192554` | `transaction_edit_delete_audit` | Repository counterpart exists under `20260919010000_...`. |
-| `20260915192604` | `validate_delete_reason_check` | Production-only validation step; live delete-reason check is validated. |
-| `20260916` | `enable_services_realtime` | Repository contains the same SQL effect, currently normalized to a unique local version. |
-| `20260916015627` | `transaction_snapshot_and_audit_hardening` | Repository counterpart exists under `20260919020000_...`. |
-| `20260916024806` | `customer_sms_notifications` | Production-only schema drift. Live schema contains nullable `sms_sent_at`, `sms_sent_by`, `sms_message_id` plus SMS audit protection. PR #3 staging rehearsal reproduced this structural drift. |
-| `20260916031013` | `owner_settings_and_staff_permissions` | Repository counterpart exists under `20260920010000_...`. |
-| `20260916032655` | `fix_staff_soft_delete_rls` | Production-only historical drift. Live production still exposes the legacy soft-delete overload that PR #3 deliberately removes. |
-| `20260916125702` | `shop_branding_and_user_profiles` | Repository counterpart exists under `20260920020000_...`. |
+The exact final commit did not receive a normal Vercel build because the Hobby project hit Vercel's build-rate limit. That Vercel status is a platform-quota failure, not a migration-guard or application-build failure. Earlier branch heads proved the `prebuild` hook and normal TypeScript/Vite build path work; do not label `8e599c1...` itself Vercel-READY until Vercel actually rebuilds it.
 
-## Repository changes already present live without matching production ledger versions
+## Hosted staging clean app-schema rebuild — Sep 16, 2026
 
-The repository also contains historical migrations whose schema effects are present in production but whose current repository version identifiers are not recorded one-to-one in the production migration ledger:
+A controlled reconstruction was performed only on **Aquaspin Staging** (`wmubrkhgncrtwdlsusea`). Production was not modified.
 
-- `20260914000000_base_schema.sql` (newly versioned canonical base; its evolved effects already exist in production)
-- `20260916010000_add_ons_catalog_and_profile_repair.sql`
-- `20260916012000_add_gcash_reference.sql`
-- `20260916013000_transaction_codes_and_test_cleanup.sql`
-- several later repository migrations whose production equivalents were recorded under earlier timestamps shown above
+### Reset boundary
 
-This is why a blind `db push` is unsafe even when the SQL itself is largely idempotent.
+Before reset, staging contained 8 Aquaspin public tables, 2 synthetic Auth users, 2 Aquaspin Storage buckets, 0 Storage objects, 8 Aquaspin Storage policies, and the expected Realtime memberships.
 
-## Captured production-only structural evidence
+The reset deliberately preserved:
 
-Read-only production inspection has now been preserved under `supabase/reconciliation/` as **reference-only, non-executable SQL**:
+- Supabase platform schemas;
+- the 2 synthetic staging Auth users;
+- the two empty Storage bucket rows, because Supabase protects direct deletion from Storage tables.
 
-- `production_customer_sms_notifications.sql`
-- `production_fix_staff_soft_delete_rls.sql`
+It removed/recreated the Aquaspin application schema, views, functions, private schema, RLS policies, Storage policies, and Realtime membership state. The branding/profile migration then exercised the bucket definitions idempotently through `INSERT ... ON CONFLICT UPDATE` and recreated all 8 Storage policies.
 
-These files intentionally stay outside `supabase/migrations/`. They capture the actual live shape needed to design the final canonical executable history without accidentally replaying legacy behavior.
+Therefore this is a **clean Aquaspin application-schema rebuild**, not a claim that the entire hosted Supabase project was physically recreated from zero.
 
-Confirmed live SMS shape:
+### Historical chain result
 
-- nullable `sms_sent_at`, `sms_sent_by`, `sms_message_id`;
-- `sms_sent_by` foreign key to `profiles(id)`;
-- no SMS-specific transaction index;
-- authenticated currently has ordinary UPDATE privilege on those columns, while the audit trigger rejects authenticated SMS-field changes;
-- PR #3 later tightens these fields with column-level UPDATE revocation.
+PASS: all canonical historical SQL stages applied in chronological order from the versioned base through branding/profile with no SQL failure:
 
-Confirmed live legacy soft-delete shape:
+- base schema
+- service pricing
+- add-ons/profile repair
+- GCash reference
+- transaction codes/test cleanup
+- payment integrity
+- historical QA cleanup
+- security hardening + historical updated-by index
+- pickup time
+- business guardrails + validation
+- transaction delete audit + validation
+- services Realtime
+- transaction snapshot/audit hardening
+- SMS audit fields
+- Owner settings/staff permissions
+- legacy Staff soft-delete RPC
+- branding/profile/Storage policy hardening
 
-- `soft_delete_transaction(uuid,text,timestamptz)` is `SECURITY DEFINER`;
-- authenticated EXECUTE is allowed;
-- anon/public EXECUTE is denied;
-- PR #3 deliberately drops this exact overload and keeps the hardened `soft_delete_transaction(uuid,timestamptz,text)` contract.
+Historical baseline verification after reconstruction:
 
-Capturing evidence is complete; choosing the final executable historical representation remains a separate gate.
+- 6 core pre-PR3 public tables;
+- 2 synthetic profiles and 4 seeded services;
+- 2 Aquaspin Storage buckets and 8 expected Storage policies;
+- Realtime membership for transactions, services, add-ons, and shop settings;
+- authenticated EXECUTE preserved for `private.has_staff_permission(text)`;
+- legacy `soft_delete_transaction(uuid,text,timestamptz)` present before PR #3, as expected.
 
-## Live validation state relevant to reconciliation
+## PR #3 reconstruction on top of the clean baseline
 
-Read-only production inspection on Sep 16 confirmed:
+The already-reviewed PR #3 customer/status sequence was then replayed on top of the newly reconstructed historical baseline:
 
-- `transactions_gcash_reference_required_check` exists and is intentionally `NOT VALID` for historical compatibility while still enforcing new/updated rows.
-- Cash/GCash payment-integrity checks exist and remain `NOT VALID` for historical compatibility.
-- business-guardrail length/ceiling checks that received production validation migrations are validated.
-- `transactions_delete_reason_required_check` is validated.
-- SMS audit columns and foreign key are present in production.
-- Owner/staff settings and branding/profile schema are present.
+1. customer/status foundation;
+2. follow-up hardening;
+3. live-drift reconciliation;
+4. customer/status RLS initplan performance hardening.
 
-## Safe reconciliation plan
+All stages applied with no SQL failure.
 
-### Gate A — repository hygiene (this PR)
+Final hosted staging structure verifies:
 
-- [x] Version the existing base schema as the first migration.
-- [x] Guard the base migration against drift from `supabase/schema.sql`.
-- [x] Remove duplicate migration version prefix.
-- [x] Put GCash schema before transaction-code backfill by filename order.
-- [x] Add an automated migration-version/dependency guard.
-- [x] Run the migration guard automatically before normal builds.
-- [x] Document production ↔ repository drift.
-- [x] Verify Vercel executes the guard successfully and completes the TypeScript/Vite production build.
+- public tables: `add_ons_catalog`, `customers`, `profiles`, `rate_limit_hits`, `services`, `shop_settings`, `transaction_status_history`, `transactions`;
+- Realtime membership includes customers and transaction status history in addition to the historical four tables;
+- `customer_summary` and `customer_transaction_history` are `security_invoker=true` views;
+- `customer_summary` exposes `total_transactions`, `total_billed`, `total_collected`, `outstanding_balance`, and `last_visit`;
+- authenticated retains EXECUTE on `private.has_staff_permission(text)`;
+- legacy `soft_delete_transaction(uuid,text,timestamptz)` is absent;
+- hardened `soft_delete_transaction(uuid,timestamptz,text)` exists, is executable by `authenticated`, and is not executable by `anon`;
+- authenticated direct UPDATE is denied for `transactions.order_status` and SMS audit fields;
+- the 3 customer RLS policies and status-history policy use `(select auth.uid())` initplan form.
 
-### Gate B — capture remote-only history in code
+### Rollback-only authenticated regression checks
 
-- [x] Capture the current live SMS schema/audit behavior as reference-only SQL.
-- [x] Capture the current live legacy staff soft-delete RPC as reference-only SQL.
-- [ ] Decide the final canonical **executable** representation of those live-only structures.
-- [ ] Capture validation/index/history steps that materially affect a clean canonical rebuild.
+A controlled Staff/Owner transaction was created inside a transaction and rolled back afterward.
 
-Do not invent no-op marker files merely to silence migration sync errors. A fresh database must be able to reach the intended schema through real executable migration history.
+PASS:
 
-### Gate C — clean rebuild proof
+- Staff hardened soft-delete RPC returned success;
+- Staff could no longer SELECT the soft-deleted transaction afterward;
+- Owner retained visibility of the deleted audit row;
+- no QA row remained after rollback.
 
-From an empty isolated Supabase database, apply the canonical migration set in filename order and verify:
+A second rollback-only lifecycle test also passed:
 
-- base schema is created from migrations alone (no manual `schema.sql` pre-step);
-- schema/RLS/RPC state;
-- Storage policies/buckets;
-- Realtime publication membership;
-- Cash/GCash/Pay Later constraints;
-- audit/snapshot protections;
-- Owner/Staff permissions;
-- PR #3 customer/status migrations;
-- generated TypeScript types;
-- Supabase security/performance advisors.
+- Staff `received → drying` forward skip succeeded with a reason;
+- Staff backward `drying → washing` was rejected;
+- no QA row remained after rollback.
 
-The Sep 16 hosted staging rehearsal proved the current schema can be reconstructed when the actual dependency order and live drift are supplied; this gate must be repeated from the final canonical migration files before declaring history reconciled.
+These directly cover the backend Staff-delete failure observed during Phase 1 browser QA. The Phase 1 frontend still needs to call the hardened RPC contract after the backend branch is integrated; do not work around the RLS rule in the browser.
 
-### Gate D — production migration ledger repair
+## Advisor state after reconstruction
 
-Only after schema equivalence is proven should production migration tracking be changed. Use `supabase migration list` to inspect the exact local/remote delta, then use `supabase migration repair --status applied <version>` only for versions whose schema effects have been independently verified as already present.
+### Security advisor
 
-`migration repair` changes tracking state only; it does not execute DDL. Never mark a migration applied merely to silence a sync error.
+No new schema-security blocker was introduced. Remaining findings are understood:
 
-Remote-only historical versions should remain represented locally or otherwise be reconciled through an approved baseline strategy so future `migration list`/`db push` operations remain deterministic.
+- `rate_limit_hits` has RLS enabled and intentionally no client policy because clients must not access it directly;
+- `set_transaction_status` and `soft_delete_transaction` are intentionally authenticated `SECURITY DEFINER` RPCs with explicit authorization/concurrency checks;
+- leaked-password protection is a staging Auth project setting.
 
-### Gate E — production deployment
+### Performance advisor
 
-After the ledger and repository agree:
+The four customer/status `auth_rls_initplan` warnings are gone after the final RLS hardening migration.
 
-1. dry-run / inspect pending migrations;
-2. apply only the intended new customer/status migrations;
-3. verify migration ledger;
-4. verify RPC signatures/grants/RLS;
-5. run authenticated Owner/Staff smoke tests;
-6. run two-session concurrency and Realtime checks;
-7. only then treat `db push` as a supported deployment path again.
+Remaining non-blocking optimization notices include three historical foreign keys without covering indexes (`shop_settings.updated_by`, `transactions.deleted_by`, `transactions.sms_sent_by`), expected unused-index notices on a freshly rebuilt low-data staging database, and the existing pair of permissive profile UPDATE policies (`profiles_update_owner_only` + `profiles_update_self_safe`). These are separate optimization work, not a reason to weaken current authorization behavior.
+
+## Remaining gate before production ledger repair
+
+The repository history and hosted app-schema reconstruction are now materially aligned. Production is still intentionally untouched.
+
+Before any production migration-history write:
+
+1. inspect the exact local ↔ remote migration delta with Supabase CLI when available;
+2. verify that the four canonical historical IDs not currently recorded in production correspond only to effects independently confirmed already present;
+3. prepare the minimal `migration repair --status applied` plan for only those proven historical IDs;
+4. do not mark any version applied merely to silence a mismatch;
+5. re-run migration list/dry-run and confirm the only genuinely pending migrations are the intended new customer/status migrations;
+6. obtain an explicit production gate before changing the production migration ledger or applying PR #3.
 
 ## Current production rule
 
-Until Gates B–D are complete:
+> **Do not run blind `supabase db push` against Aquaspin production.**
 
-> **Do not use blind `supabase db push` against Aquaspin production.**
-
-Use reviewed, explicitly scoped migrations and preserve the existing production schema/data until the migration ledger is reconciled.
+No production migration, migration-history record, production data, or production deployment was changed by this reconciliation rehearsal.
