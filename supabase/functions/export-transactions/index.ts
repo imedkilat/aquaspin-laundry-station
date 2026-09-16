@@ -70,9 +70,6 @@ Deno.serve(async (req: Request) => {
       return json({ error: "Only an owner can export transactions." }, 403, corsHeaders);
     }
 
-    // Rate limit: protects the n8n webhook and the per-export Google Sheets
-    // quota from accidental repeated clicks or a runaway script, without
-    // getting in the way of normal end-of-day export use.
     const { data: withinLimit, error: rateLimitError } = await admin.rpc("check_rate_limit", {
       p_key: `export-transactions:${user.id}`,
       p_max_count: 15,
@@ -101,8 +98,10 @@ Deno.serve(async (req: Request) => {
     let query = admin
       .from("transactions")
       .select(
-        "transaction_no, transaction_code, transaction_date, customer_name, phone_number, kg, no_of_loads, base_amount, add_ons, add_on_items, total_amount, cash_amount, gcash_amount, gcash_reference, payment_method, pickup_date, notes, created_at, services(code,label)",
+        "transaction_no, transaction_code, transaction_date, customer_name, phone_number, kg, no_of_loads, base_amount, add_ons, add_on_items, total_amount, cash_amount, gcash_amount, gcash_reference, payment_method, pickup_date, pickup_time, notes, created_at, services(code,label)",
       )
+      // Deleted rows are audit history, not accounting/export data.
+      .is("deleted_at", null)
       .order("created_at", { ascending: true })
       .limit(5000);
 
@@ -121,7 +120,14 @@ Deno.serve(async (req: Request) => {
       !search || String(row.customer_name ?? "").toLowerCase().includes(search)
     );
 
-    const exportName = `aquaspin-transactions-${dateFrom || "start"}-to-${dateTo || "today"}`;
+    if (filtered.length === 0) {
+      return json({ error: "No active transactions match the current export filters." }, 400, corsHeaders);
+    }
+
+    const paymentSlug = ["paid", "gcash", "pay_later"].includes(paymentMethod)
+      ? paymentMethod.replace("paid", "cash").replace("pay_later", "pay-later")
+      : "all";
+    const exportName = `aquaspin-${paymentSlug}-${dateFrom || "start"}-to-${dateTo || "today"}`;
 
     const n8nResponse = await fetch(n8nWebhookUrl, {
       method: "POST",
