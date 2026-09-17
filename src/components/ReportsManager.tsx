@@ -14,6 +14,28 @@ const shiftShopDate = (value: string, days: number) => {
   return date.toISOString().slice(0, 10)
 }
 const manilaStartUtc = (value: string) => new Date(value + 'T00:00:00+08:00').toISOString()
+const REPORT_PAGE_SIZE = 500
+
+type PageResponse<T> = {
+  data: T[] | null
+  error: { message: string } | null
+}
+
+const fetchPaged = async <T>(
+  loadPage: (from: number, to: number) => Promise<PageResponse<T>>,
+) => {
+  const rows: T[] = []
+
+  for (let from = 0; ; from += REPORT_PAGE_SIZE) {
+    const { data, error } = await loadPage(from, from + REPORT_PAGE_SIZE - 1)
+    if (error) return { data: rows, error }
+
+    const page = data ?? []
+    rows.push(...page)
+    if (page.length < REPORT_PAGE_SIZE) return { data: rows, error: null }
+  }
+}
+
 const getPeriod = (preset: Preset, today: string, customFrom: string, customTo: string) => {
   if (preset === 'today') return { from: today, to: today }
   if (preset === 'month') return { from: today.slice(0, 8) + '01', to: today }
@@ -52,10 +74,37 @@ export default function ReportsManager() {
     setError(null)
 
     const [transactionResult, expenseResult, inventoryResult, movementResult] = await Promise.all([
-      supabase.from('transactions').select('*').gte('transaction_date', period.from).lte('transaction_date', period.to).is('deleted_at', null).order('transaction_date', { ascending: false }),
-      supabase.from('active_expenses').select('*').gte('expense_date', period.from).lte('expense_date', period.to).order('expense_date', { ascending: false }),
-      supabase.from('inventory_item_summary').select('*').order('item_name'),
-      supabase.from('inventory_stock_movements').select('*').gte('created_at', manilaStartUtc(period.from)).lte('created_at', manilaStartUtc(shiftShopDate(period.to, 1))).order('created_at', { ascending: false }),
+      fetchPaged<Transaction>((from, to) => supabase
+        .from('transactions')
+        .select('*')
+        .gte('transaction_date', period.from)
+        .lte('transaction_date', period.to)
+        .is('deleted_at', null)
+        .order('transaction_date', { ascending: false })
+        .order('id', { ascending: false })
+        .range(from, to)),
+      fetchPaged<ActiveExpense>((from, to) => supabase
+        .from('active_expenses')
+        .select('*')
+        .gte('expense_date', period.from)
+        .lte('expense_date', period.to)
+        .order('expense_date', { ascending: false })
+        .order('id', { ascending: false })
+        .range(from, to)),
+      fetchPaged<InventoryItemSummary>((from, to) => supabase
+        .from('inventory_item_summary')
+        .select('*')
+        .order('item_name')
+        .order('id')
+        .range(from, to)),
+      fetchPaged<InventoryStockMovement>((from, to) => supabase
+        .from('inventory_stock_movements')
+        .select('*')
+        .gte('created_at', manilaStartUtc(period.from))
+        .lt('created_at', manilaStartUtc(shiftShopDate(period.to, 1)))
+        .order('created_at', { ascending: false })
+        .order('id', { ascending: false })
+        .range(from, to)),
     ])
     const firstError = [transactionResult.error, expenseResult.error, inventoryResult.error, movementResult.error].find(Boolean)
 
