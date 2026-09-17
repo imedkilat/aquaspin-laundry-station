@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { supabase } from '../lib/supabase'
 import { useServices } from '../hooks/useServices'
 import { useAddOns } from '../hooks/useAddOns'
+import { useCustomers } from '../hooks/useCustomers'
 import { useAuth } from '../lib/auth-context'
 import { useShopSettings } from '../lib/shop-settings-context'
 import type { PaymentMethod, TransactionAddOnItem } from '../types/database'
@@ -12,6 +13,7 @@ import { ButtonSpinner, InlineAlert, LoadingPanel } from './UiFeedback'
 const makeEmptyForm = (defaultPaymentMethod: PaymentMethod) => ({
   customer_name: '',
   phone_number: '',
+  customer_id: '',
   transaction_date: shopDate(),
   service_id: '',
   kg: '',
@@ -41,6 +43,7 @@ const unitLabel = (unit: string, quantity = 1) => {
 export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
   const { services, loading: servicesLoading, error: servicesError } = useServices()
   const { addOns, loading: addOnsLoading, error: addOnsError } = useAddOns()
+  const { rows: customers, loading: customersLoading, error: customersError } = useCustomers()
   const { profile } = useAuth()
   const { settings } = useShopSettings()
   const isOwner = profile?.role === 'owner'
@@ -280,6 +283,7 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
       setSubmitting(true)
 
       const { error: insertError } = await supabase.from('transactions').insert({
+        customer_id: form.customer_id || null,
         customer_name: normalizedCustomerName,
         phone_number: form.phone_number.trim() || null,
         transaction_date: form.transaction_date,
@@ -352,20 +356,45 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
     <form onSubmit={handleSubmit} className="bg-white rounded-2xl border border-slate-200 p-5 space-y-5 dark:bg-slate-900 dark:border-slate-800">
       <h2 className="font-semibold text-slate-900 dark:text-slate-100">Add Customer Transaction</h2>
 
-      {(servicesError || addOnsError) && (
+      {(servicesError || addOnsError || customersError) && (
         <InlineAlert variant="warning" title="Some catalog data could not be refreshed">
-          {servicesError || addOnsError}. Existing loaded options remain available where possible.
+          {servicesError || addOnsError || customersError}. Existing loaded options remain available where possible.
         </InlineAlert>
       )}
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div className="sm:col-span-2">
+          <label className={labelClass}>Existing Customer (optional)</label>
+          <select
+            value={form.customer_id}
+            onChange={(e) => {
+              const customer = customers.find((row) => row.id === e.target.value)
+              setForm((current) => ({
+                ...current,
+                customer_id: customer?.id ?? '',
+                customer_name: customer?.full_name ?? current.customer_name,
+                phone_number: customer?.phone_number ?? current.phone_number,
+              }))
+            }}
+            disabled={customersLoading}
+            className={`${inputClass} disabled:opacity-60`}
+          >
+            <option value="">{customersLoading ? 'Loading customers…' : 'Walk-in / new customer'}</option>
+            {customers.filter((customer) => customer.active).map((customer) => (
+              <option key={customer.id} value={customer.id}>
+                {customer.customer_code} · {customer.full_name}{customer.phone_number ? ` · ${customer.phone_number}` : ''}
+              </option>
+            ))}
+          </select>
+          <p className="mt-1 text-xs text-slate-500">Selecting a customer links this order while preserving the name and phone snapshots on the transaction.</p>
+        </div>
         <div>
           <label className={labelClass}>Customer Name *</label>
-          <input required value={form.customer_name} onChange={update('customer_name')} onBlur={() => setForm((f) => ({ ...f, customer_name: toTitleCaseName(f.customer_name) }))} className={inputClass} placeholder="Earl Dela Cruz" />
+          <input required value={form.customer_name} onChange={(e) => setForm((current) => ({ ...current, customer_id: '', customer_name: e.target.value }))} onBlur={() => setForm((f) => ({ ...f, customer_name: toTitleCaseName(f.customer_name) }))} className={inputClass} placeholder="Earl Dela Cruz" />
         </div>
         <div>
           <label className={labelClass}>Phone Number{settings.require_phone_number ? ' *' : ''}</label>
-          <input required={settings.require_phone_number} value={form.phone_number} onChange={update('phone_number')} className={inputClass} placeholder="09xxxxxxxxx" />
+          <input required={settings.require_phone_number} value={form.phone_number} onChange={(e) => setForm((current) => ({ ...current, customer_id: '', phone_number: e.target.value }))} className={inputClass} placeholder="09xxxxxxxxx" />
         </div>
 
         <div>
