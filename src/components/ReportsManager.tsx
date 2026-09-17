@@ -3,14 +3,11 @@ import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/auth-context'
 import { shopDate } from '../lib/date'
 import type { ActiveExpense, InventoryItemSummary, InventoryStockMovement, Transaction } from '../types/database'
-import type { OrderStatus } from '../types/customer-status'
 import { EmptyState, InlineAlert, LoadingPanel } from './UiFeedback'
 
 type ReportTab = 'sales' | 'expenses' | 'inventory'
 type Preset = 'today' | 'week' | 'month' | 'custom'
-type Notice = { type: 'error' | 'success'; text: string } | null
 const peso = (value: number) => '₱' + value.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-const dateTime = (value: string) => new Date(value).toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' })
 const shiftShopDate = (value: string, days: number) => {
   const date = new Date(value + 'T00:00:00Z')
   date.setUTCDate(date.getUTCDate() + days)
@@ -27,7 +24,6 @@ const getPeriod = (preset: Preset, today: string, customFrom: string, customTo: 
   }
   return { from: customFrom, to: customTo }
 }
-const statusLabel = (status: OrderStatus) => status.replaceAll('_', ' ')
 
 export default function ReportsManager() {
   const { profile } = useAuth()
@@ -43,7 +39,6 @@ export default function ReportsManager() {
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [notice, setNotice] = useState<Notice>(null)
 
   const period = useMemo(() => getPeriod(preset, today, dateFrom, dateTo), [preset, today, dateFrom, dateTo])
 
