@@ -1,7 +1,7 @@
-MethodException: 
-Line |
-   2 |  … s_address.sql'; $textContent.Replace(([char]13 + [char]10), [char]10)
-     |                    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-     | Cannot convert argument "oldChar", with value: "
-", for "Replace" to type "System.Char": "Cannot convert value "
-" to type "System.Char". Error: "String must be exactly one character long.""
+-- Phase 6: optional shop address for settings and printed receipts.
+-- Forward-only additive change; existing shop settings and data are preserved.
+
+alter table public.shop_settings
+  add column if not exists address text
+    check (address is null or char_length(address) <= 200);
+
