@@ -23,6 +23,7 @@ export const DEFAULT_SHOP_SETTINGS: ShopSettings = {
   staff_can_delete_transactions: true,
   staff_can_view_historical_pay_later: true,
   staff_can_edit_own_profile: true,
+  staff_can_manage_customers: true,
   updated_at: new Date(0).toISOString(),
   updated_by: null,
 }

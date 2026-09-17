@@ -7,6 +7,13 @@ import ThemeToggle from './ThemeToggle'
 import NetworkStatusBanner from './NetworkStatusBanner'
 import ProfileAvatar from './ProfileAvatar'
 
+type NavItem = {
+  to: string
+  label: string
+  icon: string
+  end?: boolean
+}
+
 export default function Layout({ children }: { children: ReactNode }) {
   const { profile, signOut } = useAuth()
   const { settings } = useShopSettings()
@@ -14,40 +21,84 @@ export default function Layout({ children }: { children: ReactNode }) {
   const canOpenDashboard = isOwner || settings.staff_can_access_dashboard
   const logoUrl = getShopLogoUrl(settings.logo_path)
 
-  const linkClass = ({ isActive }: { isActive: boolean }) =>
-    `px-3 py-1.5 rounded-lg text-sm font-medium transition ${isActive ? 'bg-sky-600 text-white' : 'text-slate-600 hover:bg-slate-200 dark:text-slate-300 dark:hover:bg-slate-800'}`
+  const navItems: NavItem[] = [
+    { to: '/', label: 'Home', icon: '⌂', end: true },
+    { to: '/new', label: 'New Order', icon: '＋' },
+    { to: '/orders', label: 'Orders', icon: '☷' },
+    ...(canOpenDashboard ? [{ to: '/dashboard', label: isOwner ? 'Dashboard' : 'Reports', icon: '▦' }] : []),
+  ]
+
+  const desktopLinkClass = ({ isActive }: { isActive: boolean }) =>
+    `rounded-lg px-3 py-2 text-sm font-medium transition ${isActive ? 'bg-sky-600 text-white' : 'text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800'}`
 
   return (
     <div className="min-h-svh bg-slate-100 dark:bg-slate-950">
       <NetworkStatusBanner />
-      <header className="bg-white border-b border-slate-200 dark:bg-slate-900 dark:border-slate-800">
-        <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between gap-4 flex-wrap">
-          <div className="flex items-center gap-3 min-w-0">
+      <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/95 backdrop-blur dark:border-slate-800 dark:bg-slate-900/95">
+        <div className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-4 py-3">
+          <div className="flex min-w-0 items-center gap-3">
             {logoUrl ? (
-              <img src={logoUrl} alt={`${settings.shop_display_name} logo`} className="h-10 w-10 rounded-lg border border-slate-200 bg-white object-contain p-1 dark:border-slate-700" />
+              <img src={logoUrl} alt={`${settings.shop_display_name} logo`} className="h-10 w-10 rounded-xl border border-slate-200 bg-white object-contain p-1 dark:border-slate-700" />
             ) : (
-              <div className="w-9 h-9 rounded-lg bg-sky-600 text-white flex items-center justify-center font-bold text-sm">AQ</div>
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-sky-600 text-sm font-bold text-white">AQ</div>
             )}
             <div className="min-w-0">
-              <p className="font-semibold text-slate-900 leading-tight dark:text-slate-100 truncate">{settings.shop_display_name}</p>
-              <p className="text-xs text-slate-500 leading-tight dark:text-slate-400 truncate">{profile?.full_name} · {isOwner ? 'Owner' : 'Staff'}</p>
+              <p className="truncate font-semibold leading-tight text-slate-900 dark:text-slate-100">{settings.shop_display_name}</p>
+              <p className="truncate text-xs leading-tight text-slate-500 dark:text-slate-400">{profile?.full_name} · {isOwner ? 'Owner' : 'Staff'}</p>
             </div>
           </div>
 
-          <nav className="flex items-center gap-2 flex-wrap">
-            <NavLink to="/" end className={linkClass}>Add Transaction</NavLink>
-            {canOpenDashboard && <NavLink to="/dashboard" className={linkClass}>Dashboard</NavLink>}
-            <NavLink to="/profile" className={({ isActive }) => `${linkClass({ isActive })} inline-flex items-center gap-2`}>
+          <nav className="hidden items-center gap-1 md:flex" aria-label="Primary navigation">
+            {navItems.map((item) => (
+              <NavLink key={item.to} to={item.to} end={item.end} className={desktopLinkClass}>{item.label}</NavLink>
+            ))}
+          </nav>
+
+          <div className="flex shrink-0 items-center gap-1 sm:gap-2">
+            <NavLink
+              to="/profile"
+              className={({ isActive }) => `hidden rounded-xl p-1.5 transition md:flex ${isActive ? 'bg-sky-50 ring-1 ring-sky-200 dark:bg-sky-950 dark:ring-sky-800' : 'hover:bg-slate-100 dark:hover:bg-slate-800'}`}
+              aria-label="Open profile"
+            >
               <ProfileAvatar path={profile?.avatar_path} name={profile?.full_name} size="sm" />
-              <span className="hidden sm:inline">Profile</span>
             </NavLink>
             <ThemeToggle />
-            <button onClick={signOut} className="px-3 py-1.5 rounded-lg text-sm font-medium text-slate-500 hover:bg-slate-200 transition dark:text-slate-400 dark:hover:bg-slate-800">Sign out</button>
-          </nav>
+            <button
+              onClick={signOut}
+              className="rounded-lg px-2.5 py-2 text-sm font-medium text-slate-500 transition hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800"
+              aria-label="Sign out"
+              title="Sign out"
+            >
+              <span className="sm:hidden">↪</span>
+              <span className="hidden sm:inline">Sign out</span>
+            </button>
+          </div>
         </div>
       </header>
 
-      <main className="max-w-6xl mx-auto px-4 py-6">{children}</main>
+      <main className="mx-auto max-w-7xl px-4 py-5 pb-24 sm:py-6 md:pb-8">{children}</main>
+
+      <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-slate-200 bg-white/95 px-2 pb-[max(env(safe-area-inset-bottom),0.35rem)] pt-1.5 backdrop-blur dark:border-slate-800 dark:bg-slate-900/95 md:hidden" aria-label="Mobile navigation">
+        <div className="mx-auto flex max-w-lg items-stretch justify-around gap-1">
+          {navItems.map((item) => (
+            <MobileNavLink key={item.to} item={item} />
+          ))}
+          <MobileNavLink item={{ to: '/profile', label: 'Profile', icon: '◎' }} />
+        </div>
+      </nav>
     </div>
+  )
+}
+
+function MobileNavLink({ item }: { item: NavItem }) {
+  return (
+    <NavLink
+      to={item.to}
+      end={item.end}
+      className={({ isActive }) => `flex min-w-0 flex-1 flex-col items-center justify-center rounded-xl px-1 py-1.5 text-[10px] font-medium transition ${isActive ? 'bg-sky-50 text-sky-700 dark:bg-sky-950 dark:text-sky-300' : 'text-slate-500 dark:text-slate-400'}`}
+    >
+      <span className="text-lg leading-5" aria-hidden="true">{item.icon}</span>
+      <span className="mt-0.5 truncate">{item.label}</span>
+    </NavLink>
   )
 }

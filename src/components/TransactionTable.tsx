@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Link } from 'react-router-dom'
 import type { TransactionWithService } from '../types/database'
 import { supabase } from '../lib/supabase'
 import { useShopSettings } from '../lib/shop-settings-context'
@@ -95,7 +96,11 @@ export default function TransactionTable({ rows, loading, isOwner = false, onEdi
               const isDeleted = Boolean(r.deleted_at)
               return (
                 <tr key={r.id} className={`border-b border-slate-100 last:border-0 dark:border-slate-800 ${isDeleted ? 'bg-red-50/40 dark:bg-red-950/10' : 'hover:bg-slate-50 dark:hover:bg-slate-800/60'}`}>
-                  <td className="py-2 pr-3 font-medium text-slate-600 dark:text-slate-300 whitespace-nowrap">{r.transaction_code || `#${String(r.transaction_no).padStart(4, '0')}`}</td>
+                  <td className="py-2 pr-3 font-medium whitespace-nowrap">
+                    <Link to={`/orders/${r.id}`} className="text-sky-600 hover:text-sky-700 hover:underline dark:text-sky-400 dark:hover:text-sky-300">
+                      {r.transaction_code || `#${String(r.transaction_no).padStart(4, '0')}`}
+                    </Link>
+                  </td>
                   <td className="py-2 pr-3">{r.transaction_date}</td>
                   <td className="py-2 pr-3 font-medium text-slate-900 dark:text-slate-100">
                     <span className={isDeleted ? 'line-through text-slate-400 dark:text-slate-500' : ''}>{r.customer_name}</span>

@@ -3,7 +3,10 @@ import { AuthProvider, useAuth } from './lib/auth-context'
 import { ShopSettingsProvider } from './lib/shop-settings-context'
 import { supabaseConfigError } from './lib/supabase'
 import Login from './pages/Login'
-import StaffView from './pages/StaffView'
+import HomePage from './pages/HomePage'
+import NewOrderPage from './pages/NewOrderPage'
+import OrdersPage from './pages/OrdersPage'
+import TransactionDetailPage from './pages/TransactionDetailPage'
 import OwnerDashboard from './pages/OwnerDashboard'
 import ProfilePage from './pages/ProfilePage'
 import Layout from './components/Layout'
@@ -35,9 +38,13 @@ function AppRoutes() {
   return (
     <Routes>
       <Route path="/login" element={!loading && session ? <Navigate to="/" replace /> : <Login />} />
-      <Route path="/" element={<Gate><StaffView /></Gate>} />
+      <Route path="/" element={<Gate><HomePage /></Gate>} />
+      <Route path="/new" element={<Gate><NewOrderPage /></Gate>} />
+      <Route path="/orders" element={<Gate><OrdersPage /></Gate>} />
+      <Route path="/orders/:id" element={<Gate><TransactionDetailPage /></Gate>} />
       <Route path="/dashboard" element={<Gate><OwnerDashboard /></Gate>} />
       <Route path="/profile" element={<Gate><ProfilePage /></Gate>} />
+      <Route path="/add" element={<Navigate to="/new" replace />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   )
