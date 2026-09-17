@@ -258,3 +258,58 @@ export default function TransactionDetailPage() {
           <DetailCard title="Payment">
             <DetailRow label="Total" value={peso(transaction.total_amount)} strong />
             {transaction.payment_method === 'paid' && <>
+              <DetailRow label="Cash Received" value={peso(transaction.cash_amount)} />
+              <DetailRow label="Change" value={peso(cashChange)} />
+            </>}
+            {transaction.payment_method === 'gcash' && <>
+              <DetailRow label="GCash Amount" value={peso(transaction.gcash_amount)} />
+              <DetailRow label="GCash Reference" value={transaction.gcash_reference || 'Legacy / not recorded'} />
+            </>}
+            {transaction.payment_method === 'pay_later' && <DetailRow label="Balance Due" value={peso(transaction.total_amount)} />}
+          </DetailCard>
+        </section>
+
+        {isOwner && (
+          <DetailCard title="Audit">
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <DetailRow label="Entered By" value={transaction.created_by_profile?.full_name || '—'} />
+              <DetailRow label="Created" value={formatDateTime(transaction.created_at)} />
+              <DetailRow label="Last Edited By" value={transaction.updated_by_profile?.full_name || transaction.created_by_profile?.full_name || '—'} />
+              <DetailRow label="Last Updated" value={formatDateTime(transaction.updated_at)} />
+            </div>
+          </DetailCard>
+        )}
+      </div>
+
+      {editing && (
+        <ActionErrorBoundary key={`detail-edit-${transaction.id}-${transaction.updated_at}`} onClose={() => setEditing(false)}>
+          <EditTransactionModal transaction={transaction} onClose={() => { setEditing(false); void reload() }} />
+        </ActionErrorBoundary>
+      )}
+
+      {deleting && (
+        <ActionErrorBoundary key={`detail-delete-${transaction.id}-${transaction.updated_at}`} onClose={() => setDeleting(false)}>
+          <DeleteTransactionModal transaction={transaction} onClose={() => { setDeleting(false); void reload() }} />
+        </ActionErrorBoundary>
+      )}
+    </>
+  )
+}
+
+function DetailCard({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <section className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
+      <h2 className="mb-4 font-semibold text-slate-900 dark:text-slate-100">{title}</h2>
+      <div className="space-y-3">{children}</div>
+    </section>
+  )
+}
+
+function DetailRow({ label, value, multiline = false, strong = false }: { label: string; value: string; multiline?: boolean; strong?: boolean }) {
+  return (
+    <div className={multiline ? '' : 'flex items-start justify-between gap-4'}>
+      <p className="text-xs font-medium uppercase tracking-wide text-slate-400">{label}</p>
+      <p className={`${multiline ? 'mt-1 whitespace-pre-wrap text-sm' : 'text-right text-sm'} ${strong ? 'text-lg font-semibold text-slate-900 dark:text-slate-100' : 'text-slate-700 dark:text-slate-300'}`}>{value}</p>
+    </div>
+  )
+}
