@@ -71,6 +71,63 @@ export type AddOn = {
   updated_at: string
 }
 
+
+export type InventoryUnit = 'pcs' | 'ml' | 'L' | 'g' | 'kg'
+export type InventoryMovementType = 'stock_in' | 'adjustment' | 'consumption' | 'wastage' | 'correction'
+
+export type InventoryCategory = {
+  id: string
+  name: string
+  active: boolean
+  created_at: string
+  updated_at: string
+  created_by: string | null
+  updated_by: string | null
+}
+
+export type InventoryItem = {
+  id: string
+  item_name: string
+  category_id: string | null
+  unit_label: InventoryUnit
+  reorder_threshold: number
+  average_cost: number
+  active: boolean
+  notes: string | null
+  created_at: string
+  updated_at: string
+  created_by: string | null
+  updated_by: string | null
+}
+
+export type InventoryStockMovement = {
+  id: string
+  item_id: string
+  movement_type: InventoryMovementType
+  quantity_delta: number
+  unit_cost: number | null
+  reason: string
+  created_at: string
+  created_by: string | null
+}
+
+export type InventoryItemSummary = {
+  id: string
+  item_name: string
+  category_id: string | null
+  category_name: string | null
+  unit_label: InventoryUnit
+  reorder_threshold: number
+  average_cost: number
+  active: boolean
+  notes: string | null
+  created_at: string
+  updated_at: string
+  current_quantity: number
+  stock_value: number
+  last_movement_at: string
+}
+
 export type TransactionAddOnItem = {
   add_on_id: string
   name: string
@@ -252,6 +309,60 @@ export type Database = {
         }
         Relationships: []
       }
+      inventory_categories: {
+        Row: InventoryCategory
+        Insert: {
+          id?: string
+          name: string
+          active?: boolean
+          created_at?: string
+          updated_at?: string
+          created_by: string
+          updated_by?: string | null
+        }
+        Update: {
+          name?: string
+          active?: boolean
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: []
+      }
+      inventory_items: {
+        Row: InventoryItem
+        Insert: {
+          id?: string
+          item_name: string
+          category_id?: string | null
+          unit_label: InventoryUnit
+          reorder_threshold?: number
+          average_cost?: number
+          active?: boolean
+          notes?: string | null
+          created_at?: string
+          updated_at?: string
+          created_by: string
+          updated_by?: string | null
+        }
+        Update: {
+          item_name?: string
+          category_id?: string | null
+          unit_label?: InventoryUnit
+          reorder_threshold?: number
+          average_cost?: number
+          active?: boolean
+          notes?: string | null
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: []
+      }
+      inventory_stock_movements: {
+        Row: InventoryStockMovement
+        Insert: { [key: string]: never }
+        Update: { [key: string]: never }
+        Relationships: []
+      }
       transactions: {
         Row: Transaction
         Insert: {
@@ -326,8 +437,19 @@ export type Database = {
     Views: {
       customer_summary: { Row: CustomerSummary; Relationships: [] }
       customer_transaction_history: { Row: Transaction; Relationships: [] }
+      inventory_item_summary: { Row: InventoryItemSummary; Relationships: [] }
     }
     Functions: {
+      record_inventory_movement: {
+        Args: {
+          p_item_id: string
+          p_movement_type: InventoryMovementType
+          p_quantity_delta: number
+          p_reason: string
+          p_unit_cost?: number | null
+        }
+        Returns: InventoryStockMovement
+      }
       normalize_customer_phone: { Args: { p_phone: string }; Returns: string | null }
       set_transaction_status: {
         Args: {
