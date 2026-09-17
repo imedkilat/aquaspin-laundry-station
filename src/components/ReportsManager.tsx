@@ -21,7 +21,7 @@ type PageResponse<T> = {
   error: { message: string } | null
 }
 
-const fetchPaged = async <T>(
+const fetchPaged = async <T,>(
   loadPage: (from: number, to: number) => Promise<PageResponse<T>>,
 ) => {
   const rows: T[] = []
