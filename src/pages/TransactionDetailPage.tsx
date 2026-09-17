@@ -8,7 +8,9 @@ import TransactionStatusPanel, { StatusBadge, type TransactionStatusHistoryWithA
 import { ButtonSpinner, EmptyState, InlineAlert, LoadingPanel } from '../components/UiFeedback'
 import { useAuth } from '../lib/auth-context'
 import { makeRealtimeTopic } from '../lib/realtime'
+import { openTransactionReceipt } from '../lib/receipt'
 import { useShopSettings } from '../lib/shop-settings-context'
+import { getShopLogoUrl } from '../lib/storage-images'
 import { supabase } from '../lib/supabase'
 import type { TransactionWithService } from '../types/database'
 
@@ -164,6 +166,20 @@ export default function TransactionDetailPage() {
   const cashChange = transaction.payment_method === 'paid'
     ? Math.max(Number(transaction.cash_amount || 0) - Number(transaction.total_amount || 0), 0)
     : 0
+  const printReceipt = () => {
+    try {
+      openTransactionReceipt({
+        transaction,
+        shopName: settings.shop_display_name,
+        address: settings.address,
+        contactPhone: settings.contact_phone,
+        logoUrl: getShopLogoUrl(settings.logo_path),
+        reportFooter: settings.report_footer,
+      })
+    } catch (printError) {
+      setError(printError instanceof Error ? printError.message : 'Could not open the receipt preview.')
+    }
+  }
 
   return (
     <>
@@ -181,6 +197,7 @@ export default function TransactionDetailPage() {
           </div>
 
           <div className="flex flex-wrap gap-2">
+            {!transaction.deleted_at && <button type="button" onClick={printReceipt} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">Print Receipt</button>}
             {!transaction.deleted_at && canEdit && (
               <button type="button" onClick={() => setEditing(true)} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">Edit</button>
             )}
@@ -313,3 +330,4 @@ function DetailRow({ label, value, multiline = false, strong = false }: { label:
     </div>
   )
 }
+

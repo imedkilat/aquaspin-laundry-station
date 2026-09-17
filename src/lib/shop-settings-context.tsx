@@ -8,6 +8,7 @@ export const DEFAULT_SHOP_SETTINGS: ShopSettings = {
   id: 1,
   shop_display_name: SHOP_NAME || 'Aquaspin Laundry Station',
   contact_phone: null,
+  address: null,
   report_footer: null,
   logo_path: null,
   default_payment_method: 'pay_later',
@@ -118,3 +119,4 @@ export function useShopSettings() {
   if (!value) throw new Error('useShopSettings must be used within ShopSettingsProvider')
   return value
 }
+

@@ -30,6 +30,7 @@ export type ShopSettings = {
   id: number
   shop_display_name: string
   contact_phone: string | null
+  address: string | null
   report_footer: string | null
   logo_path: string | null
   default_payment_method: PaymentMethod
@@ -260,6 +261,7 @@ export type Database = {
           id?: number
           shop_display_name?: string
           contact_phone?: string | null
+          address?: string | null
           report_footer?: string | null
           logo_path?: string | null
           default_payment_method?: PaymentMethod
@@ -282,6 +284,7 @@ export type Database = {
         Update: {
           shop_display_name?: string
           contact_phone?: string | null
+          address?: string | null
           report_footer?: string | null
           logo_path?: string | null
           default_payment_method?: PaymentMethod
@@ -557,3 +560,4 @@ export type Database = {
     CompositeTypes: { [_ in never]: never }
   }
 }
+

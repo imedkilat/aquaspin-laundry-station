@@ -7,6 +7,8 @@ import PaymentBadge from './PaymentBadge'
 import EditTransactionModal from './EditTransactionModal'
 import DeleteTransactionModal from './DeleteTransactionModal'
 import { ButtonSpinner, EmptyState, InlineAlert, LoadingPanel } from './UiFeedback'
+import { openTransactionReceipt } from '../lib/receipt'
+import { getShopLogoUrl } from '../lib/storage-images'
 
 const peso = (n: number) =>
   `₱${n.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
@@ -41,7 +43,7 @@ export default function TransactionTable({ rows, loading, isOwner = false, onEdi
 
   const canEdit = isOwner || settings.staff_can_edit_transactions
   const canDelete = isOwner || settings.staff_can_delete_transactions
-  const hasActions = canEdit || canDelete || isOwner
+  const hasActions = true
 
   const restore = async (id: string) => {
     if (!isOwner) return
@@ -66,6 +68,21 @@ export default function TransactionTable({ rows, loading, isOwner = false, onEdi
     if (!canDelete) return
     if (onDelete) return onDelete(transaction)
     setDeletingTransaction(transaction)
+  }
+
+  const printReceipt = (transaction: TransactionWithService) => {
+    try {
+      openTransactionReceipt({
+        transaction,
+        shopName: settings.shop_display_name,
+        address: settings.address,
+        contactPhone: settings.contact_phone,
+        logoUrl: getShopLogoUrl(settings.logo_path),
+        reportFooter: settings.report_footer,
+      })
+    } catch {
+      setRestoreError('Could not open the receipt preview. Allow popups for Aquaspin, then try again.')
+    }
   }
 
   if (loading) {
@@ -112,14 +129,17 @@ export default function TransactionTable({ rows, loading, isOwner = false, onEdi
                   {isOwner && <td className="py-2 pr-3 text-slate-500 whitespace-nowrap">{r.created_by_profile?.full_name ?? '—'}{r.updated_by_profile?.full_name && r.updated_by_profile.full_name !== r.created_by_profile?.full_name && <p className="mt-0.5 text-[11px] text-slate-400">Edited by {r.updated_by_profile.full_name}</p>}</td>}
                   {hasActions && (
                     <td className="py-2 pr-3 whitespace-nowrap">
+                      <div className="flex items-center gap-3">
                       {isDeleted ? (
                         isOwner ? <button type="button" onClick={(event) => { event.preventDefault(); event.stopPropagation(); void restore(r.id) }} disabled={restoringId === r.id} className="inline-flex items-center gap-1.5 text-emerald-600 hover:text-emerald-700 text-xs font-medium disabled:opacity-50">{restoringId === r.id && <ButtonSpinner />}{restoringId === r.id ? 'Restoring…' : '↺ Restore'}</button> : <span className="text-xs text-slate-400">Owner only</span>
                       ) : (
-                        <div className="flex items-center gap-3">
+                        <>
+                          <button type="button" onClick={(event) => { event.preventDefault(); event.stopPropagation(); printReceipt(r) }} className="text-slate-600 hover:text-slate-800 text-xs font-medium dark:text-slate-300 dark:hover:text-slate-100">Print Receipt</button>
                           {canEdit && <button type="button" onClick={(event) => { event.preventDefault(); event.stopPropagation(); openEdit(r) }} className="text-sky-600 hover:text-sky-700 text-xs font-medium">Edit</button>}
                           {canDelete && <button type="button" onClick={(event) => { event.preventDefault(); event.stopPropagation(); openDelete(r) }} className="text-red-600 hover:text-red-700 text-xs font-medium">Delete</button>}
-                        </div>
+                        </>
                       )}
+                      </div>
                     </td>
                   )}
                 </tr>
@@ -134,3 +154,4 @@ export default function TransactionTable({ rows, loading, isOwner = false, onEdi
     </>
   )
 }
+

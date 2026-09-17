@@ -53,6 +53,7 @@ export default function OwnerSettingsManager() {
       .update({
         shop_display_name: name,
         contact_phone: draft.contact_phone?.trim() || null,
+        address: draft.address?.trim() || null,
         report_footer: draft.report_footer?.trim() || null,
         logo_path: draft.logo_path || null,
         default_payment_method: draft.default_payment_method,
@@ -222,6 +223,11 @@ export default function OwnerSettingsManager() {
           <Field label="Contact Number" optional>
             <input value={draft.contact_phone ?? ''} onChange={(e) => set('contact_phone', e.target.value)} maxLength={64} className={inputClass} placeholder="09xxxxxxxxx" />
           </Field>
+          <div className="md:col-span-2">
+            <Field label="Shop Address" optional>
+              <input value={draft.address ?? ''} onChange={(e) => set('address', e.target.value)} maxLength={200} className={inputClass} placeholder="Street, barangay, city" />
+            </Field>
+          </div>
           <Field label="Default Payment Method">
             <select value={draft.default_payment_method} onChange={(e) => set('default_payment_method', e.target.value as PaymentMethod)} className={inputClass}>
               <option value="paid">Cash</option>
@@ -330,3 +336,4 @@ function SettingToggle({
     </label>
   )
 }
+
