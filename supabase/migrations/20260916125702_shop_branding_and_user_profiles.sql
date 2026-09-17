@@ -6,7 +6,7 @@
 do $$
 begin
   if to_regclass('public.shop_settings') is null then
-    raise exception 'Apply 20260920010000_owner_settings_and_staff_permissions.sql first';
+    raise exception 'Apply 20260916031013_owner_settings_and_staff_permissions.sql first';
   end if;
 end
 $$;

@@ -1,0 +1,8 @@
+alter table public.transactions validate constraint transactions_customer_name_length_check;
+alter table public.transactions validate constraint transactions_phone_number_length_check;
+alter table public.transactions validate constraint transactions_notes_length_check;
+alter table public.transactions validate constraint transactions_gcash_reference_length_check;
+alter table public.transactions validate constraint transactions_add_on_items_length_check;
+alter table public.transactions validate constraint transactions_amounts_sane_ceiling_check;
+alter table public.transactions validate constraint transactions_kg_sane_ceiling_check;
+alter table public.transactions validate constraint transactions_loads_sane_ceiling_check;

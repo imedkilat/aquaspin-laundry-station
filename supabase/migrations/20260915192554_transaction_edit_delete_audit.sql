@@ -1,11 +1,3 @@
--- Soft-delete with a mandatory reason, so staff can delete a transaction
--- from the dashboard while the owner keeps a full accountability trail --
--- who deleted it, when, and why. A real SQL DELETE stays owner-only
--- (transactions_delete_owner_only, unchanged) as a separate, rarely-used
--- escape hatch; the app's own Delete button only ever does this soft
--- delete (an UPDATE), which the existing transactions_update_staff policy
--- already allows any signed-in staff/owner to do -- no RLS change needed.
-
 alter table public.transactions
   add column if not exists deleted_at timestamptz,
   add column if not exists deleted_by uuid references public.profiles(id),
