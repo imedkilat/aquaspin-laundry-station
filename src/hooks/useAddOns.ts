@@ -35,6 +35,7 @@ export function useAddOns(options: { includeInactive?: boolean } = {}) {
 
   useEffect(() => {
     setRealtimeState('connecting')
+    let hasSubscribed = false
     const channel = supabase
       .channel(makeRealtimeTopic(`add-ons-realtime-${includeInactive ? 'all' : 'active'}`))
       .on(
@@ -43,7 +44,11 @@ export function useAddOns(options: { includeInactive?: boolean } = {}) {
         () => void reload()
       )
       .subscribe((status) => {
-        if (status === 'SUBSCRIBED') setRealtimeState('connected')
+        if (status === 'SUBSCRIBED') {
+          setRealtimeState('connected')
+          if (hasSubscribed) void reload()
+          hasSubscribed = true
+        }
         else if (status === 'CHANNEL_ERROR') setRealtimeState('error')
         else if (status === 'TIMED_OUT' || status === 'CLOSED') setRealtimeState('disconnected')
       })

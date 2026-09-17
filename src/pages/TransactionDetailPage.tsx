@@ -86,6 +86,7 @@ export default function TransactionDetailPage() {
   useEffect(() => {
     if (!id) return
 
+    let hasSubscribed = false
     const channel = supabase
       .channel(makeRealtimeTopic(`transaction-detail-${id}`))
       .on(
@@ -98,7 +99,12 @@ export default function TransactionDetailPage() {
         { event: '*', schema: 'public', table: 'transaction_status_history', filter: `transaction_id=eq.${id}` },
         () => void reload()
       )
-      .subscribe()
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          if (hasSubscribed) void reload()
+          hasSubscribed = true
+        }
+      })
 
     return () => {
       void supabase.removeChannel(channel)

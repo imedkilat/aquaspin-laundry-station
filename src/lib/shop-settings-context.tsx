@@ -83,6 +83,7 @@ export function ShopSettingsProvider({ children }: { children: ReactNode }) {
       return
     }
 
+    let hasSubscribed = false
     const channel = supabase
       .channel(makeRealtimeTopic('shop-settings-realtime'))
       .on(
@@ -91,7 +92,11 @@ export function ShopSettingsProvider({ children }: { children: ReactNode }) {
         () => void reload()
       )
       .subscribe((status) => {
-        if (status === 'SUBSCRIBED') setRealtimeState('connected')
+        if (status === 'SUBSCRIBED') {
+          setRealtimeState('connected')
+          if (hasSubscribed) void reload()
+          hasSubscribed = true
+        }
         else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') setRealtimeState('error')
         else if (status === 'CLOSED') setRealtimeState('disconnected')
       })
