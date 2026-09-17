@@ -219,7 +219,7 @@ export default function TransactionDetailPage() {
           </DetailCard>
 
           <DetailCard title="Laundry">
-            <DetailRow label="Service" value={transaction.services?.label || transaction.services?.code || '—'} />
+            <DetailRow label="Service" value={transaction.service_label_snapshot || transaction.service_code_snapshot || transaction.services?.label || transaction.services?.code || '—'} />
             <DetailRow label="Weight" value={transaction.kg != null ? `${transaction.kg} kg` : '—'} />
             <DetailRow label="Loads" value={transaction.no_of_loads != null ? String(transaction.no_of_loads) : '—'} />
             <DetailRow label="Base Amount" value={peso(transaction.base_amount)} />
