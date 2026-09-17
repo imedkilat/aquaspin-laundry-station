@@ -10,6 +10,8 @@
 // Likewise Insert/Update are flat object literals, not
 // `Partial<Row> & {...}` intersections, which trips the same collapse.
 
+import type { Customer, CustomerSummary, OrderStatus, TransactionStatusHistory } from './customer-status'
+
 export type Role = 'owner' | 'staff'
 export type PaymentMethod = 'paid' | 'gcash' | 'pay_later'
 export type PricingType = 'per_load_by_weight' | 'per_load_manual' | 'per_item'
@@ -43,6 +45,7 @@ export type ShopSettings = {
   staff_can_delete_transactions: boolean
   staff_can_view_historical_pay_later: boolean
   staff_can_edit_own_profile: boolean
+  staff_can_manage_customers: boolean
   updated_at: string
   updated_by: string | null
 }
@@ -82,6 +85,8 @@ export type Transaction = {
   transaction_no: number
   transaction_code: string
   customer_name: string
+  customer_id: string | null
+  order_status: OrderStatus
   phone_number: string | null
   transaction_date: string // date
   service_id: string | null
@@ -120,6 +125,18 @@ export type TransactionWithService = Transaction & {
 export type Database = {
   public: {
     Tables: {
+      customers: {
+        Row: Customer
+        Insert: { full_name: string; phone_number?: string | null; notes?: string | null; active?: boolean }
+        Update: { full_name?: string; phone_number?: string | null; notes?: string | null; active?: boolean }
+        Relationships: []
+      }
+      transaction_status_history: {
+        Row: TransactionStatusHistory
+        Insert: { [key: string]: never }
+        Update: { [key: string]: never }
+        Relationships: []
+      }
       profiles: {
         Row: Profile
         Insert: {
@@ -161,6 +178,7 @@ export type Database = {
           staff_can_delete_transactions?: boolean
           staff_can_view_historical_pay_later?: boolean
           staff_can_edit_own_profile?: boolean
+          staff_can_manage_customers?: boolean
           updated_at?: string
           updated_by?: string | null
         }
@@ -182,6 +200,7 @@ export type Database = {
           staff_can_delete_transactions?: boolean
           staff_can_view_historical_pay_later?: boolean
           staff_can_edit_own_profile?: boolean
+          staff_can_manage_customers?: boolean
         }
         Relationships: []
       }
@@ -238,6 +257,7 @@ export type Database = {
           transaction_no?: number
           transaction_code?: string
           customer_name: string
+          customer_id?: string | null
           phone_number?: string | null
           transaction_date?: string
           service_id?: string | null
@@ -268,6 +288,7 @@ export type Database = {
           transaction_no?: number
           transaction_code?: string
           customer_name?: string
+          customer_id?: string | null
           phone_number?: string | null
           transaction_date?: string
           service_id?: string | null
@@ -296,8 +317,31 @@ export type Database = {
         Relationships: []
       }
     }
-    Views: { [_ in never]: never }
-    Functions: { [_ in never]: never }
+    Views: {
+      customer_summary: { Row: CustomerSummary; Relationships: [] }
+      customer_transaction_history: { Row: Transaction; Relationships: [] }
+    }
+    Functions: {
+      normalize_customer_phone: { Args: { p_phone: string }; Returns: string | null }
+      set_transaction_status: {
+        Args: {
+          p_transaction_id: string
+          p_status: OrderStatus
+          p_expected_updated_at: string
+          p_reason?: string | null
+          p_override?: boolean
+        }
+        Returns: Transaction
+      }
+      soft_delete_transaction: {
+        Args: {
+          p_transaction_id: string
+          p_expected_updated_at: string
+          p_delete_reason: string
+        }
+        Returns: { success: boolean; transaction_id: string; updated_at: string }[]
+      }
+    }
     Enums: { [_ in never]: never }
     CompositeTypes: { [_ in never]: never }
   }
