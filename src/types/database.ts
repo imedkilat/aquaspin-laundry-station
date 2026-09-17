@@ -128,6 +128,44 @@ export type InventoryItemSummary = {
   last_movement_at: string
 }
 
+export type ExpenseCategory = {
+  id: string
+  name: string
+  active: boolean
+  created_at: string
+  updated_at: string
+  created_by: string | null
+  updated_by: string | null
+}
+
+export type Expense = {
+  id: string
+  expense_date: string
+  category_id: string | null
+  description: string
+  amount: number
+  vendor: string | null
+  notes: string | null
+  created_at: string
+  created_by: string | null
+  voided_at: string | null
+  voided_by: string | null
+  void_reason: string | null
+}
+
+export type ActiveExpense = {
+  id: string
+  expense_date: string
+  category_id: string | null
+  category_name: string | null
+  description: string
+  amount: number
+  vendor: string | null
+  notes: string | null
+  created_at: string
+  created_by: string | null
+}
+
 export type TransactionAddOnItem = {
   add_on_id: string
   name: string
@@ -363,6 +401,32 @@ export type Database = {
         Update: { [key: string]: never }
         Relationships: []
       }
+
+      expense_categories: {
+        Row: ExpenseCategory
+        Insert: {
+          id?: string
+          name: string
+          active?: boolean
+          created_at?: string
+          updated_at?: string
+          created_by: string
+          updated_by?: string | null
+        }
+        Update: {
+          name?: string
+          active?: boolean
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: []
+      }
+      expenses: {
+        Row: Expense
+        Insert: { [key: string]: never }
+        Update: { [key: string]: never }
+        Relationships: []
+      }
       transactions: {
         Row: Transaction
         Insert: {
@@ -438,8 +502,27 @@ export type Database = {
       customer_summary: { Row: CustomerSummary; Relationships: [] }
       customer_transaction_history: { Row: Transaction; Relationships: [] }
       inventory_item_summary: { Row: InventoryItemSummary; Relationships: [] }
+      active_expenses: { Row: ActiveExpense; Relationships: [] }
     }
     Functions: {
+      record_expense: {
+        Args: {
+          p_description: string
+          p_amount: number
+          p_expense_date?: string
+          p_category_id?: string | null
+          p_vendor?: string | null
+          p_notes?: string | null
+        }
+        Returns: Expense
+      }
+      void_expense: {
+        Args: {
+          p_expense_id: string
+          p_reason: string
+        }
+        Returns: Expense
+      }
       record_inventory_movement: {
         Args: {
           p_item_id: string
