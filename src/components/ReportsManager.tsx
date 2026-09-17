@@ -22,7 +22,7 @@ type PageResponse<T> = {
 }
 
 const fetchPaged = async <T,>(
-  loadPage: (from: number, to: number) => Promise<PageResponse<T>>,
+  loadPage: (from: number, to: number) => PromiseLike<PageResponse<T>>,
 ) => {
   const rows: T[] = []
 
