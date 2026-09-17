@@ -86,6 +86,8 @@ export type Transaction = {
   transaction_code: string
   customer_name: string
   customer_id: string | null
+  service_code_snapshot: string | null
+  service_label_snapshot: string | null
   order_status: OrderStatus
   phone_number: string | null
   transaction_date: string // date
@@ -258,6 +260,8 @@ export type Database = {
           transaction_code?: string
           customer_name: string
           customer_id?: string | null
+          service_code_snapshot?: string | null
+          service_label_snapshot?: string | null
           phone_number?: string | null
           transaction_date?: string
           service_id?: string | null
@@ -289,6 +293,8 @@ export type Database = {
           transaction_code?: string
           customer_name?: string
           customer_id?: string | null
+          service_code_snapshot?: string | null
+          service_label_snapshot?: string | null
           phone_number?: string | null
           transaction_date?: string
           service_id?: string | null
