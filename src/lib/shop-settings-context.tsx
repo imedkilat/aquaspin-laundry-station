@@ -1,5 +1,122 @@
-import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react'\nimport { supabase, SHOP_NAME } from './supabase'\nimport { useAuth } from './auth-context'\nimport { makeRealtimeTopic } from './realtime'\nimport type { ShopSettings } from '../types/database'\n\nexport const DEFAULT_SHOP_SETTINGS: ShopSettings = {\n  id: 1,\n  shop_display_name: SHOP_NAME || 'Aquaspin Laundry Station',
+import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react'
+import { supabase, SHOP_NAME } from './supabase'
+import { useAuth } from './auth-context'
+import { makeRealtimeTopic } from './realtime'
+import type { ShopSettings } from '../types/database'
+
+export const DEFAULT_SHOP_SETTINGS: ShopSettings = {
+  id: 1,
+  shop_display_name: SHOP_NAME || 'Aquaspin Laundry Station',
   contact_phone: null,
   address: null,
   report_footer: null,
-  logo_path: null,\n  default_payment_method: 'pay_later',\n  default_dashboard_days: 7,\n  require_phone_number: false,\n  require_pickup_date: false,\n  require_notes_for_pay_later: false,\n  allow_manual_total_override: true,\n  staff_can_create_transactions: true,\n  staff_can_access_dashboard: true,\n  staff_can_view_full_history: true,\n  staff_can_edit_transactions: true,\n  staff_can_delete_transactions: true,\n  staff_can_view_historical_pay_later: true,\n  staff_can_edit_own_profile: true,\n  staff_can_manage_customers: true,\n  updated_at: new Date(0).toISOString(),\n  updated_by: null,\n}\n\ntype SettingsState = {\n  settings: ShopSettings\n  loading: boolean\n  error: string | null\n  realtimeState: 'idle' | 'connected' | 'disconnected' | 'error'\n  reload: () => Promise<void>\n}\n\nconst ShopSettingsContext = createContext<SettingsState | undefined>(undefined)\n\nexport function ShopSettingsProvider({ children }: { children: ReactNode }) {\n  const { session } = useAuth()\n  const [settings, setSettings] = useState<ShopSettings>(DEFAULT_SHOP_SETTINGS)\n  const [loading, setLoading] = useState(false)\n  const [error, setError] = useState<string | null>(null)\n  const [realtimeState, setRealtimeState] = useState<SettingsState['realtimeState']>('idle')\n\n  const reload = useCallback(async () => {\n    if (!session) {\n      setSettings(DEFAULT_SHOP_SETTINGS)\n      setError(null)\n      setLoading(false)\n      return\n    }\n\n    setLoading(true)\n    const { data, error: queryError } = await supabase\n      .from('shop_settings')\n      .select('*')\n      .eq('id', 1)\n      .maybeSingle()\n\n    if (queryError) {\n      // Safe rollout fallback: if the settings migration has not landed yet,\n      // the existing Aquaspin app keeps working with conservative defaults.\n      setError(queryError.message)\n      setLoading(false)\n      return\n    }\n\n    setSettings({ ...DEFAULT_SHOP_SETTINGS, ...(data ?? {}) })\n    setError(null)\n    setLoading(false)\n  }, [session])\n\n  useEffect(() => {\n    void reload()\n  }, [reload])\n\n  useEffect(() => {\n    if (!session) {\n      setRealtimeState('idle')\n      return\n    }\n\n    let hasSubscribed = false\n    const channel = supabase\n      .channel(makeRealtimeTopic('shop-settings-realtime'))\n      .on(\n        'postgres_changes',\n        { event: '*', schema: 'public', table: 'shop_settings' },\n        () => void reload()\n      )\n      .subscribe((status) => {\n        if (status === 'SUBSCRIBED') {\n          setRealtimeState('connected')\n          if (hasSubscribed) void reload()\n          hasSubscribed = true\n        }\n        else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') setRealtimeState('error')\n        else if (status === 'CLOSED') setRealtimeState('disconnected')\n      })\n\n    return () => {\n      void supabase.removeChannel(channel)\n    }\n  }, [reload, session])\n\n  return (\n    <ShopSettingsContext.Provider value={{ settings, loading, error, realtimeState, reload }}>\n      {children}\n    </ShopSettingsContext.Provider>\n  )\n}\n\nexport function useShopSettings() {\n  const value = useContext(ShopSettingsContext)\n  if (!value) throw new Error('useShopSettings must be used within ShopSettingsProvider')\n  return value\n}\n
+  logo_path: null,
+  default_payment_method: 'pay_later',
+  default_dashboard_days: 7,
+  require_phone_number: false,
+  require_pickup_date: false,
+  require_notes_for_pay_later: false,
+  allow_manual_total_override: true,
+  staff_can_create_transactions: true,
+  staff_can_access_dashboard: true,
+  staff_can_view_full_history: true,
+  staff_can_edit_transactions: true,
+  staff_can_delete_transactions: true,
+  staff_can_view_historical_pay_later: true,
+  staff_can_edit_own_profile: true,
+  staff_can_manage_customers: true,
+  updated_at: new Date(0).toISOString(),
+  updated_by: null,
+}
+
+type SettingsState = {
+  settings: ShopSettings
+  loading: boolean
+  error: string | null
+  realtimeState: 'idle' | 'connected' | 'disconnected' | 'error'
+  reload: () => Promise<void>
+}
+
+const ShopSettingsContext = createContext<SettingsState | undefined>(undefined)
+
+export function ShopSettingsProvider({ children }: { children: ReactNode }) {
+  const { session } = useAuth()
+  const [settings, setSettings] = useState<ShopSettings>(DEFAULT_SHOP_SETTINGS)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [realtimeState, setRealtimeState] = useState<SettingsState['realtimeState']>('idle')
+
+  const reload = useCallback(async () => {
+    if (!session) {
+      setSettings(DEFAULT_SHOP_SETTINGS)
+      setError(null)
+      setLoading(false)
+      return
+    }
+
+    setLoading(true)
+    const { data, error: queryError } = await supabase
+      .from('shop_settings')
+      .select('*')
+      .eq('id', 1)
+      .maybeSingle()
+
+    if (queryError) {
+      // Safe rollout fallback: if the settings migration has not landed yet,
+      // the existing Aquaspin app keeps working with conservative defaults.
+      setError(queryError.message)
+      setLoading(false)
+      return
+    }
+
+    setSettings({ ...DEFAULT_SHOP_SETTINGS, ...(data ?? {}) })
+    setError(null)
+    setLoading(false)
+  }, [session])
+
+  useEffect(() => {
+    void reload()
+  }, [reload])
+
+  useEffect(() => {
+    if (!session) {
+      setRealtimeState('idle')
+      return
+    }
+
+    let hasSubscribed = false
+    const channel = supabase
+      .channel(makeRealtimeTopic('shop-settings-realtime'))
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'shop_settings' },
+        () => void reload()
+      )
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          setRealtimeState('connected')
+          if (hasSubscribed) void reload()
+          hasSubscribed = true
+        }
+        else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') setRealtimeState('error')
+        else if (status === 'CLOSED') setRealtimeState('disconnected')
+      })
+
+    return () => {
+      void supabase.removeChannel(channel)
+    }
+  }, [reload, session])
+
+  return (
+    <ShopSettingsContext.Provider value={{ settings, loading, error, realtimeState, reload }}>
+      {children}
+    </ShopSettingsContext.Provider>
+  )
+}
+
+export function useShopSettings() {
+  const value = useContext(ShopSettingsContext)
+  if (!value) throw new Error('useShopSettings must be used within ShopSettingsProvider')
+  return value
+}
+

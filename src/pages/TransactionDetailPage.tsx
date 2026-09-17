@@ -1,10 +1,169 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'\nimport { Link, useParams } from 'react-router-dom'\nimport ActionErrorBoundary from '../components/ActionErrorBoundary'\nimport DeleteTransactionModal from '../components/DeleteTransactionModal'\nimport EditTransactionModal from '../components/EditTransactionModal'\nimport PaymentBadge from '../components/PaymentBadge'\nimport TransactionStatusPanel, { StatusBadge, type TransactionStatusHistoryWithActor } from '../components/TransactionStatusPanel'\nimport { ButtonSpinner, EmptyState, InlineAlert, LoadingPanel } from '../components/UiFeedback'\nimport { useAuth } from '../lib/auth-context'\nimport { makeRealtimeTopic } from '../lib/realtime'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Link, useParams } from 'react-router-dom'
+import ActionErrorBoundary from '../components/ActionErrorBoundary'
+import DeleteTransactionModal from '../components/DeleteTransactionModal'
+import EditTransactionModal from '../components/EditTransactionModal'
+import PaymentBadge from '../components/PaymentBadge'
+import TransactionStatusPanel, { StatusBadge, type TransactionStatusHistoryWithActor } from '../components/TransactionStatusPanel'
+import { ButtonSpinner, EmptyState, InlineAlert, LoadingPanel } from '../components/UiFeedback'
+import { useAuth } from '../lib/auth-context'
+import { makeRealtimeTopic } from '../lib/realtime'
 import { openTransactionReceipt } from '../lib/receipt'
 import { useShopSettings } from '../lib/shop-settings-context'
 import { getShopLogoUrl } from '../lib/storage-images'
-import { supabase } from '../lib/supabase'\nimport type { TransactionWithService } from '../types/database'\n\nconst SELECT = `*, services ( code, label ),\n  created_by_profile:profiles!transactions_created_by_fkey ( full_name ),\n  updated_by_profile:profiles!transactions_updated_by_fkey ( full_name ),\n  deleted_by_profile:profiles!transactions_deleted_by_fkey ( full_name )`\n\nconst HISTORY_SELECT = `*, changed_by_profile:profiles!transaction_status_history_changed_by_fkey ( full_name )`\n\nconst peso = (value: number) =>\n  `₱${Number(value || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`\n\nconst formatDateTime = (iso: string | null) => {\n  if (!iso) return '—'\n  return new Date(iso).toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' })\n}\n\nconst formatPickupTime = (time: string | null) => {\n  if (!time) return null\n  const [hoursText, minutesText = '00'] = time.split(':')\n  const hours = Number(hoursText)\n  if (!Number.isFinite(hours)) return time\n  const period = hours >= 12 ? 'PM' : 'AM'\n  const displayHour = hours % 12 || 12\n  return `${displayHour}:${minutesText} ${period}`\n}\n\nexport default function TransactionDetailPage() {\n  const { id } = useParams<{ id: string }>()\n  const { profile } = useAuth()\n  const { settings } = useShopSettings()\n  const isOwner = profile?.role === 'owner'\n  const canEdit = isOwner || settings.staff_can_edit_transactions
+import { supabase } from '../lib/supabase'
+import type { TransactionWithService } from '../types/database'
+
+const SELECT = `*, services ( code, label ),
+  created_by_profile:profiles!transactions_created_by_fkey ( full_name ),
+  updated_by_profile:profiles!transactions_updated_by_fkey ( full_name ),
+  deleted_by_profile:profiles!transactions_deleted_by_fkey ( full_name )`
+
+const HISTORY_SELECT = `*, changed_by_profile:profiles!transaction_status_history_changed_by_fkey ( full_name )`
+
+const peso = (value: number) =>
+  `₱${Number(value || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+
+const formatDateTime = (iso: string | null) => {
+  if (!iso) return '—'
+  return new Date(iso).toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' })
+}
+
+const formatPickupTime = (time: string | null) => {
+  if (!time) return null
+  const [hoursText, minutesText = '00'] = time.split(':')
+  const hours = Number(hoursText)
+  if (!Number.isFinite(hours)) return time
+  const period = hours >= 12 ? 'PM' : 'AM'
+  const displayHour = hours % 12 || 12
+  return `${displayHour}:${minutesText} ${period}`
+}
+
+export default function TransactionDetailPage() {
+  const { id } = useParams<{ id: string }>()
+  const { profile } = useAuth()
+  const { settings } = useShopSettings()
+  const isOwner = profile?.role === 'owner'
+  const canEdit = isOwner || settings.staff_can_edit_transactions
   const canDelete = isOwner || settings.staff_can_delete_transactions
-\n  const [transaction, setTransaction] = useState<TransactionWithService | null>(null)\n  const [history, setHistory] = useState<TransactionStatusHistoryWithActor[]>([])\n  const [loading, setLoading] = useState(true)\n  const [error, setError] = useState<string | null>(null)\n  const [editing, setEditing] = useState(false)\n  const [deleting, setDeleting] = useState(false)\n  const [restoring, setRestoring] = useState(false)\n\n  const reload = useCallback(async () => {\n    if (!id) return\n    setLoading(true)\n    setError(null)\n\n    const [transactionResult, historyResult] = await Promise.all([\n      supabase.from('transactions').select(SELECT).eq('id', id).maybeSingle(),\n      supabase.from('transaction_status_history').select(HISTORY_SELECT).eq('transaction_id', id).order('changed_at', { ascending: false }),\n    ])\n\n    if (transactionResult.error) {\n      setError('Could not load this order. Check your connection and try again.')\n      setLoading(false)\n      return\n    }\n\n    setTransaction((transactionResult.data as unknown as TransactionWithService | null) ?? null)\n    if (historyResult.error) {\n      setHistory([])\n      setError('The order opened, but its status history could not be loaded. Refresh and try again.')\n    } else {\n      setHistory((historyResult.data as unknown as TransactionStatusHistoryWithActor[]) ?? [])\n    }\n    setLoading(false)\n  }, [id])\n\n  useEffect(() => {\n    void reload()\n  }, [reload])\n\n  useEffect(() => {\n    if (!id) return\n\n    let hasSubscribed = false\n    const channel = supabase\n      .channel(makeRealtimeTopic(`transaction-detail-${id}`))\n      .on(\n        'postgres_changes',\n        { event: '*', schema: 'public', table: 'transactions', filter: `id=eq.${id}` },\n        () => void reload()\n      )\n      .on(\n        'postgres_changes',\n        { event: '*', schema: 'public', table: 'transaction_status_history', filter: `transaction_id=eq.${id}` },\n        () => void reload()\n      )\n      .subscribe((status) => {\n        if (status === 'SUBSCRIBED') {\n          if (hasSubscribed) void reload()\n          hasSubscribed = true\n        }\n      })\n\n    return () => {\n      void supabase.removeChannel(channel)\n    }\n  }, [id, reload])\n\n  const addOnTotal = useMemo(\n    () => transaction?.add_on_items?.reduce((sum, item) => sum + Number(item.line_total || 0), 0) ?? 0,\n    [transaction]\n  )\n\n  const restore = async () => {\n    if (!transaction || !isOwner || !transaction.deleted_at) return\n    setRestoring(true)\n    setError(null)\n\n    const { data, error: restoreError } = await supabase\n      .from('transactions')\n      .update({ deleted_at: null, deleted_by: null, delete_reason: null })\n      .eq('id', transaction.id)\n      .eq('updated_at', transaction.updated_at)\n      .select('id')\n\n    setRestoring(false)\n\n    if (restoreError) {\n      setError('Could not restore this transaction. Refresh and try again.')\n      return\n    }\n\n    if (!data || data.length === 0) {\n      setError('This transaction changed in another browser. Refresh it before restoring.')\n      return\n    }\n\n    void reload()\n  }\n\n  if (loading && !transaction) {\n    return <LoadingPanel label="Opening order details…" slowLabel="Still opening this order… your connection may be slow." />\n  }\n\n  if (!transaction) {\n    return (\n      <div className="space-y-4">\n        <Link to="/orders" className="text-sm font-medium text-sky-600 hover:text-sky-700 dark:text-sky-400">← Back to Orders</Link>\n        {error ? (\n          <InlineAlert variant="error" title="Order unavailable" actionLabel="Try again" onAction={() => void reload()}>{error}</InlineAlert>\n        ) : (\n          <EmptyState title="Order not found" description="It may have been removed from your allowed view or the link may be invalid." />\n        )}\n      </div>\n    )\n  }\n\n  const pickupTime = formatPickupTime(transaction.pickup_time)\n  const cashChange = transaction.payment_method === 'paid'
+
+  const [transaction, setTransaction] = useState<TransactionWithService | null>(null)
+  const [history, setHistory] = useState<TransactionStatusHistoryWithActor[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [editing, setEditing] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  const [restoring, setRestoring] = useState(false)
+
+  const reload = useCallback(async () => {
+    if (!id) return
+    setLoading(true)
+    setError(null)
+
+    const [transactionResult, historyResult] = await Promise.all([
+      supabase.from('transactions').select(SELECT).eq('id', id).maybeSingle(),
+      supabase.from('transaction_status_history').select(HISTORY_SELECT).eq('transaction_id', id).order('changed_at', { ascending: false }),
+    ])
+
+    if (transactionResult.error) {
+      setError('Could not load this order. Check your connection and try again.')
+      setLoading(false)
+      return
+    }
+
+    setTransaction((transactionResult.data as unknown as TransactionWithService | null) ?? null)
+    if (historyResult.error) {
+      setHistory([])
+      setError('The order opened, but its status history could not be loaded. Refresh and try again.')
+    } else {
+      setHistory((historyResult.data as unknown as TransactionStatusHistoryWithActor[]) ?? [])
+    }
+    setLoading(false)
+  }, [id])
+
+  useEffect(() => {
+    void reload()
+  }, [reload])
+
+  useEffect(() => {
+    if (!id) return
+
+    let hasSubscribed = false
+    const channel = supabase
+      .channel(makeRealtimeTopic(`transaction-detail-${id}`))
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'transactions', filter: `id=eq.${id}` },
+        () => void reload()
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'transaction_status_history', filter: `transaction_id=eq.${id}` },
+        () => void reload()
+      )
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          if (hasSubscribed) void reload()
+          hasSubscribed = true
+        }
+      })
+
+    return () => {
+      void supabase.removeChannel(channel)
+    }
+  }, [id, reload])
+
+  const addOnTotal = useMemo(
+    () => transaction?.add_on_items?.reduce((sum, item) => sum + Number(item.line_total || 0), 0) ?? 0,
+    [transaction]
+  )
+
+  const restore = async () => {
+    if (!transaction || !isOwner || !transaction.deleted_at) return
+    setRestoring(true)
+    setError(null)
+
+    const { data, error: restoreError } = await supabase
+      .from('transactions')
+      .update({ deleted_at: null, deleted_by: null, delete_reason: null })
+      .eq('id', transaction.id)
+      .eq('updated_at', transaction.updated_at)
+      .select('id')
+
+    setRestoring(false)
+
+    if (restoreError) {
+      setError('Could not restore this transaction. Refresh and try again.')
+      return
+    }
+
+    if (!data || data.length === 0) {
+      setError('This transaction changed in another browser. Refresh it before restoring.')
+      return
+    }
+
+    void reload()
+  }
+
+  if (loading && !transaction) {
+    return <LoadingPanel label="Opening order details…" slowLabel="Still opening this order… your connection may be slow." />
+  }
+
+  if (!transaction) {
+    return (
+      <div className="space-y-4">
+        <Link to="/orders" className="text-sm font-medium text-sky-600 hover:text-sky-700 dark:text-sky-400">← Back to Orders</Link>
+        {error ? (
+          <InlineAlert variant="error" title="Order unavailable" actionLabel="Try again" onAction={() => void reload()}>{error}</InlineAlert>
+        ) : (
+          <EmptyState title="Order not found" description="It may have been removed from your allowed view or the link may be invalid." />
+        )}
+      </div>
+    )
+  }
+
+  const pickupTime = formatPickupTime(transaction.pickup_time)
+  const cashChange = transaction.payment_method === 'paid'
     ? Math.max(Number(transaction.cash_amount || 0) - Number(transaction.total_amount || 0), 0)
     : 0
   const printReceipt = () => {
@@ -21,7 +180,154 @@ import { supabase } from '../lib/supabase'\nimport type { TransactionWithService
       setError(printError instanceof Error ? printError.message : 'Could not open the receipt preview.')
     }
   }
-\n  return (\n    <>\n      <div className="space-y-5">\n        <div className="flex flex-wrap items-center justify-between gap-3">\n          <div>\n            <Link to="/orders" className="text-sm font-medium text-sky-600 hover:text-sky-700 dark:text-sky-400">← Back to Orders</Link>\n            <div className="mt-2 flex flex-wrap items-center gap-2">\n              <h1 className="text-2xl font-semibold text-slate-900 dark:text-slate-100">{transaction.transaction_code || `#${transaction.transaction_no}`}</h1>\n              <PaymentBadge method={transaction.payment_method} />\n              <StatusBadge status={transaction.order_status} />\n              {transaction.deleted_at && <span className="rounded-full bg-red-100 px-2.5 py-1 text-xs font-medium text-red-700 dark:bg-red-950 dark:text-red-300">Deleted</span>}\n            </div>\n            <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{transaction.customer_name} · {transaction.transaction_date}</p>\n          </div>\n\n          <div className="flex flex-wrap gap-2">
+
+  return (
+    <>
+      <div className="space-y-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <Link to="/orders" className="text-sm font-medium text-sky-600 hover:text-sky-700 dark:text-sky-400">← Back to Orders</Link>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <h1 className="text-2xl font-semibold text-slate-900 dark:text-slate-100">{transaction.transaction_code || `#${transaction.transaction_no}`}</h1>
+              <PaymentBadge method={transaction.payment_method} />
+              <StatusBadge status={transaction.order_status} />
+              {transaction.deleted_at && <span className="rounded-full bg-red-100 px-2.5 py-1 text-xs font-medium text-red-700 dark:bg-red-950 dark:text-red-300">Deleted</span>}
+            </div>
+            <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{transaction.customer_name} · {transaction.transaction_date}</p>
+          </div>
+
+          <div className="flex flex-wrap gap-2">
             <button type="button" onClick={printReceipt} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">Print Receipt</button>
             {!transaction.deleted_at && canEdit && (
-              <button type="button" onClick={() => setEditing(true)} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">Edit</button>\n            )}\n            {!transaction.deleted_at && canDelete && (\n              <button type="button" onClick={() => setDeleting(true)} className="rounded-xl bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700">Delete</button>\n            )}\n            {transaction.deleted_at && isOwner && (\n              <button type="button" onClick={() => void restore()} disabled={restoring} className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-60">\n                {restoring && <ButtonSpinner />}{restoring ? 'Restoring…' : 'Restore'}\n              </button>\n            )}\n          </div>\n        </div>\n\n        {error && <InlineAlert variant="error" title="Order action did not finish" actionLabel="Refresh" onAction={() => void reload()}>{error}</InlineAlert>}\n\n        {transaction.deleted_at && (\n          <InlineAlert variant="warning" title="This transaction is soft-deleted">\n            Deleted {formatDateTime(transaction.deleted_at)} by {transaction.deleted_by_profile?.full_name || 'an authorized user'}{transaction.delete_reason ? ` · Reason: ${transaction.delete_reason}` : ''}. Only the Owner can restore it.\n          </InlineAlert>\n        )}\n\n        <TransactionStatusPanel\n          transaction={transaction}\n          history={history}\n          canEdit={canEdit && !transaction.deleted_at}\n          isOwner={isOwner}\n          onRefresh={reload}\n        />\n\n        <section className="grid gap-4 lg:grid-cols-3">\n          <DetailCard title="Customer">\n            <DetailRow label="Name" value={transaction.customer_name} />\n            <DetailRow label="Phone" value={transaction.phone_number || '—'} />\n            <DetailRow label="Notes" value={transaction.notes || '—'} multiline />\n          </DetailCard>\n\n          <DetailCard title="Laundry">\n            <DetailRow label="Service" value={transaction.service_label_snapshot || transaction.service_code_snapshot || transaction.services?.label || transaction.services?.code || '—'} />\n            <DetailRow label="Weight" value={transaction.kg != null ? `${transaction.kg} kg` : '—'} />\n            <DetailRow label="Loads" value={transaction.no_of_loads != null ? String(transaction.no_of_loads) : '—'} />\n            <DetailRow label="Base Amount" value={peso(transaction.base_amount)} />\n          </DetailCard>\n\n          <DetailCard title="Pickup">\n            <DetailRow label="Pickup Date" value={transaction.pickup_date || '—'} />\n            <DetailRow label="Pickup Time" value={pickupTime || '—'} />\n            <DetailRow label="Recorded" value={formatDateTime(transaction.created_at)} />\n          </DetailCard>\n        </section>\n\n        <section className="grid gap-4 lg:grid-cols-[1.3fr_1fr]">\n          <DetailCard title="Add-ons">\n            {transaction.add_on_items?.length ? (\n              <div className="space-y-2">\n                {transaction.add_on_items.map((item, index) => (\n                  <div key={`${item.add_on_id}-${index}`} className="flex items-start justify-between gap-4 rounded-xl bg-slate-50 px-3 py-2 dark:bg-slate-950">\n                    <div>\n                      <p className="text-sm font-medium text-slate-800 dark:text-slate-200">{item.name}</p>\n                      <p className="text-xs text-slate-500">{item.quantity} × {peso(item.unit_price)} / {item.unit_type}</p>\n                    </div>\n                    <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">{peso(item.line_total)}</p>\n                  </div>\n                ))}\n                <div className="flex justify-between border-t border-slate-200 pt-2 text-sm dark:border-slate-800">\n                  <span className="text-slate-500">Add-on total</span>\n                  <span className="font-semibold">{peso(addOnTotal)}</span>\n                </div>\n              </div>\n            ) : (\n              <p className="text-sm text-slate-500 dark:text-slate-400">No add-ons on this order.</p>\n            )}\n          </DetailCard>\n\n          <DetailCard title="Payment">\n            <DetailRow label="Total" value={peso(transaction.total_amount)} strong />\n            {transaction.payment_method === 'paid' && <>\n              <DetailRow label="Cash Received" value={peso(transaction.cash_amount)} />\n              <DetailRow label="Change" value={peso(cashChange)} />\n            </>}\n            {transaction.payment_method === 'gcash' && <>\n              <DetailRow label="GCash Amount" value={peso(transaction.gcash_amount)} />\n              <DetailRow label="GCash Reference" value={transaction.gcash_reference || 'Legacy / not recorded'} />\n            </>}\n            {transaction.payment_method === 'pay_later' && <DetailRow label="Balance Due" value={peso(transaction.total_amount)} />}\n          </DetailCard>\n        </section>\n\n        {isOwner && (\n          <DetailCard title="Audit">\n            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">\n              <DetailRow label="Entered By" value={transaction.created_by_profile?.full_name || '—'} />\n              <DetailRow label="Created" value={formatDateTime(transaction.created_at)} />\n              <DetailRow label="Last Edited By" value={transaction.updated_by_profile?.full_name || transaction.created_by_profile?.full_name || '—'} />\n              <DetailRow label="Last Updated" value={formatDateTime(transaction.updated_at)} />\n            </div>\n          </DetailCard>\n        )}\n      </div>\n\n      {editing && (\n        <ActionErrorBoundary key={`detail-edit-${transaction.id}-${transaction.updated_at}`} onClose={() => setEditing(false)}>\n          <EditTransactionModal transaction={transaction} onClose={() => { setEditing(false); void reload() }} />\n        </ActionErrorBoundary>\n      )}\n\n      {deleting && (\n        <ActionErrorBoundary key={`detail-delete-${transaction.id}-${transaction.updated_at}`} onClose={() => setDeleting(false)}>\n          <DeleteTransactionModal transaction={transaction} onClose={() => { setDeleting(false); void reload() }} />\n        </ActionErrorBoundary>\n      )}\n    </>\n  )\n}\n\nfunction DetailCard({ title, children }: { title: string; children: React.ReactNode }) {\n  return (\n    <section className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">\n      <h2 className="mb-4 font-semibold text-slate-900 dark:text-slate-100">{title}</h2>\n      <div className="space-y-3">{children}</div>\n    </section>\n  )\n}\n\nfunction DetailRow({ label, value, multiline = false, strong = false }: { label: string; value: string; multiline?: boolean; strong?: boolean }) {\n  return (\n    <div className={multiline ? '' : 'flex items-start justify-between gap-4'}>\n      <p className="text-xs font-medium uppercase tracking-wide text-slate-400">{label}</p>\n      <p className={`${multiline ? 'mt-1 whitespace-pre-wrap text-sm' : 'text-right text-sm'} ${strong ? 'text-lg font-semibold text-slate-900 dark:text-slate-100' : 'text-slate-700 dark:text-slate-300'}`}>{value}</p>\n    </div>\n  )\n}\n
+              <button type="button" onClick={() => setEditing(true)} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">Edit</button>
+            )}
+            {!transaction.deleted_at && canDelete && (
+              <button type="button" onClick={() => setDeleting(true)} className="rounded-xl bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700">Delete</button>
+            )}
+            {transaction.deleted_at && isOwner && (
+              <button type="button" onClick={() => void restore()} disabled={restoring} className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-60">
+                {restoring && <ButtonSpinner />}{restoring ? 'Restoring…' : 'Restore'}
+              </button>
+            )}
+          </div>
+        </div>
+
+        {error && <InlineAlert variant="error" title="Order action did not finish" actionLabel="Refresh" onAction={() => void reload()}>{error}</InlineAlert>}
+
+        {transaction.deleted_at && (
+          <InlineAlert variant="warning" title="This transaction is soft-deleted">
+            Deleted {formatDateTime(transaction.deleted_at)} by {transaction.deleted_by_profile?.full_name || 'an authorized user'}{transaction.delete_reason ? ` · Reason: ${transaction.delete_reason}` : ''}. Only the Owner can restore it.
+          </InlineAlert>
+        )}
+
+        <TransactionStatusPanel
+          transaction={transaction}
+          history={history}
+          canEdit={canEdit && !transaction.deleted_at}
+          isOwner={isOwner}
+          onRefresh={reload}
+        />
+
+        <section className="grid gap-4 lg:grid-cols-3">
+          <DetailCard title="Customer">
+            <DetailRow label="Name" value={transaction.customer_name} />
+            <DetailRow label="Phone" value={transaction.phone_number || '—'} />
+            <DetailRow label="Notes" value={transaction.notes || '—'} multiline />
+          </DetailCard>
+
+          <DetailCard title="Laundry">
+            <DetailRow label="Service" value={transaction.service_label_snapshot || transaction.service_code_snapshot || transaction.services?.label || transaction.services?.code || '—'} />
+            <DetailRow label="Weight" value={transaction.kg != null ? `${transaction.kg} kg` : '—'} />
+            <DetailRow label="Loads" value={transaction.no_of_loads != null ? String(transaction.no_of_loads) : '—'} />
+            <DetailRow label="Base Amount" value={peso(transaction.base_amount)} />
+          </DetailCard>
+
+          <DetailCard title="Pickup">
+            <DetailRow label="Pickup Date" value={transaction.pickup_date || '—'} />
+            <DetailRow label="Pickup Time" value={pickupTime || '—'} />
+            <DetailRow label="Recorded" value={formatDateTime(transaction.created_at)} />
+          </DetailCard>
+        </section>
+
+        <section className="grid gap-4 lg:grid-cols-[1.3fr_1fr]">
+          <DetailCard title="Add-ons">
+            {transaction.add_on_items?.length ? (
+              <div className="space-y-2">
+                {transaction.add_on_items.map((item, index) => (
+                  <div key={`${item.add_on_id}-${index}`} className="flex items-start justify-between gap-4 rounded-xl bg-slate-50 px-3 py-2 dark:bg-slate-950">
+                    <div>
+                      <p className="text-sm font-medium text-slate-800 dark:text-slate-200">{item.name}</p>
+                      <p className="text-xs text-slate-500">{item.quantity} × {peso(item.unit_price)} / {item.unit_type}</p>
+                    </div>
+                    <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">{peso(item.line_total)}</p>
+                  </div>
+                ))}
+                <div className="flex justify-between border-t border-slate-200 pt-2 text-sm dark:border-slate-800">
+                  <span className="text-slate-500">Add-on total</span>
+                  <span className="font-semibold">{peso(addOnTotal)}</span>
+                </div>
+              </div>
+            ) : (
+              <p className="text-sm text-slate-500 dark:text-slate-400">No add-ons on this order.</p>
+            )}
+          </DetailCard>
+
+          <DetailCard title="Payment">
+            <DetailRow label="Total" value={peso(transaction.total_amount)} strong />
+            {transaction.payment_method === 'paid' && <>
+              <DetailRow label="Cash Received" value={peso(transaction.cash_amount)} />
+              <DetailRow label="Change" value={peso(cashChange)} />
+            </>}
+            {transaction.payment_method === 'gcash' && <>
+              <DetailRow label="GCash Amount" value={peso(transaction.gcash_amount)} />
+              <DetailRow label="GCash Reference" value={transaction.gcash_reference || 'Legacy / not recorded'} />
+            </>}
+            {transaction.payment_method === 'pay_later' && <DetailRow label="Balance Due" value={peso(transaction.total_amount)} />}
+          </DetailCard>
+        </section>
+
+        {isOwner && (
+          <DetailCard title="Audit">
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <DetailRow label="Entered By" value={transaction.created_by_profile?.full_name || '—'} />
+              <DetailRow label="Created" value={formatDateTime(transaction.created_at)} />
+              <DetailRow label="Last Edited By" value={transaction.updated_by_profile?.full_name || transaction.created_by_profile?.full_name || '—'} />
+              <DetailRow label="Last Updated" value={formatDateTime(transaction.updated_at)} />
+            </div>
+          </DetailCard>
+        )}
+      </div>
+
+      {editing && (
+        <ActionErrorBoundary key={`detail-edit-${transaction.id}-${transaction.updated_at}`} onClose={() => setEditing(false)}>
+          <EditTransactionModal transaction={transaction} onClose={() => { setEditing(false); void reload() }} />
+        </ActionErrorBoundary>
+      )}
+
+      {deleting && (
+        <ActionErrorBoundary key={`detail-delete-${transaction.id}-${transaction.updated_at}`} onClose={() => setDeleting(false)}>
+          <DeleteTransactionModal transaction={transaction} onClose={() => { setDeleting(false); void reload() }} />
+        </ActionErrorBoundary>
+      )}
+    </>
+  )
+}
+
+function DetailCard({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <section className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
+      <h2 className="mb-4 font-semibold text-slate-900 dark:text-slate-100">{title}</h2>
+      <div className="space-y-3">{children}</div>
+    </section>
+  )
+}
+
+function DetailRow({ label, value, multiline = false, strong = false }: { label: string; value: string; multiline?: boolean; strong?: boolean }) {
+  return (
+    <div className={multiline ? '' : 'flex items-start justify-between gap-4'}>
+      <p className="text-xs font-medium uppercase tracking-wide text-slate-400">{label}</p>
+      <p className={`${multiline ? 'mt-1 whitespace-pre-wrap text-sm' : 'text-right text-sm'} ${strong ? 'text-lg font-semibold text-slate-900 dark:text-slate-100' : 'text-slate-700 dark:text-slate-300'}`}>{value}</p>
+    </div>
+  )
+}
+

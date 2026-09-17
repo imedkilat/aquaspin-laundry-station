@@ -1,18 +1,563 @@
-// Hand-written types matching supabase/schema.sql.\n// If you evolve the schema, run `supabase gen types typescript` instead\n// and this file becomes redundant.\n//\n// Note: Row/Insert/Update types below are all written with `type`, never\n// `interface` — supabase-js's generic inference over the Database type\n// silently collapses to `never` when a Row is declared as an `interface`\n// under this project's tsconfig (bundler resolution). Same shape Supabase's\n// own `gen types typescript` produces, and for the same reason.\n// Likewise Insert/Update are flat object literals, not\n// `Partial<Row> & {...}` intersections, which trips the same collapse.\n\nimport type { Customer, CustomerSummary, OrderStatus, TransactionStatusHistory } from './customer-status'\n\nexport type Role = 'owner' | 'staff'\nexport type PaymentMethod = 'paid' | 'gcash' | 'pay_later'\nexport type PricingType = 'per_load_by_weight' | 'per_load_manual' | 'per_item'\nexport type AddOnUnit = 'piece' | 'load' | 'sachet' | 'dose' | 'cycle' | 'kg' | 'flat'\n\nexport type Profile = {\n  id: string\n  full_name: string\n  role: Role\n  contact_phone: string | null\n  avatar_path: string | null\n  created_at: string\n}\n\nexport type ShopSettings = {
+// Hand-written types matching supabase/schema.sql.
+// If you evolve the schema, run `supabase gen types typescript` instead
+// and this file becomes redundant.
+//
+// Note: Row/Insert/Update types below are all written with `type`, never
+// `interface` — supabase-js's generic inference over the Database type
+// silently collapses to `never` when a Row is declared as an `interface`
+// under this project's tsconfig (bundler resolution). Same shape Supabase's
+// own `gen types typescript` produces, and for the same reason.
+// Likewise Insert/Update are flat object literals, not
+// `Partial<Row> & {...}` intersections, which trips the same collapse.
+
+import type { Customer, CustomerSummary, OrderStatus, TransactionStatusHistory } from './customer-status'
+
+export type Role = 'owner' | 'staff'
+export type PaymentMethod = 'paid' | 'gcash' | 'pay_later'
+export type PricingType = 'per_load_by_weight' | 'per_load_manual' | 'per_item'
+export type AddOnUnit = 'piece' | 'load' | 'sachet' | 'dose' | 'cycle' | 'kg' | 'flat'
+
+export type Profile = {
+  id: string
+  full_name: string
+  role: Role
+  contact_phone: string | null
+  avatar_path: string | null
+  created_at: string
+}
+
+export type ShopSettings = {
   id: number
   shop_display_name: string
   contact_phone: string | null
   address: string | null
   report_footer: string | null
-  logo_path: string | null\n  default_payment_method: PaymentMethod\n  default_dashboard_days: number\n  require_phone_number: boolean\n  require_pickup_date: boolean\n  require_notes_for_pay_later: boolean\n  allow_manual_total_override: boolean\n  staff_can_create_transactions: boolean\n  staff_can_access_dashboard: boolean\n  staff_can_view_full_history: boolean\n  staff_can_edit_transactions: boolean\n  staff_can_delete_transactions: boolean\n  staff_can_view_historical_pay_later: boolean\n  staff_can_edit_own_profile: boolean\n  staff_can_manage_customers: boolean\n  updated_at: string\n  updated_by: string | null\n}\n\nexport type Service = {\n  id: string\n  code: string\n  label: string\n  default_rate: number | null\n  pricing_type: PricingType\n  max_kg_per_load: number | null\n  active: boolean\n  created_at: string\n}\n\nexport type AddOn = {\n  id: string\n  name: string\n  price: number\n  unit_type: AddOnUnit\n  active: boolean\n  created_at: string\n  updated_at: string\n}\n\n\nexport type InventoryUnit = 'pcs' | 'ml' | 'L' | 'g' | 'kg'\nexport type InventoryMovementType = 'stock_in' | 'adjustment' | 'consumption' | 'wastage' | 'correction'\n\nexport type InventoryCategory = {\n  id: string\n  name: string\n  active: boolean\n  created_at: string\n  updated_at: string\n  created_by: string | null\n  updated_by: string | null\n}\n\nexport type InventoryItem = {\n  id: string\n  item_name: string\n  category_id: string | null\n  unit_label: InventoryUnit\n  reorder_threshold: number\n  average_cost: number\n  active: boolean\n  notes: string | null\n  created_at: string\n  updated_at: string\n  created_by: string | null\n  updated_by: string | null\n}\n\nexport type InventoryStockMovement = {\n  id: string\n  item_id: string\n  movement_type: InventoryMovementType\n  quantity_delta: number\n  unit_cost: number | null\n  reason: string\n  created_at: string\n  created_by: string | null\n}\n\nexport type InventoryItemSummary = {\n  id: string\n  item_name: string\n  category_id: string | null\n  category_name: string | null\n  unit_label: InventoryUnit\n  reorder_threshold: number\n  average_cost: number\n  active: boolean\n  notes: string | null\n  created_at: string\n  updated_at: string\n  current_quantity: number\n  stock_value: number\n  last_movement_at: string\n}\n\nexport type ExpenseCategory = {\n  id: string\n  name: string\n  active: boolean\n  created_at: string\n  updated_at: string\n  created_by: string | null\n  updated_by: string | null\n}\n\nexport type Expense = {\n  id: string\n  expense_date: string\n  category_id: string | null\n  description: string\n  amount: number\n  vendor: string | null\n  notes: string | null\n  created_at: string\n  created_by: string | null\n  voided_at: string | null\n  voided_by: string | null\n  void_reason: string | null\n}\n\nexport type ActiveExpense = {\n  id: string\n  expense_date: string\n  category_id: string | null\n  category_name: string | null\n  description: string\n  amount: number\n  vendor: string | null\n  notes: string | null\n  created_at: string\n  created_by: string | null\n}\n\nexport type TransactionAddOnItem = {\n  add_on_id: string\n  name: string\n  unit_type: AddOnUnit\n  unit_price: number\n  quantity: number\n  line_total: number\n}\n\nexport type Transaction = {\n  id: string\n  transaction_no: number\n  transaction_code: string\n  customer_name: string\n  customer_id: string | null\n  service_code_snapshot: string | null\n  service_label_snapshot: string | null\n  order_status: OrderStatus\n  phone_number: string | null\n  transaction_date: string // date\n  service_id: string | null\n  kg: number | null\n  no_of_loads: number | null\n  base_amount: number\n  add_ons: number\n  add_on_items: TransactionAddOnItem[]\n  total_amount: number\n  cash_amount: number\n  gcash_amount: number\n  gcash_reference: string | null\n  payment_method: PaymentMethod\n  pickup_date: string | null\n  pickup_time: string | null // time, "HH:MM:SS"\n  notes: string | null\n  created_by: string | null\n  created_at: string\n  updated_at: string\n  updated_by: string | null\n  client_request_id: string | null\n  deleted_at: string | null\n  deleted_by: string | null\n  delete_reason: string | null\n}\n\nexport type TransactionWithService = Transaction & {\n  services: Pick<Service, 'code' | 'label'> | null\n  created_by_profile: Pick<Profile, 'full_name'> | null\n  updated_by_profile: Pick<Profile, 'full_name'> | null\n  deleted_by_profile: Pick<Profile, 'full_name'> | null\n}\n\n// Minimal Database type so supabase-js typed queries work without the\n// full generated schema (fine for a project this size).\nexport type Database = {\n  public: {\n    Tables: {\n      customers: {\n        Row: Customer\n        Insert: { full_name: string; phone_number?: string | null; notes?: string | null; active?: boolean }\n        Update: { full_name?: string; phone_number?: string | null; notes?: string | null; active?: boolean }\n        Relationships: []\n      }\n      transaction_status_history: {\n        Row: TransactionStatusHistory\n        Insert: { [key: string]: never }\n        Update: { [key: string]: never }\n        Relationships: []\n      }\n      profiles: {\n        Row: Profile\n        Insert: {\n          id: string\n          full_name: string\n          role?: Role\n          contact_phone?: string | null\n          avatar_path?: string | null\n          created_at?: string\n        }\n        Update: {\n          id?: string\n          full_name?: string\n          role?: Role\n          contact_phone?: string | null\n          avatar_path?: string | null\n          created_at?: string\n        }\n        Relationships: []\n      }\n      shop_settings: {\n        Row: ShopSettings\n        Insert: {
+  logo_path: string | null
+  default_payment_method: PaymentMethod
+  default_dashboard_days: number
+  require_phone_number: boolean
+  require_pickup_date: boolean
+  require_notes_for_pay_later: boolean
+  allow_manual_total_override: boolean
+  staff_can_create_transactions: boolean
+  staff_can_access_dashboard: boolean
+  staff_can_view_full_history: boolean
+  staff_can_edit_transactions: boolean
+  staff_can_delete_transactions: boolean
+  staff_can_view_historical_pay_later: boolean
+  staff_can_edit_own_profile: boolean
+  staff_can_manage_customers: boolean
+  updated_at: string
+  updated_by: string | null
+}
+
+export type Service = {
+  id: string
+  code: string
+  label: string
+  default_rate: number | null
+  pricing_type: PricingType
+  max_kg_per_load: number | null
+  active: boolean
+  created_at: string
+}
+
+export type AddOn = {
+  id: string
+  name: string
+  price: number
+  unit_type: AddOnUnit
+  active: boolean
+  created_at: string
+  updated_at: string
+}
+
+
+export type InventoryUnit = 'pcs' | 'ml' | 'L' | 'g' | 'kg'
+export type InventoryMovementType = 'stock_in' | 'adjustment' | 'consumption' | 'wastage' | 'correction'
+
+export type InventoryCategory = {
+  id: string
+  name: string
+  active: boolean
+  created_at: string
+  updated_at: string
+  created_by: string | null
+  updated_by: string | null
+}
+
+export type InventoryItem = {
+  id: string
+  item_name: string
+  category_id: string | null
+  unit_label: InventoryUnit
+  reorder_threshold: number
+  average_cost: number
+  active: boolean
+  notes: string | null
+  created_at: string
+  updated_at: string
+  created_by: string | null
+  updated_by: string | null
+}
+
+export type InventoryStockMovement = {
+  id: string
+  item_id: string
+  movement_type: InventoryMovementType
+  quantity_delta: number
+  unit_cost: number | null
+  reason: string
+  created_at: string
+  created_by: string | null
+}
+
+export type InventoryItemSummary = {
+  id: string
+  item_name: string
+  category_id: string | null
+  category_name: string | null
+  unit_label: InventoryUnit
+  reorder_threshold: number
+  average_cost: number
+  active: boolean
+  notes: string | null
+  created_at: string
+  updated_at: string
+  current_quantity: number
+  stock_value: number
+  last_movement_at: string
+}
+
+export type ExpenseCategory = {
+  id: string
+  name: string
+  active: boolean
+  created_at: string
+  updated_at: string
+  created_by: string | null
+  updated_by: string | null
+}
+
+export type Expense = {
+  id: string
+  expense_date: string
+  category_id: string | null
+  description: string
+  amount: number
+  vendor: string | null
+  notes: string | null
+  created_at: string
+  created_by: string | null
+  voided_at: string | null
+  voided_by: string | null
+  void_reason: string | null
+}
+
+export type ActiveExpense = {
+  id: string
+  expense_date: string
+  category_id: string | null
+  category_name: string | null
+  description: string
+  amount: number
+  vendor: string | null
+  notes: string | null
+  created_at: string
+  created_by: string | null
+}
+
+export type TransactionAddOnItem = {
+  add_on_id: string
+  name: string
+  unit_type: AddOnUnit
+  unit_price: number
+  quantity: number
+  line_total: number
+}
+
+export type Transaction = {
+  id: string
+  transaction_no: number
+  transaction_code: string
+  customer_name: string
+  customer_id: string | null
+  service_code_snapshot: string | null
+  service_label_snapshot: string | null
+  order_status: OrderStatus
+  phone_number: string | null
+  transaction_date: string // date
+  service_id: string | null
+  kg: number | null
+  no_of_loads: number | null
+  base_amount: number
+  add_ons: number
+  add_on_items: TransactionAddOnItem[]
+  total_amount: number
+  cash_amount: number
+  gcash_amount: number
+  gcash_reference: string | null
+  payment_method: PaymentMethod
+  pickup_date: string | null
+  pickup_time: string | null // time, "HH:MM:SS"
+  notes: string | null
+  created_by: string | null
+  created_at: string
+  updated_at: string
+  updated_by: string | null
+  client_request_id: string | null
+  deleted_at: string | null
+  deleted_by: string | null
+  delete_reason: string | null
+}
+
+export type TransactionWithService = Transaction & {
+  services: Pick<Service, 'code' | 'label'> | null
+  created_by_profile: Pick<Profile, 'full_name'> | null
+  updated_by_profile: Pick<Profile, 'full_name'> | null
+  deleted_by_profile: Pick<Profile, 'full_name'> | null
+}
+
+// Minimal Database type so supabase-js typed queries work without the
+// full generated schema (fine for a project this size).
+export type Database = {
+  public: {
+    Tables: {
+      customers: {
+        Row: Customer
+        Insert: { full_name: string; phone_number?: string | null; notes?: string | null; active?: boolean }
+        Update: { full_name?: string; phone_number?: string | null; notes?: string | null; active?: boolean }
+        Relationships: []
+      }
+      transaction_status_history: {
+        Row: TransactionStatusHistory
+        Insert: { [key: string]: never }
+        Update: { [key: string]: never }
+        Relationships: []
+      }
+      profiles: {
+        Row: Profile
+        Insert: {
+          id: string
+          full_name: string
+          role?: Role
+          contact_phone?: string | null
+          avatar_path?: string | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          full_name?: string
+          role?: Role
+          contact_phone?: string | null
+          avatar_path?: string | null
+          created_at?: string
+        }
+        Relationships: []
+      }
+      shop_settings: {
+        Row: ShopSettings
+        Insert: {
           id?: number
           shop_display_name?: string
           contact_phone?: string | null
           address?: string | null
           report_footer?: string | null
-          logo_path?: string | null\n          default_payment_method?: PaymentMethod\n          default_dashboard_days?: number\n          require_phone_number?: boolean\n          require_pickup_date?: boolean\n          require_notes_for_pay_later?: boolean\n          allow_manual_total_override?: boolean\n          staff_can_create_transactions?: boolean\n          staff_can_access_dashboard?: boolean\n          staff_can_view_full_history?: boolean\n          staff_can_edit_transactions?: boolean\n          staff_can_delete_transactions?: boolean\n          staff_can_view_historical_pay_later?: boolean\n          staff_can_edit_own_profile?: boolean\n          staff_can_manage_customers?: boolean\n          updated_at?: string\n          updated_by?: string | null\n        }\n        Update: {
+          logo_path?: string | null
+          default_payment_method?: PaymentMethod
+          default_dashboard_days?: number
+          require_phone_number?: boolean
+          require_pickup_date?: boolean
+          require_notes_for_pay_later?: boolean
+          allow_manual_total_override?: boolean
+          staff_can_create_transactions?: boolean
+          staff_can_access_dashboard?: boolean
+          staff_can_view_full_history?: boolean
+          staff_can_edit_transactions?: boolean
+          staff_can_delete_transactions?: boolean
+          staff_can_view_historical_pay_later?: boolean
+          staff_can_edit_own_profile?: boolean
+          staff_can_manage_customers?: boolean
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
           shop_display_name?: string
           contact_phone?: string | null
           address?: string | null
           report_footer?: string | null
-          logo_path?: string | null\n          default_payment_method?: PaymentMethod\n          default_dashboard_days?: number\n          require_phone_number?: boolean\n          require_pickup_date?: boolean\n          require_notes_for_pay_later?: boolean\n          allow_manual_total_override?: boolean\n          staff_can_create_transactions?: boolean\n          staff_can_access_dashboard?: boolean\n          staff_can_view_full_history?: boolean\n          staff_can_edit_transactions?: boolean\n          staff_can_delete_transactions?: boolean\n          staff_can_view_historical_pay_later?: boolean\n          staff_can_edit_own_profile?: boolean\n          staff_can_manage_customers?: boolean\n        }\n        Relationships: []\n      }\n      services: {\n        Row: Service\n        Insert: {\n          id?: string\n          code: string\n          label: string\n          default_rate?: number | null\n          pricing_type?: PricingType\n          max_kg_per_load?: number | null\n          active?: boolean\n          created_at?: string\n        }\n        Update: {\n          id?: string\n          code?: string\n          label?: string\n          default_rate?: number | null\n          pricing_type?: PricingType\n          max_kg_per_load?: number | null\n          active?: boolean\n          created_at?: string\n        }\n        Relationships: []\n      }\n      add_ons_catalog: {\n        Row: AddOn\n        Insert: {\n          id?: string\n          name: string\n          price: number\n          unit_type?: AddOnUnit\n          active?: boolean\n          created_at?: string\n          updated_at?: string\n        }\n        Update: {\n          id?: string\n          name?: string\n          price?: number\n          unit_type?: AddOnUnit\n          active?: boolean\n          created_at?: string\n          updated_at?: string\n        }\n        Relationships: []\n      }\n      inventory_categories: {\n        Row: InventoryCategory\n        Insert: {\n          id?: string\n          name: string\n          active?: boolean\n          created_at?: string\n          updated_at?: string\n          created_by: string\n          updated_by?: string | null\n        }\n        Update: {\n          name?: string\n          active?: boolean\n          updated_at?: string\n          updated_by?: string | null\n        }\n        Relationships: []\n      }\n      inventory_items: {\n        Row: InventoryItem\n        Insert: {\n          id?: string\n          item_name: string\n          category_id?: string | null\n          unit_label: InventoryUnit\n          reorder_threshold?: number\n          average_cost?: number\n          active?: boolean\n          notes?: string | null\n          created_at?: string\n          updated_at?: string\n          created_by: string\n          updated_by?: string | null\n        }\n        Update: {\n          item_name?: string\n          category_id?: string | null\n          unit_label?: InventoryUnit\n          reorder_threshold?: number\n          average_cost?: number\n          active?: boolean\n          notes?: string | null\n          updated_at?: string\n          updated_by?: string | null\n        }\n        Relationships: []\n      }\n      inventory_stock_movements: {\n        Row: InventoryStockMovement\n        Insert: { [key: string]: never }\n        Update: { [key: string]: never }\n        Relationships: []\n      }\n\n      expense_categories: {\n        Row: ExpenseCategory\n        Insert: {\n          id?: string\n          name: string\n          active?: boolean\n          created_at?: string\n          updated_at?: string\n          created_by: string\n          updated_by?: string | null\n        }\n        Update: {\n          name?: string\n          active?: boolean\n          updated_at?: string\n          updated_by?: string | null\n        }\n        Relationships: []\n      }\n      expenses: {\n        Row: Expense\n        Insert: { [key: string]: never }\n        Update: { [key: string]: never }\n        Relationships: []\n      }\n      transactions: {\n        Row: Transaction\n        Insert: {\n          id?: string\n          transaction_no?: number\n          transaction_code?: string\n          customer_name: string\n          customer_id?: string | null\n          service_code_snapshot?: string | null\n          service_label_snapshot?: string | null\n          phone_number?: string | null\n          transaction_date?: string\n          service_id?: string | null\n          kg?: number | null\n          no_of_loads?: number | null\n          base_amount?: number\n          add_ons?: number\n          add_on_items?: TransactionAddOnItem[]\n          total_amount?: number\n          cash_amount?: number\n          gcash_amount?: number\n          gcash_reference?: string | null\n          payment_method?: PaymentMethod\n          pickup_date?: string | null\n          pickup_time?: string | null\n          notes?: string | null\n          created_by?: string | null\n          created_at?: string\n          updated_at?: string\n          updated_by?: string | null\n          client_request_id?: string | null\n          deleted_at?: string | null\n          deleted_by?: string | null\n          delete_reason?: string | null\n        }\n        Update: {\n          id?: string\n          transaction_no?: number\n          transaction_code?: string\n          customer_name?: string\n          customer_id?: string | null\n          service_code_snapshot?: string | null\n          service_label_snapshot?: string | null\n          phone_number?: string | null\n          transaction_date?: string\n          service_id?: string | null\n          kg?: number | null\n          no_of_loads?: number | null\n          base_amount?: number\n          add_ons?: number\n          add_on_items?: TransactionAddOnItem[]\n          total_amount?: number\n          cash_amount?: number\n          gcash_amount?: number\n          gcash_reference?: string | null\n          payment_method?: PaymentMethod\n          pickup_date?: string | null\n          pickup_time?: string | null\n          notes?: string | null\n          created_by?: string | null\n          created_at?: string\n          updated_at?: string\n          updated_by?: string | null\n          client_request_id?: string | null\n          deleted_at?: string | null\n          deleted_by?: string | null\n          delete_reason?: string | null\n        }\n        Relationships: []\n      }\n    }\n    Views: {\n      customer_summary: { Row: CustomerSummary; Relationships: [] }\n      customer_transaction_history: { Row: Transaction; Relationships: [] }\n      inventory_item_summary: { Row: InventoryItemSummary; Relationships: [] }\n      active_expenses: { Row: ActiveExpense; Relationships: [] }\n    }\n    Functions: {\n      record_expense: {\n        Args: {\n          p_description: string\n          p_amount: number\n          p_expense_date?: string\n          p_category_id?: string | null\n          p_vendor?: string | null\n          p_notes?: string | null\n        }\n        Returns: Expense\n      }\n      void_expense: {\n        Args: {\n          p_expense_id: string\n          p_reason: string\n        }\n        Returns: Expense\n      }\n      record_inventory_movement: {\n        Args: {\n          p_item_id: string\n          p_movement_type: InventoryMovementType\n          p_quantity_delta: number\n          p_reason: string\n          p_unit_cost?: number | null\n        }\n        Returns: InventoryStockMovement\n      }\n      normalize_customer_phone: { Args: { p_phone: string }; Returns: string | null }\n      set_transaction_status: {\n        Args: {\n          p_transaction_id: string\n          p_status: OrderStatus\n          p_expected_updated_at: string\n          p_reason?: string | null\n          p_override?: boolean\n        }\n        Returns: Transaction\n      }\n      soft_delete_transaction: {\n        Args: {\n          p_transaction_id: string\n          p_expected_updated_at: string\n          p_delete_reason: string\n        }\n        Returns: { success: boolean; transaction_id: string; updated_at: string }[]\n      }\n    }\n    Enums: { [_ in never]: never }\n    CompositeTypes: { [_ in never]: never }\n  }\n}\n
+          logo_path?: string | null
+          default_payment_method?: PaymentMethod
+          default_dashboard_days?: number
+          require_phone_number?: boolean
+          require_pickup_date?: boolean
+          require_notes_for_pay_later?: boolean
+          allow_manual_total_override?: boolean
+          staff_can_create_transactions?: boolean
+          staff_can_access_dashboard?: boolean
+          staff_can_view_full_history?: boolean
+          staff_can_edit_transactions?: boolean
+          staff_can_delete_transactions?: boolean
+          staff_can_view_historical_pay_later?: boolean
+          staff_can_edit_own_profile?: boolean
+          staff_can_manage_customers?: boolean
+        }
+        Relationships: []
+      }
+      services: {
+        Row: Service
+        Insert: {
+          id?: string
+          code: string
+          label: string
+          default_rate?: number | null
+          pricing_type?: PricingType
+          max_kg_per_load?: number | null
+          active?: boolean
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          code?: string
+          label?: string
+          default_rate?: number | null
+          pricing_type?: PricingType
+          max_kg_per_load?: number | null
+          active?: boolean
+          created_at?: string
+        }
+        Relationships: []
+      }
+      add_ons_catalog: {
+        Row: AddOn
+        Insert: {
+          id?: string
+          name: string
+          price: number
+          unit_type?: AddOnUnit
+          active?: boolean
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          name?: string
+          price?: number
+          unit_type?: AddOnUnit
+          active?: boolean
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      inventory_categories: {
+        Row: InventoryCategory
+        Insert: {
+          id?: string
+          name: string
+          active?: boolean
+          created_at?: string
+          updated_at?: string
+          created_by: string
+          updated_by?: string | null
+        }
+        Update: {
+          name?: string
+          active?: boolean
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: []
+      }
+      inventory_items: {
+        Row: InventoryItem
+        Insert: {
+          id?: string
+          item_name: string
+          category_id?: string | null
+          unit_label: InventoryUnit
+          reorder_threshold?: number
+          average_cost?: number
+          active?: boolean
+          notes?: string | null
+          created_at?: string
+          updated_at?: string
+          created_by: string
+          updated_by?: string | null
+        }
+        Update: {
+          item_name?: string
+          category_id?: string | null
+          unit_label?: InventoryUnit
+          reorder_threshold?: number
+          average_cost?: number
+          active?: boolean
+          notes?: string | null
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: []
+      }
+      inventory_stock_movements: {
+        Row: InventoryStockMovement
+        Insert: { [key: string]: never }
+        Update: { [key: string]: never }
+        Relationships: []
+      }
+
+      expense_categories: {
+        Row: ExpenseCategory
+        Insert: {
+          id?: string
+          name: string
+          active?: boolean
+          created_at?: string
+          updated_at?: string
+          created_by: string
+          updated_by?: string | null
+        }
+        Update: {
+          name?: string
+          active?: boolean
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: []
+      }
+      expenses: {
+        Row: Expense
+        Insert: { [key: string]: never }
+        Update: { [key: string]: never }
+        Relationships: []
+      }
+      transactions: {
+        Row: Transaction
+        Insert: {
+          id?: string
+          transaction_no?: number
+          transaction_code?: string
+          customer_name: string
+          customer_id?: string | null
+          service_code_snapshot?: string | null
+          service_label_snapshot?: string | null
+          phone_number?: string | null
+          transaction_date?: string
+          service_id?: string | null
+          kg?: number | null
+          no_of_loads?: number | null
+          base_amount?: number
+          add_ons?: number
+          add_on_items?: TransactionAddOnItem[]
+          total_amount?: number
+          cash_amount?: number
+          gcash_amount?: number
+          gcash_reference?: string | null
+          payment_method?: PaymentMethod
+          pickup_date?: string | null
+          pickup_time?: string | null
+          notes?: string | null
+          created_by?: string | null
+          created_at?: string
+          updated_at?: string
+          updated_by?: string | null
+          client_request_id?: string | null
+          deleted_at?: string | null
+          deleted_by?: string | null
+          delete_reason?: string | null
+        }
+        Update: {
+          id?: string
+          transaction_no?: number
+          transaction_code?: string
+          customer_name?: string
+          customer_id?: string | null
+          service_code_snapshot?: string | null
+          service_label_snapshot?: string | null
+          phone_number?: string | null
+          transaction_date?: string
+          service_id?: string | null
+          kg?: number | null
+          no_of_loads?: number | null
+          base_amount?: number
+          add_ons?: number
+          add_on_items?: TransactionAddOnItem[]
+          total_amount?: number
+          cash_amount?: number
+          gcash_amount?: number
+          gcash_reference?: string | null
+          payment_method?: PaymentMethod
+          pickup_date?: string | null
+          pickup_time?: string | null
+          notes?: string | null
+          created_by?: string | null
+          created_at?: string
+          updated_at?: string
+          updated_by?: string | null
+          client_request_id?: string | null
+          deleted_at?: string | null
+          deleted_by?: string | null
+          delete_reason?: string | null
+        }
+        Relationships: []
+      }
+    }
+    Views: {
+      customer_summary: { Row: CustomerSummary; Relationships: [] }
+      customer_transaction_history: { Row: Transaction; Relationships: [] }
+      inventory_item_summary: { Row: InventoryItemSummary; Relationships: [] }
+      active_expenses: { Row: ActiveExpense; Relationships: [] }
+    }
+    Functions: {
+      record_expense: {
+        Args: {
+          p_description: string
+          p_amount: number
+          p_expense_date?: string
+          p_category_id?: string | null
+          p_vendor?: string | null
+          p_notes?: string | null
+        }
+        Returns: Expense
+      }
+      void_expense: {
+        Args: {
+          p_expense_id: string
+          p_reason: string
+        }
+        Returns: Expense
+      }
+      record_inventory_movement: {
+        Args: {
+          p_item_id: string
+          p_movement_type: InventoryMovementType
+          p_quantity_delta: number
+          p_reason: string
+          p_unit_cost?: number | null
+        }
+        Returns: InventoryStockMovement
+      }
+      normalize_customer_phone: { Args: { p_phone: string }; Returns: string | null }
+      set_transaction_status: {
+        Args: {
+          p_transaction_id: string
+          p_status: OrderStatus
+          p_expected_updated_at: string
+          p_reason?: string | null
+          p_override?: boolean
+        }
+        Returns: Transaction
+      }
+      soft_delete_transaction: {
+        Args: {
+          p_transaction_id: string
+          p_expected_updated_at: string
+          p_delete_reason: string
+        }
+        Returns: { success: boolean; transaction_id: string; updated_at: string }[]
+      }
+    }
+    Enums: { [_ in never]: never }
+    CompositeTypes: { [_ in never]: never }
+  }
+}
+

@@ -1,10 +1,73 @@
-import { useState } from 'react'\nimport { Link } from 'react-router-dom'\nimport type { TransactionWithService } from '../types/database'\nimport { supabase } from '../lib/supabase'\nimport { useShopSettings } from '../lib/shop-settings-context'\nimport PaymentBadge from './PaymentBadge'\nimport EditTransactionModal from './EditTransactionModal'\nimport DeleteTransactionModal from './DeleteTransactionModal'
+import { useState } from 'react'
+import { Link } from 'react-router-dom'
+import type { TransactionWithService } from '../types/database'
+import { supabase } from '../lib/supabase'
+import { useShopSettings } from '../lib/shop-settings-context'
+import PaymentBadge from './PaymentBadge'
+import EditTransactionModal from './EditTransactionModal'
+import DeleteTransactionModal from './DeleteTransactionModal'
 import { ButtonSpinner, EmptyState, InlineAlert, LoadingPanel } from './UiFeedback'
 import { openTransactionReceipt } from '../lib/receipt'
 import { getShopLogoUrl } from '../lib/storage-images'
-\nconst peso = (n: number) =>\n  `₱${n.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`\n\nconst formatPickupTime = (time: string) => {\n  const [hoursStr, minutesStr] = time.split(':')\n  const hours = Number(hoursStr)\n  const minutes = Number(minutesStr)\n  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return time\n  const period = hours >= 12 ? 'PM' : 'AM'\n  const hour12 = hours % 12 === 0 ? 12 : hours % 12\n  return `${hour12}:${String(minutes).padStart(2, '0')} ${period}`\n}\n\nconst formatDateTime = (iso: string) =>\n  new Date(iso).toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' })\n\ntype TransactionTableProps = {\n  rows: TransactionWithService[]\n  loading: boolean\n  isOwner?: boolean\n  onEdit?: (transaction: TransactionWithService) => void\n  onDelete?: (transaction: TransactionWithService) => void\n}\n\nexport default function TransactionTable({ rows, loading, isOwner = false, onEdit, onDelete }: TransactionTableProps) {\n  const { settings } = useShopSettings()\n  const [editingTransaction, setEditingTransaction] = useState<TransactionWithService | null>(null)\n  const [deletingTransaction, setDeletingTransaction] = useState<TransactionWithService | null>(null)\n  const [restoringId, setRestoringId] = useState<string | null>(null)\n  const [restoreError, setRestoreError] = useState<string | null>(null)\n\n  const canEdit = isOwner || settings.staff_can_edit_transactions\n  const canDelete = isOwner || settings.staff_can_delete_transactions\n  const hasActions = true
-\n  const restore = async (id: string) => {\n    if (!isOwner) return\n    setRestoringId(id)\n    setRestoreError(null)\n    const { error } = await supabase\n      .from('transactions')\n      .update({ deleted_at: null, deleted_by: null, delete_reason: null })\n      .eq('id', id)\n    setRestoringId(null)\n\n    if (error) setRestoreError('Could not restore this transaction. Refresh the page and try again.')\n  }\n\n  const openEdit = (transaction: TransactionWithService) => {\n    if (!canEdit) return\n    if (onEdit) return onEdit(transaction)\n    setEditingTransaction(transaction)\n  }\n\n  const openDelete = (transaction: TransactionWithService) => {
-    if (!canDelete) return\n    if (onDelete) return onDelete(transaction)\n    setDeletingTransaction(transaction)
+
+const peso = (n: number) =>
+  `₱${n.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+
+const formatPickupTime = (time: string) => {
+  const [hoursStr, minutesStr] = time.split(':')
+  const hours = Number(hoursStr)
+  const minutes = Number(minutesStr)
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return time
+  const period = hours >= 12 ? 'PM' : 'AM'
+  const hour12 = hours % 12 === 0 ? 12 : hours % 12
+  return `${hour12}:${String(minutes).padStart(2, '0')} ${period}`
+}
+
+const formatDateTime = (iso: string) =>
+  new Date(iso).toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' })
+
+type TransactionTableProps = {
+  rows: TransactionWithService[]
+  loading: boolean
+  isOwner?: boolean
+  onEdit?: (transaction: TransactionWithService) => void
+  onDelete?: (transaction: TransactionWithService) => void
+}
+
+export default function TransactionTable({ rows, loading, isOwner = false, onEdit, onDelete }: TransactionTableProps) {
+  const { settings } = useShopSettings()
+  const [editingTransaction, setEditingTransaction] = useState<TransactionWithService | null>(null)
+  const [deletingTransaction, setDeletingTransaction] = useState<TransactionWithService | null>(null)
+  const [restoringId, setRestoringId] = useState<string | null>(null)
+  const [restoreError, setRestoreError] = useState<string | null>(null)
+
+  const canEdit = isOwner || settings.staff_can_edit_transactions
+  const canDelete = isOwner || settings.staff_can_delete_transactions
+  const hasActions = true
+
+  const restore = async (id: string) => {
+    if (!isOwner) return
+    setRestoringId(id)
+    setRestoreError(null)
+    const { error } = await supabase
+      .from('transactions')
+      .update({ deleted_at: null, deleted_by: null, delete_reason: null })
+      .eq('id', id)
+    setRestoringId(null)
+
+    if (error) setRestoreError('Could not restore this transaction. Refresh the page and try again.')
+  }
+
+  const openEdit = (transaction: TransactionWithService) => {
+    if (!canEdit) return
+    if (onEdit) return onEdit(transaction)
+    setEditingTransaction(transaction)
+  }
+
+  const openDelete = (transaction: TransactionWithService) => {
+    if (!canDelete) return
+    if (onDelete) return onDelete(transaction)
+    setDeletingTransaction(transaction)
   }
 
   const printReceipt = (transaction: TransactionWithService) => {
@@ -21,7 +84,50 @@ import { getShopLogoUrl } from '../lib/storage-images'
       setRestoreError('Could not open the receipt preview. Allow popups for Aquaspin, then try again.')
     }
   }
-\n  if (loading) {\n    return <LoadingPanel label="Loading transactions…" slowLabel="Still loading transactions… the internet connection may be slow." />\n  }\n\n  if (rows.length === 0) {\n    return <EmptyState title="No transactions to show" description="New transactions matching this view will appear here automatically." />\n  }\n\n  return (\n    <>\n      {restoreError && (\n        <div className="mb-3">\n          <InlineAlert variant="error" title="Restore did not finish">{restoreError}</InlineAlert>\n        </div>\n      )}\n\n      <div className="overflow-x-auto">\n        <table className="w-full text-sm">\n          <thead>\n            <tr className="text-left text-xs text-slate-500 border-b border-slate-200 dark:border-slate-800">\n              <th className="py-2 pr-3 font-medium">Transaction ID</th><th className="py-2 pr-3 font-medium">Date</th><th className="py-2 pr-3 font-medium">Customer</th><th className="py-2 pr-3 font-medium">Phone</th><th className="py-2 pr-3 font-medium">Service</th><th className="py-2 pr-3 font-medium">Kg</th><th className="py-2 pr-3 font-medium">Loads</th><th className="py-2 pr-3 font-medium">Total</th><th className="py-2 pr-3 font-medium">Payment</th><th className="py-2 pr-3 font-medium">Pickup</th>{isOwner && <th className="py-2 pr-3 font-medium">Entered By</th>}{hasActions && <th className="py-2 pr-3 font-medium">Actions</th>}\n            </tr>\n          </thead>\n          <tbody>\n            {rows.map((r) => {\n              const isDeleted = Boolean(r.deleted_at)\n              return (\n                <tr key={r.id} className={`border-b border-slate-100 last:border-0 dark:border-slate-800 ${isDeleted ? 'bg-red-50/40 dark:bg-red-950/10' : 'hover:bg-slate-50 dark:hover:bg-slate-800/60'}`}>\n                  <td className="py-2 pr-3 font-medium whitespace-nowrap">\n                    <Link to={`/orders/${r.id}`} className="text-sky-600 hover:text-sky-700 hover:underline dark:text-sky-400 dark:hover:text-sky-300">\n                      {r.transaction_code || `#${String(r.transaction_no).padStart(4, '0')}`}\n                    </Link>\n                  </td>\n                  <td className="py-2 pr-3">{r.transaction_date}</td>\n                  <td className="py-2 pr-3 font-medium text-slate-900 dark:text-slate-100">\n                    <span className={isDeleted ? 'line-through text-slate-400 dark:text-slate-500' : ''}>{r.customer_name}</span>\n                    {isDeleted && <p className="mt-1 text-[11px] font-normal text-red-600 dark:text-red-400 whitespace-normal max-w-xs">Deleted by {r.deleted_by_profile?.full_name ?? 'someone'}{r.deleted_at && ` · ${formatDateTime(r.deleted_at)}`}{r.delete_reason && ` · "${r.delete_reason}"`}</p>}\n                  </td>\n                  <td className="py-2 pr-3 text-slate-500">{r.phone_number || '—'}</td><td className="py-2 pr-3">{r.service_code_snapshot || r.services?.code || '—'}</td><td className="py-2 pr-3">{r.kg ?? '—'}</td><td className="py-2 pr-3">{r.no_of_loads ?? '—'}</td><td className="py-2 pr-3 font-medium">{peso(r.total_amount)}</td>\n                  <td className="py-2 pr-3"><PaymentBadge method={r.payment_method} />{r.payment_method === 'gcash' && <p className="mt-1 text-[11px] text-slate-500 whitespace-nowrap">Ref: {r.gcash_reference || 'Legacy / not recorded'}</p>}</td>\n                  <td className="py-2 pr-3 text-slate-500 whitespace-nowrap">{r.pickup_date ? <>{r.pickup_date}{r.pickup_time && <span className="text-slate-400"> · {formatPickupTime(r.pickup_time)}</span>}</> : '—'}</td>\n                  {isOwner && <td className="py-2 pr-3 text-slate-500 whitespace-nowrap">{r.created_by_profile?.full_name ?? '—'}{r.updated_by_profile?.full_name && r.updated_by_profile.full_name !== r.created_by_profile?.full_name && <p className="mt-0.5 text-[11px] text-slate-400">Edited by {r.updated_by_profile.full_name}</p>}</td>}\n                  {hasActions && (
+
+  if (loading) {
+    return <LoadingPanel label="Loading transactions…" slowLabel="Still loading transactions… the internet connection may be slow." />
+  }
+
+  if (rows.length === 0) {
+    return <EmptyState title="No transactions to show" description="New transactions matching this view will appear here automatically." />
+  }
+
+  return (
+    <>
+      {restoreError && (
+        <div className="mb-3">
+          <InlineAlert variant="error" title="Restore did not finish">{restoreError}</InlineAlert>
+        </div>
+      )}
+
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-left text-xs text-slate-500 border-b border-slate-200 dark:border-slate-800">
+              <th className="py-2 pr-3 font-medium">Transaction ID</th><th className="py-2 pr-3 font-medium">Date</th><th className="py-2 pr-3 font-medium">Customer</th><th className="py-2 pr-3 font-medium">Phone</th><th className="py-2 pr-3 font-medium">Service</th><th className="py-2 pr-3 font-medium">Kg</th><th className="py-2 pr-3 font-medium">Loads</th><th className="py-2 pr-3 font-medium">Total</th><th className="py-2 pr-3 font-medium">Payment</th><th className="py-2 pr-3 font-medium">Pickup</th>{isOwner && <th className="py-2 pr-3 font-medium">Entered By</th>}{hasActions && <th className="py-2 pr-3 font-medium">Actions</th>}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => {
+              const isDeleted = Boolean(r.deleted_at)
+              return (
+                <tr key={r.id} className={`border-b border-slate-100 last:border-0 dark:border-slate-800 ${isDeleted ? 'bg-red-50/40 dark:bg-red-950/10' : 'hover:bg-slate-50 dark:hover:bg-slate-800/60'}`}>
+                  <td className="py-2 pr-3 font-medium whitespace-nowrap">
+                    <Link to={`/orders/${r.id}`} className="text-sky-600 hover:text-sky-700 hover:underline dark:text-sky-400 dark:hover:text-sky-300">
+                      {r.transaction_code || `#${String(r.transaction_no).padStart(4, '0')}`}
+                    </Link>
+                  </td>
+                  <td className="py-2 pr-3">{r.transaction_date}</td>
+                  <td className="py-2 pr-3 font-medium text-slate-900 dark:text-slate-100">
+                    <span className={isDeleted ? 'line-through text-slate-400 dark:text-slate-500' : ''}>{r.customer_name}</span>
+                    {isDeleted && <p className="mt-1 text-[11px] font-normal text-red-600 dark:text-red-400 whitespace-normal max-w-xs">Deleted by {r.deleted_by_profile?.full_name ?? 'someone'}{r.deleted_at && ` · ${formatDateTime(r.deleted_at)}`}{r.delete_reason && ` · "${r.delete_reason}"`}</p>}
+                  </td>
+                  <td className="py-2 pr-3 text-slate-500">{r.phone_number || '—'}</td><td className="py-2 pr-3">{r.service_code_snapshot || r.services?.code || '—'}</td><td className="py-2 pr-3">{r.kg ?? '—'}</td><td className="py-2 pr-3">{r.no_of_loads ?? '—'}</td><td className="py-2 pr-3 font-medium">{peso(r.total_amount)}</td>
+                  <td className="py-2 pr-3"><PaymentBadge method={r.payment_method} />{r.payment_method === 'gcash' && <p className="mt-1 text-[11px] text-slate-500 whitespace-nowrap">Ref: {r.gcash_reference || 'Legacy / not recorded'}</p>}</td>
+                  <td className="py-2 pr-3 text-slate-500 whitespace-nowrap">{r.pickup_date ? <>{r.pickup_date}{r.pickup_time && <span className="text-slate-400"> · {formatPickupTime(r.pickup_time)}</span>}</> : '—'}</td>
+                  {isOwner && <td className="py-2 pr-3 text-slate-500 whitespace-nowrap">{r.created_by_profile?.full_name ?? '—'}{r.updated_by_profile?.full_name && r.updated_by_profile.full_name !== r.created_by_profile?.full_name && <p className="mt-0.5 text-[11px] text-slate-400">Edited by {r.updated_by_profile.full_name}</p>}</td>}
+                  {hasActions && (
                     <td className="py-2 pr-3 whitespace-nowrap">
                       <div className="flex items-center gap-3">
                         <button type="button" onClick={(event) => { event.preventDefault(); event.stopPropagation(); printReceipt(r) }} className="text-slate-600 hover:text-slate-800 text-xs font-medium dark:text-slate-300 dark:hover:text-slate-100">Print Receipt</button>
@@ -35,4 +141,17 @@ import { getShopLogoUrl } from '../lib/storage-images'
                       )}
                       </div>
                     </td>
-                  )}\n                </tr>\n              )\n            })}\n          </tbody>\n        </table>\n      </div>\n\n      {!onEdit && editingTransaction && canEdit && <EditTransactionModal transaction={editingTransaction} onClose={() => setEditingTransaction(null)} />}\n      {!onDelete && deletingTransaction && canDelete && <DeleteTransactionModal transaction={deletingTransaction} onClose={() => setDeletingTransaction(null)} />}\n    </>\n  )\n}\n
+                  )}
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      {!onEdit && editingTransaction && canEdit && <EditTransactionModal transaction={editingTransaction} onClose={() => setEditingTransaction(null)} />}
+      {!onDelete && deletingTransaction && canDelete && <DeleteTransactionModal transaction={deletingTransaction} onClose={() => setDeletingTransaction(null)} />}
+    </>
+  )
+}
+
