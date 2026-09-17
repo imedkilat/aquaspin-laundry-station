@@ -274,8 +274,6 @@ function InventoryItemRow({ item, summary, categories, onSaved }: { item: Invent
   const recordMovement = async () => {
     const nextQuantity = Number(quantity)
     const nextUnitCost = unitCost.trim() ? Number(unitCost) : null
-    const movement = MOVEMENT_TYPES.find((option) => option.value === movementType)
-
     if (!Number.isFinite(nextQuantity) || nextQuantity === 0) return setNotice({ type: 'error', text: 'Quantity must be a non-zero number.' })
     if (nextUnitCost != null && (!Number.isFinite(nextUnitCost) || nextUnitCost < 0)) return setNotice({ type: 'error', text: 'Unit cost must be zero or greater.' })
     if (!reason.trim()) return setNotice({ type: 'error', text: 'A movement reason is required.' })
