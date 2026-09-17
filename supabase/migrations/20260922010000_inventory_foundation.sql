@@ -194,6 +194,7 @@ as $$
 declare
   result public.inventory_stock_movements;
   current_quantity numeric(12,3);
+  locked_item_id uuid;
 begin
   if auth.uid() is null or not private.is_owner() then
     raise exception 'Only an owner can record inventory movements' using errcode = '42501';
@@ -219,7 +220,15 @@ begin
     raise exception 'Consumption and wastage quantities must be negative';
   end if;
 
-  if not exists (select 1 from public.inventory_items where id = p_item_id) then
+  -- Serialize movements for this item before checking the ledger-derived balance.
+  -- This prevents concurrent consumption/wastage calls from both passing a stale check.
+  select id
+    into locked_item_id
+  from public.inventory_items
+  where id = p_item_id
+  for update;
+
+  if not found then
     raise exception 'Inventory item not found';
   end if;
 
