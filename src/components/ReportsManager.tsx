@@ -160,7 +160,6 @@ export default function ReportsManager() {
       </div>
 
       {error && <InlineAlert variant="error" title="Reports could not be refreshed" actionLabel="Try again" onAction={() => void load()}>{error} Existing loaded values remain visible.</InlineAlert>}
-      {notice && <InlineAlert variant={notice.type}>{notice.text}</InlineAlert>}
 
       <section className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
         <div className="flex flex-wrap items-end gap-3">
