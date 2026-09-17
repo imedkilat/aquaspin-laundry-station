@@ -51,6 +51,42 @@ export type ShopSettings = {
   updated_by: string | null
 }
 
+export type LoyaltySettings = {
+  id: number
+  points_per_kg: number
+  points_required_for_reward: number
+  reward_description: string
+  updated_at: string
+  updated_by: string | null
+}
+
+export type LoyaltyPointEvent = {
+  id: string
+  customer_id: string
+  transaction_id: string
+  kg: number
+  points_earned: number
+  created_at: string
+}
+
+export type LoyaltyRedemption = {
+  id: string
+  customer_id: string
+  points_spent: number
+  reward_description: string
+  redeemed_at: string
+  redeemed_by: string
+  notes: string | null
+}
+
+export type CustomerLoyaltyBalance = {
+  customer_id: string
+  customer_code: string
+  full_name: string
+  active: boolean
+  points_balance: number
+}
+
 export type Service = {
   id: string
   code: string
@@ -304,6 +340,37 @@ export type Database = {
         }
         Relationships: []
       }
+      loyalty_settings: {
+        Row: LoyaltySettings
+        Insert: {
+          id?: number
+          points_per_kg?: number
+          points_required_for_reward?: number
+          reward_description?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          points_per_kg?: number
+          points_required_for_reward?: number
+          reward_description?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: []
+      }
+      loyalty_point_events: {
+        Row: LoyaltyPointEvent
+        Insert: { [key: string]: never }
+        Update: { [key: string]: never }
+        Relationships: []
+      }
+      loyalty_redemptions: {
+        Row: LoyaltyRedemption
+        Insert: { [key: string]: never }
+        Update: { [key: string]: never }
+        Relationships: []
+      }
       services: {
         Row: Service
         Insert: {
@@ -503,6 +570,7 @@ export type Database = {
     }
     Views: {
       customer_summary: { Row: CustomerSummary; Relationships: [] }
+      customer_loyalty_balance: { Row: CustomerLoyaltyBalance; Relationships: [] }
       customer_transaction_history: { Row: Transaction; Relationships: [] }
       inventory_item_summary: { Row: InventoryItemSummary; Relationships: [] }
       active_expenses: { Row: ActiveExpense; Relationships: [] }
@@ -554,6 +622,10 @@ export type Database = {
           p_delete_reason: string
         }
         Returns: { success: boolean; transaction_id: string; updated_at: string }[]
+      }
+      redeem_loyalty_reward: {
+        Args: { p_customer_id: string; p_notes?: string | null }
+        Returns: LoyaltyRedemption
       }
     }
     Enums: { [_ in never]: never }

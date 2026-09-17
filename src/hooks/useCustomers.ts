@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useState } from 'react'
 import { makeRealtimeTopic } from '../lib/realtime'
 import { supabase } from '../lib/supabase'
-import type { TransactionWithService } from '../types/database'
+import type { CustomerLoyaltyBalance, TransactionWithService } from '../types/database'
 import type { Customer, CustomerSummary } from '../types/customer-status'
 
-export type CustomerListRow = Customer & CustomerSummary
+export type CustomerListRow = Customer & CustomerSummary & { points_balance: number | null }
 
 const TRANSACTION_SELECT = `*, services ( code, label )`
 
@@ -18,9 +18,10 @@ export function useCustomers() {
     setLoading(true)
     setError(null)
 
-    const [customersResult, summaryResult] = await Promise.all([
+    const [customersResult, summaryResult, loyaltyResult] = await Promise.all([
       supabase.from('customers').select('*').order('active', { ascending: false }).order('full_name'),
       supabase.from('customer_summary').select('*'),
+      supabase.from('customer_loyalty_balance').select('*'),
     ])
 
     if (customersResult.error) {
@@ -39,12 +40,14 @@ export function useCustomers() {
         total_collected: 0,
         outstanding_balance: 0,
         last_visit: null,
+        points_balance: null,
       })))
       setLoading(false)
       return
     }
 
     const summaries = new Map((summaryResult.data as CustomerSummary[]).map((summary) => [summary.customer_id, summary]))
+    const loyaltyBalances = new Map(((loyaltyResult.data as CustomerLoyaltyBalance[] | null) ?? []).map((balance) => [balance.customer_id, balance.points_balance]))
     setRows(((customersResult.data as Customer[]) ?? []).map((customer) => ({
       ...customer,
       ...(summaries.get(customer.id) ?? {
@@ -56,6 +59,7 @@ export function useCustomers() {
         outstanding_balance: 0,
         last_visit: null,
       }),
+      points_balance: loyaltyResult.error ? null : (loyaltyBalances.get(customer.id) ?? 0),
     })))
     setLoading(false)
   }, [])
@@ -91,6 +95,7 @@ export function useCustomers() {
 export function useCustomerDetail(id: string | undefined) {
   const [customer, setCustomer] = useState<Customer | null>(null)
   const [summary, setSummary] = useState<CustomerSummary | null>(null)
+  const [loyaltyBalance, setLoyaltyBalance] = useState<CustomerLoyaltyBalance | null>(null)
   const [transactions, setTransactions] = useState<TransactionWithService[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -100,10 +105,11 @@ export function useCustomerDetail(id: string | undefined) {
     setLoading(true)
     setError(null)
 
-    const [customerResult, summaryResult, transactionsResult] = await Promise.all([
+    const [customerResult, summaryResult, transactionsResult, loyaltyResult] = await Promise.all([
       supabase.from('customers').select('*').eq('id', id).maybeSingle(),
       supabase.from('customer_summary').select('*').eq('customer_id', id).maybeSingle(),
       supabase.from('customer_transaction_history').select(TRANSACTION_SELECT).eq('customer_id', id).order('transaction_date', { ascending: false }).order('created_at', { ascending: false }),
+      supabase.from('customer_loyalty_balance').select('*').eq('customer_id', id).maybeSingle(),
     ])
 
     if (customerResult.error || transactionsResult.error) {
@@ -113,6 +119,7 @@ export function useCustomerDetail(id: string | undefined) {
     }
     setCustomer((customerResult.data as Customer | null) ?? null)
     setSummary((summaryResult.data as CustomerSummary | null) ?? null)
+    setLoyaltyBalance(loyaltyResult.error ? null : ((loyaltyResult.data as CustomerLoyaltyBalance | null) ?? null))
     setTransactions((transactionsResult.data as unknown as TransactionWithService[]) ?? [])
     if (summaryResult.error) setError('Customer loaded, but the financial summary could not be refreshed.')
     setLoading(false)
@@ -141,5 +148,6 @@ export function useCustomerDetail(id: string | undefined) {
     }
   }, [id, reload])
 
-  return { customer, summary, transactions, loading, error, reload }
+  return { customer, summary, loyaltyBalance, transactions, loading, error, reload }
 }
+
