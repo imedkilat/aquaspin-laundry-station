@@ -8,6 +8,7 @@ import AddOnsManager from '../components/AddOnsManager'
 import OwnerSettingsManager from '../components/OwnerSettingsManager'
 import InventoryManager from '../components/InventoryManager'
 import ExpensesManager from '../components/ExpensesManager'
+import ReportsManager from '../components/ReportsManager'
 import { ButtonSpinner, InlineAlert, LoadingPanel } from '../components/UiFeedback'
 import type { PaymentMethod } from '../types/database'
 import { shopDate, shopDateDaysAgo } from '../lib/date'
@@ -20,7 +21,7 @@ import { openTransactionPdfReport } from '../lib/pdf-report'
 const peso = (n: number) =>
   `₱${n.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 
-type Tab = 'overview' | 'staff' | 'pricing' | 'addons' | 'inventory' | 'expenses' | 'settings'
+type Tab = 'overview' | 'staff' | 'pricing' | 'addons' | 'inventory' | 'expenses' | 'reports' | 'settings'
 
 export default function OwnerDashboard() {
   const { profile } = useAuth()
@@ -199,6 +200,7 @@ export default function OwnerDashboard() {
             <button onClick={() => setTab('addons')} className={tabClass(tab === 'addons')}>Add-ons</button>
             <button onClick={() => setTab('inventory')} className={tabClass(tab === 'inventory')}>Inventory</button>
             <button onClick={() => setTab('expenses')} className={tabClass(tab === 'expenses')}>Expenses</button>
+            <button onClick={() => setTab('reports')} className={tabClass(tab === 'reports')}>Reports</button>
             <button onClick={() => setTab('settings')} className={tabClass(tab === 'settings')}>Settings</button>
           </>
         )}
@@ -314,6 +316,7 @@ export default function OwnerDashboard() {
       {isOwner && tab === 'addons' && <AddOnsManager />}
       {isOwner && tab === 'inventory' && <InventoryManager />}
       {isOwner && tab === 'expenses' && <ExpensesManager />}
+      {isOwner && tab === 'reports' && <ReportsManager />}
       {isOwner && tab === 'settings' && <OwnerSettingsManager />}
     </div>
   )
