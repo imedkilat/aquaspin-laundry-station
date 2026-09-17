@@ -25,7 +25,6 @@ export default function Layout({ children }: { children: ReactNode }) {
     { to: '/', label: 'Home', icon: '⌂', end: true },
     { to: '/new', label: 'New Order', icon: '＋' },
     { to: '/orders', label: 'Orders', icon: '☷' },
-    { to: '/customers', label: 'Customers', icon: '◎' },
     ...(canOpenDashboard ? [{ to: '/dashboard', label: isOwner ? 'Dashboard' : 'Reports', icon: '▦' }] : []),
   ]
 

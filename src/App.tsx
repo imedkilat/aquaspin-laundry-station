@@ -9,8 +9,6 @@ import OrdersPage from './pages/OrdersPage'
 import TransactionDetailPage from './pages/TransactionDetailPage'
 import OwnerDashboard from './pages/OwnerDashboard'
 import ProfilePage from './pages/ProfilePage'
-import CustomersPage from './pages/CustomersPage'
-import CustomerDetailPage from './pages/CustomerDetailPage'
 import Layout from './components/Layout'
 import GlobalErrorBoundary from './components/GlobalErrorBoundary'
 import { InlineAlert, LoadingPanel } from './components/UiFeedback'
@@ -44,8 +42,6 @@ function AppRoutes() {
       <Route path="/new" element={<Gate><NewOrderPage /></Gate>} />
       <Route path="/orders" element={<Gate><OrdersPage /></Gate>} />
       <Route path="/orders/:id" element={<Gate><TransactionDetailPage /></Gate>} />
-      <Route path="/customers" element={<Gate><CustomersPage /></Gate>} />
-      <Route path="/customers/:id" element={<Gate><CustomerDetailPage /></Gate>} />
       <Route path="/dashboard" element={<Gate><OwnerDashboard /></Gate>} />
       <Route path="/profile" element={<Gate><ProfilePage /></Gate>} />
       <Route path="/add" element={<Navigate to="/new" replace />} />
