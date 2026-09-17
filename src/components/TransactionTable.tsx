@@ -130,11 +130,11 @@ export default function TransactionTable({ rows, loading, isOwner = false, onEdi
                   {hasActions && (
                     <td className="py-2 pr-3 whitespace-nowrap">
                       <div className="flex items-center gap-3">
-                        <button type="button" onClick={(event) => { event.preventDefault(); event.stopPropagation(); printReceipt(r) }} className="text-slate-600 hover:text-slate-800 text-xs font-medium dark:text-slate-300 dark:hover:text-slate-100">Print Receipt</button>
                       {isDeleted ? (
                         isOwner ? <button type="button" onClick={(event) => { event.preventDefault(); event.stopPropagation(); void restore(r.id) }} disabled={restoringId === r.id} className="inline-flex items-center gap-1.5 text-emerald-600 hover:text-emerald-700 text-xs font-medium disabled:opacity-50">{restoringId === r.id && <ButtonSpinner />}{restoringId === r.id ? 'Restoring…' : '↺ Restore'}</button> : <span className="text-xs text-slate-400">Owner only</span>
                       ) : (
                         <>
+                          <button type="button" onClick={(event) => { event.preventDefault(); event.stopPropagation(); printReceipt(r) }} className="text-slate-600 hover:text-slate-800 text-xs font-medium dark:text-slate-300 dark:hover:text-slate-100">Print Receipt</button>
                           {canEdit && <button type="button" onClick={(event) => { event.preventDefault(); event.stopPropagation(); openEdit(r) }} className="text-sky-600 hover:text-sky-700 text-xs font-medium">Edit</button>}
                           {canDelete && <button type="button" onClick={(event) => { event.preventDefault(); event.stopPropagation(); openDelete(r) }} className="text-red-600 hover:text-red-700 text-xs font-medium">Delete</button>}
                         </>
