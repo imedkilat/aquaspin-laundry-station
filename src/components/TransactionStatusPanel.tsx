@@ -94,9 +94,9 @@ export default function TransactionStatusPanel({
 
   const submitSelected = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    const targetStatus = currentStatus === 'on_hold'
-      ? selectedStatus
-      : reasonAction === 'hold' ? 'on_hold' : 'cancelled'
+    const targetStatus = reasonAction === 'cancel'
+      ? 'cancelled'
+      : reasonAction === 'hold' ? 'on_hold' : selectedStatus
     await changeStatus(targetStatus, override, reason)
   }
 
@@ -152,8 +152,9 @@ export default function TransactionStatusPanel({
             <div>
               <label htmlFor="status-action" className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Status action</label>
               <select id="status-action" value={selectedStatus} onChange={(event) => setSelectedStatus(event.target.value as OrderStatus)} className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900">
-                {currentStatus === 'on_hold' && STATUS_ORDER.slice(0, -1).map((status) => <option key={status} value={status}>Resume to {STATUS_LABELS[status]}</option>)}
-                {currentStatus !== 'on_hold' && <option value={reasonAction === 'hold' ? 'on_hold' : 'cancelled'}>{reasonAction === 'hold' ? 'Put on Hold' : 'Cancel Order'}</option>}
+                {reasonAction === 'cancel' && <option value="cancelled">Cancel Order</option>}
+                {reasonAction !== 'cancel' && currentStatus === 'on_hold' && STATUS_ORDER.slice(0, -1).map((status) => <option key={status} value={status}>Resume to {STATUS_LABELS[status]}</option>)}
+                {reasonAction !== 'cancel' && currentStatus !== 'on_hold' && <option value="on_hold">Put on Hold</option>}
               </select>
             </div>
             <div>
