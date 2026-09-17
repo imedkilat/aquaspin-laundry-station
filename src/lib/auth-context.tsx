@@ -17,6 +17,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null)
   const [profile, setProfile] = useState<Profile | null>(null)
   const [loading, setLoading] = useState(true)
+  const userId = session?.user.id ?? null
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
@@ -36,7 +37,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const refreshProfile = useCallback(async () => {
-    if (!session) {
+    if (!userId) {
       setProfile(null)
       setLoading(false)
       return
@@ -45,7 +46,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const { data, error } = await supabase
       .from('profiles')
       .select('*')
-      .eq('id', session.user.id)
+      .eq('id', userId)
       .single()
 
     if (error) {
@@ -55,17 +56,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     setProfile(data ?? null)
-  }, [session])
+  }, [userId])
 
   useEffect(() => {
-    if (!session) return
+    if (!userId) return
     let cancelled = false
     setLoading(true)
 
     supabase
       .from('profiles')
       .select('*')
-      .eq('id', session.user.id)
+      .eq('id', userId)
       .single()
       .then(({ data, error }) => {
         if (cancelled) return
@@ -80,7 +81,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true
     }
-  }, [session])
+  }, [userId])
 
   const signOut = async () => {
     await supabase.auth.signOut()
