@@ -13,8 +13,9 @@ export default function HomePage() {
   const { profile } = useAuth()
   const today = useShopDate()
   const isOwner = profile?.role === 'owner'
+  const monthStart = `${today.slice(0, 8)}01`
   const { rows, loading, error, realtimeState, reload } = useTransactions({
-    dateFrom: today,
+    dateFrom: isOwner ? monthStart : today,
     dateTo: today,
     limit: 500,
     fetchAll: true,
@@ -22,16 +23,18 @@ export default function HomePage() {
 
   const stats = useMemo(() => {
     const activeRows = rows.filter((row) => !row.deleted_at)
+    const todayRows = activeRows.filter((row) => row.transaction_date === today)
     return {
-      sales: activeRows.reduce((sum, row) => sum + (row.total_amount || 0), 0),
-      kg: activeRows.reduce((sum, row) => sum + (row.kg || 0), 0),
-      orders: activeRows.length,
-      receivables: activeRows
+      sales: todayRows.reduce((sum, row) => sum + (row.total_amount || 0), 0),
+      monthlySales: activeRows.reduce((sum, row) => sum + (row.total_amount || 0), 0),
+      kg: todayRows.reduce((sum, row) => sum + (row.kg || 0), 0),
+      orders: todayRows.length,
+      receivables: todayRows
         .filter((row) => row.payment_method === 'pay_later')
         .reduce((sum, row) => sum + (row.total_amount || 0), 0),
-      recent: activeRows.slice(0, 5),
+      recent: todayRows.slice(0, 5),
     }
-  }, [rows])
+  }, [rows, today])
 
   if (loading && rows.length === 0) {
     return <LoadingPanel label="Opening today's shop view…" slowLabel="Still loading today's laundry activity…" />
@@ -65,8 +68,9 @@ export default function HomePage() {
         )}
       </div>
 
-      <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <section className="grid grid-cols-2 gap-3 lg:grid-cols-4 xl:grid-cols-5">
         <MetricCard label="Today's Sales" value={peso(stats.sales)} hint={`${stats.orders} orders`} />
+        {isOwner && <MetricCard label="Monthly Sales" value={peso(stats.monthlySales)} hint={`Since ${monthStart}`} />}
         <MetricCard label="Laundry Weight" value={`${stats.kg.toFixed(stats.kg % 1 === 0 ? 0 : 1)} kg`} hint="Processed today" />
         <MetricCard label="Orders" value={String(stats.orders)} hint="Active transactions" />
         <MetricCard label="Pay Later" value={peso(stats.receivables)} hint="Today's receivables" tone={stats.receivables > 0 ? 'warning' : 'default'} />
@@ -142,3 +146,4 @@ function QuickAction({ to, title, description, icon }: { to: string; title: stri
     </Link>
   )
 }
+
