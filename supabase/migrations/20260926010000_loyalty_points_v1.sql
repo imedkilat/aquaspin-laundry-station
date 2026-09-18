@@ -128,6 +128,7 @@ as $$
 $$;
 
 revoke all on function private.calculate_loyalty_balance(uuid) from public, anon, authenticated;
+grant execute on function private.calculate_loyalty_balance(uuid) to authenticated;
 
 create or replace view public.customer_loyalty_balance
 with (security_invoker = true)
