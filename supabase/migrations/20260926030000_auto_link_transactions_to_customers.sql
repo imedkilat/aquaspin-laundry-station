@@ -10,26 +10,26 @@ security definer
 set search_path = ''
 as $$
 declare
-  normalized_phone text;
-  matched_customer_id uuid;
+  v_normalized_phone text;
+  v_matched_customer_id uuid;
 begin
   if new.customer_id is not null then
     return new;
   end if;
 
-  normalized_phone := public.normalize_customer_phone(new.phone_number);
+  v_normalized_phone := public.normalize_customer_phone(new.phone_number);
 
-  if normalized_phone is not null then
+  if v_normalized_phone is not null then
     select c.id
-      into matched_customer_id
+      into v_matched_customer_id
     from public.customers c
-    where c.normalized_phone = normalized_phone
+    where c.normalized_phone = v_normalized_phone
       and c.active
     order by c.created_at, c.id
     limit 1;
 
-    if matched_customer_id is not null then
-      new.customer_id := matched_customer_id;
+    if v_matched_customer_id is not null then
+      new.customer_id := v_matched_customer_id;
       return new;
     end if;
   end if;
