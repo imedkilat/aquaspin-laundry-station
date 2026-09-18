@@ -14,6 +14,7 @@ import type { Customer, CustomerSummary, OrderStatus, TransactionStatusHistory }
 
 export type Role = 'owner' | 'staff'
 export type PaymentMethod = 'paid' | 'gcash' | 'pay_later'
+export type InventoryUsageSource = 'inventory' | 'customer_supplied'
 export type PricingType = 'per_load_by_weight' | 'per_load_manual' | 'per_item'
 export type AddOnUnit = 'piece' | 'load' | 'sachet' | 'dose' | 'cycle' | 'kg' | 'flat'
 
@@ -224,6 +225,14 @@ export type Transaction = {
   phone_number: string | null
   transaction_date: string // date
   service_id: string | null
+  detergent_source: InventoryUsageSource | null
+  detergent_item_id: string | null
+  detergent_quantity: number | null
+  detergent_other_reason: string | null
+  fabric_conditioner_source: InventoryUsageSource | null
+  fabric_conditioner_item_id: string | null
+  fabric_conditioner_quantity: number | null
+  fabric_conditioner_other_reason: string | null
   kg: number | null
   no_of_loads: number | null
   base_amount: number
@@ -510,6 +519,14 @@ export type Database = {
           phone_number?: string | null
           transaction_date?: string
           service_id?: string | null
+          detergent_source?: InventoryUsageSource | null
+          detergent_item_id?: string | null
+          detergent_quantity?: number | null
+          detergent_other_reason?: string | null
+          fabric_conditioner_source?: InventoryUsageSource | null
+          fabric_conditioner_item_id?: string | null
+          fabric_conditioner_quantity?: number | null
+          fabric_conditioner_other_reason?: string | null
           kg?: number | null
           no_of_loads?: number | null
           base_amount?: number
@@ -543,6 +560,14 @@ export type Database = {
           phone_number?: string | null
           transaction_date?: string
           service_id?: string | null
+          detergent_source?: InventoryUsageSource | null
+          detergent_item_id?: string | null
+          detergent_quantity?: number | null
+          detergent_other_reason?: string | null
+          fabric_conditioner_source?: InventoryUsageSource | null
+          fabric_conditioner_item_id?: string | null
+          fabric_conditioner_quantity?: number | null
+          fabric_conditioner_other_reason?: string | null
           kg?: number | null
           no_of_loads?: number | null
           base_amount?: number

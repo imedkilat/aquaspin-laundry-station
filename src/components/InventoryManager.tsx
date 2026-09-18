@@ -271,6 +271,29 @@ function InventoryItemRow({ item, summary, categories, onSaved }: { item: Invent
     onSaved()
   }
 
+  const deletePermanently = async () => {
+    if (!window.confirm(`Permanently delete ${item.item_name}? This cannot be undone.`)) return
+
+    setSaving(true)
+    setNotice(null)
+    const { error } = await supabase.from('inventory_items').delete().eq('id', item.id)
+    setSaving(false)
+
+    if (error) {
+      const foreignKeyBlocked = error.code === '23503' || error.message.toLowerCase().includes('foreign key')
+      setNotice({
+        type: 'error',
+        text: foreignKeyBlocked
+          ? 'This item has stock or transaction history and cannot be permanently deleted. Set it inactive instead.'
+          : error.message,
+      })
+      return
+    }
+
+    setEditing(false)
+    onSaved()
+  }
+
   const recordMovement = async () => {
     const nextQuantity = Number(quantity)
     const nextUnitCost = unitCost.trim() ? Number(unitCost) : null
@@ -311,7 +334,7 @@ function InventoryItemRow({ item, summary, categories, onSaved }: { item: Invent
         <div className="flex flex-wrap items-center gap-2"><div className="rounded-lg bg-slate-50 px-3 py-2 text-right dark:bg-slate-950"><p className="text-[11px] text-slate-500">Balance</p><p className="font-semibold text-slate-900 dark:text-slate-100">{currentQuantity} {item.unit_label}</p></div><button type="button" onClick={() => { setMovementOpen((open) => !open); setNotice(null) }} className="rounded-lg bg-emerald-600 px-3 py-2 text-sm font-medium text-white hover:bg-emerald-700">{movementOpen ? 'Close movement' : 'Record movement'}</button><button type="button" onClick={() => { setEditing((open) => !open); setNotice(null) }} className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">{editing ? 'Close edit' : 'Edit item'}</button></div>
       </div>
 
-      {editing && <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 rounded-xl bg-slate-50 p-3 dark:bg-slate-950"><Field label="Item name"><input value={name} onChange={(event) => setName(event.target.value)} maxLength={120} className={INPUT} /></Field><Field label="Category"><select value={categoryId} onChange={(event) => setCategoryId(event.target.value)} className={INPUT}><option value="">Uncategorized</option>{categories.map((category) => <option key={category.id} value={category.id}>{category.name}{category.active ? '' : ' (inactive)'}</option>)}</select></Field><Field label="Unit"><select value={unit} onChange={(event) => setUnit(event.target.value as InventoryUnit)} className={INPUT}>{UNITS.map((value) => <option key={value} value={value}>{value}</option>)}</select></Field><Field label="Reorder threshold"><input type="number" min="0" step="0.001" value={threshold} onChange={(event) => setThreshold(event.target.value)} className={INPUT} /></Field><Field label="Average cost (₱)"><input type="number" min="0" step="0.01" value={cost} onChange={(event) => setCost(event.target.value)} className={INPUT} /></Field><Field label="Notes"><input value={notes} onChange={(event) => setNotes(event.target.value)} maxLength={500} className={INPUT} /></Field><label className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300"><input type="checkbox" checked={active} onChange={(event) => setActive(event.target.checked)} />Active item</label><div className="sm:col-span-2 lg:col-span-2"><button type="button" onClick={() => void save()} disabled={saving} className="inline-flex items-center gap-2 rounded-lg bg-sky-600 px-4 py-2 text-sm font-medium text-white hover:bg-sky-700 disabled:opacity-60">{saving && <ButtonSpinner />}{saving ? 'Saving…' : 'Save item'}</button></div></div>}
+      {editing && <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 rounded-xl bg-slate-50 p-3 dark:bg-slate-950"><Field label="Item name"><input value={name} onChange={(event) => setName(event.target.value)} maxLength={120} className={INPUT} /></Field><Field label="Category"><select value={categoryId} onChange={(event) => setCategoryId(event.target.value)} className={INPUT}><option value="">Uncategorized</option>{categories.map((category) => <option key={category.id} value={category.id}>{category.name}{category.active ? '' : ' (inactive)'}</option>)}</select></Field><Field label="Unit"><select value={unit} onChange={(event) => setUnit(event.target.value as InventoryUnit)} className={INPUT}>{UNITS.map((value) => <option key={value} value={value}>{value}</option>)}</select></Field><Field label="Reorder threshold"><input type="number" min="0" step="0.001" value={threshold} onChange={(event) => setThreshold(event.target.value)} className={INPUT} /></Field><Field label="Average cost (₱)"><input type="number" min="0" step="0.01" value={cost} onChange={(event) => setCost(event.target.value)} className={INPUT} /></Field><Field label="Notes"><input value={notes} onChange={(event) => setNotes(event.target.value)} maxLength={500} className={INPUT} /></Field><label className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300"><input type="checkbox" checked={active} onChange={(event) => setActive(event.target.checked)} />Active item</label><div className="sm:col-span-2 lg:col-span-2 flex flex-wrap items-center gap-2"><button type="button" onClick={() => void save()} disabled={saving} className="inline-flex items-center gap-2 rounded-lg bg-sky-600 px-4 py-2 text-sm font-medium text-white hover:bg-sky-700 disabled:opacity-60">{saving && <ButtonSpinner />}{saving ? 'Saving…' : 'Save item'}</button><button type="button" onClick={() => void deletePermanently()} disabled={saving} className="rounded-lg border border-rose-300 px-3 py-2 text-sm font-medium text-rose-700 hover:bg-rose-50 disabled:opacity-60 dark:border-rose-900 dark:text-rose-300 dark:hover:bg-rose-950/30">Delete permanently</button></div></div>}
 
       {movementOpen && <div className="mt-4 rounded-xl bg-emerald-50 p-3 dark:bg-emerald-950/20"><div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3"><Field label="Movement type"><select value={movementType} onChange={(event) => setMovementType(event.target.value as InventoryMovementType)} className={INPUT}>{MOVEMENT_TYPES.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></Field><Field label="Quantity"><input type="number" step="0.001" value={quantity} onChange={(event) => setQuantity(event.target.value)} placeholder={movementType === 'stock_in' ? '10' : '-1'} className={INPUT} /></Field><Field label="Unit cost (₱)"><input type="number" min="0" step="0.01" value={unitCost} onChange={(event) => setUnitCost(event.target.value)} placeholder="Optional" className={INPUT} /></Field><Field label="Reason"><input value={reason} onChange={(event) => setReason(event.target.value)} maxLength={500} placeholder={MOVEMENT_TYPES.find((option) => option.value === movementType)?.hint} className={INPUT} /></Field></div><div className="mt-3 flex items-center justify-between gap-3 flex-wrap"><p className="text-xs text-emerald-800 dark:text-emerald-200">{MOVEMENT_TYPES.find((option) => option.value === movementType)?.hint}</p><button type="button" onClick={() => void recordMovement()} disabled={saving} className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-60">{saving && <ButtonSpinner />}{saving ? 'Recording…' : 'Record movement'}</button></div></div>}
 

@@ -6,7 +6,7 @@ import { ButtonSpinner, InlineAlert } from './UiFeedback'
 
 const inputClass = 'w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm outline-none transition focus:border-sky-500 focus:ring-2 focus:ring-sky-100 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:focus:ring-sky-950'
 
-export default function CustomerForm({ customer, isOwner, onSaved, onCancel }: { customer?: Customer | null; isOwner: boolean; onSaved: (customer: Customer) => void; onCancel: () => void }) {
+export default function CustomerForm({ customer, isOwner, onSaved, onDeleted, onCancel }: { customer?: Customer | null; isOwner: boolean; onSaved: (customer: Customer) => void; onDeleted?: () => void; onCancel: () => void }) {
   const [fullName, setFullName] = useState(customer?.full_name ?? '')
   const [phoneNumber, setPhoneNumber] = useState(customer?.phone_number ?? '')
   const [notes, setNotes] = useState(customer?.notes ?? '')
@@ -20,6 +20,28 @@ export default function CustomerForm({ customer, isOwner, onSaved, onCancel }: {
     setNotes(customer?.notes ?? '')
     setActive(customer?.active ?? true)
   }, [customer])
+
+  const deletePermanently = async () => {
+    if (!customer || !isOwner) return
+    if (!window.confirm(`Permanently delete ${customer.full_name}? This cannot be undone.`)) return
+
+    setSaving(true)
+    setError(null)
+    const result = await supabase.from('customers').delete().eq('id', customer.id)
+    setSaving(false)
+
+    if (result.error) {
+      const foreignKeyBlocked = result.error.code === '23503' || result.error.message.toLowerCase().includes('foreign key')
+      setError(
+        foreignKeyBlocked
+          ? 'This customer has transaction or loyalty history and cannot be permanently deleted. Set the customer inactive instead.'
+          : result.error.message
+      )
+      return
+    }
+
+    onDeleted?.()
+  }
 
   const save = async () => {
     const normalizedName = toTitleCaseName(fullName)
@@ -58,7 +80,10 @@ export default function CustomerForm({ customer, isOwner, onSaved, onCancel }: {
         {customer && isOwner && <label className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300 sm:col-span-2"><input type="checkbox" checked={active} onChange={(event) => setActive(event.target.checked)} /> Active customer</label>}
       </div>
       {error && <div className="mt-3"><InlineAlert variant="error" title="Customer was not saved">{error}</InlineAlert></div>}
-      <div className="mt-4 flex justify-end"><button type="button" onClick={() => void save()} disabled={saving} className="rounded-xl bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-700 disabled:opacity-60">{saving && <ButtonSpinner />} {saving ? 'Saving…' : customer ? 'Save changes' : 'Add customer'}</button></div>
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+        {customer && isOwner ? <button type="button" onClick={() => void deletePermanently()} disabled={saving} className="rounded-xl border border-rose-300 px-4 py-2 text-sm font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-60 dark:border-rose-900 dark:text-rose-300 dark:hover:bg-rose-950/30">Delete permanently</button> : <span />}
+        <button type="button" onClick={() => void save()} disabled={saving} className="rounded-xl bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-700 disabled:opacity-60">{saving && <ButtonSpinner />} {saving ? 'Saving…' : customer ? 'Save changes' : 'Add customer'}</button>
+      </div>
     </section>
   )
 }
