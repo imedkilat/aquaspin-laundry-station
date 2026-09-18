@@ -10,6 +10,8 @@ import DeleteTransactionModal from './DeleteTransactionModal'
 import { ButtonSpinner, EmptyState, InlineAlert, LoadingPanel } from './UiFeedback'
 import { openTransactionReceipt } from '../lib/receipt'
 import { getShopLogoUrl } from '../lib/storage-images'
+import { customerItemsHref, isCustomerItemsPending } from '../lib/customer-items-pending'
+import UiIcon from './UiIcon'
 
 const peso = (n: number) =>
   `₱${n.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
@@ -146,7 +148,12 @@ export default function TransactionTable({ rows, loading, isOwner = false, onEdi
                   </td>
                   <td className="py-2 pr-3 text-slate-500">{r.phone_number || '—'}</td><td className="py-2 pr-3">{r.service_code_snapshot || r.services?.code || '—'}</td><td className="py-2 pr-3">{r.kg ?? '—'}</td><td className="py-2 pr-3">{r.no_of_loads ?? '—'}</td><td className="py-2 pr-3 font-medium">{peso(r.total_amount)}</td>
                   <td className="py-2 pr-3"><PaymentBadge method={r.payment_method} />{r.payment_method === 'gcash' && <p className="mt-1 text-[11px] text-slate-500 whitespace-nowrap">Ref: {r.gcash_reference || 'Legacy / not recorded'}</p>}</td>
-                  <td className="py-2 pr-3 whitespace-nowrap"><span className={`inline-flex rounded-full px-2 py-1 text-[11px] font-semibold ${ORDER_STATUS_CLASSES[r.order_status]}`}>{ORDER_STATUS_LABELS[r.order_status]}</span></td>
+                  <td className="py-2 pr-3 whitespace-nowrap">
+                    <div className="flex flex-col items-start gap-1">
+                      <span className={`inline-flex rounded-full px-2 py-1 text-[11px] font-semibold ${ORDER_STATUS_CLASSES[r.order_status]}`}>{ORDER_STATUS_LABELS[r.order_status]}</span>
+                      {isCustomerItemsPending(r) && <span className="inline-flex rounded-full bg-amber-100 px-2 py-1 text-[11px] font-semibold text-amber-800 dark:bg-amber-950/70 dark:text-amber-200">Items Pending</span>}
+                    </div>
+                  </td>
                   <td className="py-2 pr-3 text-slate-500 whitespace-nowrap">{r.pickup_date ? <>{r.pickup_date}{r.pickup_time && <span className="text-slate-400"> · {formatPickupTime(r.pickup_time)}</span>}</> : '—'}</td>
                   {isOwner && <td className="py-2 pr-3 text-slate-500 whitespace-nowrap">{r.created_by_profile?.full_name ?? '—'}{r.updated_by_profile?.full_name && r.updated_by_profile.full_name !== r.created_by_profile?.full_name && <p className="mt-0.5 text-[11px] text-slate-400">Edited by {r.updated_by_profile.full_name}</p>}</td>}
                   {hasActions && (
@@ -157,6 +164,7 @@ export default function TransactionTable({ rows, loading, isOwner = false, onEdi
                       ) : (
                         <>
                           <button type="button" onClick={(event) => { event.preventDefault(); event.stopPropagation(); printReceipt(r) }} className="text-slate-600 hover:text-slate-800 text-xs font-medium dark:text-slate-300 dark:hover:text-slate-100">Print Receipt</button>
+                          {canEdit && isCustomerItemsPending(r) && <Link to={customerItemsHref(r.id)} className="inline-flex items-center gap-1 text-amber-700 hover:text-amber-800 text-xs font-semibold dark:text-amber-300 dark:hover:text-amber-200"><UiIcon name="plus" size={14} />Add Items</Link>}
                           {canEdit && <button type="button" onClick={(event) => { event.preventDefault(); event.stopPropagation(); openEdit(r) }} className="text-sky-600 hover:text-sky-700 text-xs font-medium">Edit</button>}
                           {canDelete && <button type="button" onClick={(event) => { event.preventDefault(); event.stopPropagation(); openDelete(r) }} className="text-red-600 hover:text-red-700 text-xs font-medium">Delete</button>}
                         </>

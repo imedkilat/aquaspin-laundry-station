@@ -310,6 +310,7 @@ export type TransactionWithService = Transaction & {
   created_by_profile: Pick<Profile, 'full_name'> | null
   updated_by_profile: Pick<Profile, 'full_name'> | null
   deleted_by_profile: Pick<Profile, 'full_name'> | null
+  hasCustomerItems?: boolean
 }
 
 // Minimal Database type so supabase-js typed queries work without the

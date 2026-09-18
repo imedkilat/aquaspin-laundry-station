@@ -43,6 +43,7 @@ export default function CustomerItemsCard({
   return (
     <>
       <DetailCard
+        id="customer-items"
         title="Customer Items"
         action={canEdit ? (
           <button
@@ -219,9 +220,9 @@ function CustomerItemsModal({
   )
 }
 
-function DetailCard({ title, action, children }: { title: string; action?: React.ReactNode; children: React.ReactNode }) {
+function DetailCard({ id, title, action, children }: { id?: string; title: string; action?: React.ReactNode; children: React.ReactNode }) {
   return (
-    <section className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
+    <section id={id} className="scroll-mt-24 rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <h2 className="font-semibold text-slate-900 dark:text-slate-100">{title}</h2>
         {action}

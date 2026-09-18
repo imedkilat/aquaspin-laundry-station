@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { supabase } from '../lib/supabase'
 import { makeRealtimeTopic } from '../lib/realtime'
 import type { PaymentMethod, TransactionWithService } from '../types/database'
+import type { OrderStatus } from '../types/customer-status'
 import type { RealtimeState } from './useServices'
 
 interface Options {
@@ -11,6 +12,8 @@ interface Options {
   includeDeleted?: boolean
   fetchAll?: boolean
   paymentMethod?: PaymentMethod
+  orderStatuses?: readonly OrderStatus[]
+  includeCustomerItemCoverage?: boolean
 }
 
 const SELECT = `*, services ( code, label ),
@@ -19,7 +22,16 @@ const SELECT = `*, services ( code, label ),
   deleted_by_profile:profiles!transactions_deleted_by_fkey ( full_name )`
 
 export function useTransactions(options: Options = {}) {
-  const { dateFrom, dateTo, limit = 200, includeDeleted = false, fetchAll = false, paymentMethod } = options
+  const {
+    dateFrom,
+    dateTo,
+    limit = 200,
+    includeDeleted = false,
+    fetchAll = false,
+    paymentMethod,
+    orderStatuses,
+    includeCustomerItemCoverage = false,
+  } = options
   const [rows, setRows] = useState<TransactionWithService[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -43,11 +55,42 @@ export function useTransactions(options: Options = {}) {
       if (dateFrom) query = query.gte('transaction_date', dateFrom)
       if (dateTo) query = query.lte('transaction_date', dateTo)
       if (paymentMethod) query = query.eq('payment_method', paymentMethod)
+      if (orderStatuses?.length) query = query.in('order_status', [...orderStatuses])
       if (!includeDeleted) query = query.is('deleted_at', null)
 
       return fetchAll
         ? query.range(offset, offset + pageSize - 1)
         : query.limit(limit)
+    }
+
+    const attachCustomerItemCoverage = async (nextRows: TransactionWithService[]) => {
+      if (!includeCustomerItemCoverage || nextRows.length === 0) return nextRows
+
+      const transactionIds = nextRows.map((row) => row.id)
+      const { data, error: coverageError } = await supabase
+        .from('transaction_customer_items')
+        .select('transaction_id, quantity')
+        .in('transaction_id', transactionIds)
+
+      if (coverageError) throw coverageError
+
+      const coveredIds = new Set(
+        ((data ?? []) as Array<{ transaction_id: string; quantity: number | null }>)
+          .filter((item) => Number(item.quantity) > 0)
+          .map((item) => item.transaction_id),
+      )
+
+      return nextRows.map((row) => ({ ...row, hasCustomerItems: coveredIds.has(row.id) }))
+    }
+
+    const finish = async (nextRows: TransactionWithService[], coverageMessage: string) => {
+      try {
+        setRows(await attachCustomerItemCoverage(nextRows))
+      } catch {
+        setRows(nextRows)
+        setError(coverageMessage)
+      }
+      setLoading(false)
     }
 
     if (!fetchAll) {
@@ -58,8 +101,7 @@ export function useTransactions(options: Options = {}) {
         return
       }
 
-      setRows((data as unknown as TransactionWithService[]) ?? [])
-      setLoading(false)
+      await finish((data as unknown as TransactionWithService[]) ?? [], 'Could not load customer item coverage. Check the internet connection and try again.')
       return
     }
 
@@ -84,9 +126,8 @@ export function useTransactions(options: Options = {}) {
       if (count == null && page.length < pageSize) break
     }
 
-    setRows(allRows)
-    setLoading(false)
-  }, [dateFrom, dateTo, limit, includeDeleted, fetchAll, paymentMethod])
+    await finish(allRows, 'Could not load customer item coverage. Check the internet connection and try again.')
+  }, [dateFrom, dateTo, limit, includeDeleted, fetchAll, paymentMethod, orderStatuses, includeCustomerItemCoverage])
 
   useEffect(() => {
     void reload()
@@ -102,20 +143,28 @@ export function useTransactions(options: Options = {}) {
         { event: '*', schema: 'public', table: 'transactions' },
         () => void reload()
       )
-      .subscribe((status) => {
-        if (status === 'SUBSCRIBED') {
-          setRealtimeState('connected')
-          if (hasSubscribed) void reload()
-          hasSubscribed = true
-        }
-        else if (status === 'CHANNEL_ERROR') setRealtimeState('error')
-        else if (status === 'TIMED_OUT' || status === 'CLOSED') setRealtimeState('disconnected')
-      })
+    if (includeCustomerItemCoverage) {
+      channel.on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'transaction_customer_items' },
+        () => void reload(),
+      )
+    }
+
+    channel.subscribe((status) => {
+      if (status === 'SUBSCRIBED') {
+        setRealtimeState('connected')
+        if (hasSubscribed) void reload()
+        hasSubscribed = true
+      }
+      else if (status === 'CHANNEL_ERROR') setRealtimeState('error')
+      else if (status === 'TIMED_OUT' || status === 'CLOSED') setRealtimeState('disconnected')
+    })
 
     return () => {
       void supabase.removeChannel(channel)
     }
-  }, [reload])
+  }, [reload, includeCustomerItemCoverage])
 
   return { rows, loading, error, realtimeState, reload }
 }
