@@ -6,6 +6,13 @@ import { useShopSettings } from '../lib/shop-settings-context'
 import type { PaymentMethod, TransactionAddOnItem, TransactionWithService } from '../types/database'
 import { toTitleCaseName } from '../lib/text'
 import { ButtonSpinner, InlineAlert, LoadingPanel } from './UiFeedback'
+import InventoryUsageFields from './InventoryUsageFields'
+import {
+  emptyInventoryUsageDraft,
+  inventoryUsageIsComplete,
+  useInventoryConsumables,
+  type InventoryUsageDraft,
+} from '../hooks/useInventoryConsumables'
 
 const peso = (n: number) =>
   `₱${n.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
@@ -67,8 +74,16 @@ export default function EditTransactionModal({ transaction, onClose }: { transac
   const { services } = useServices()
   const { addOns, loading: addOnsLoading } = useAddOns({ includeInactive: true })
   const { settings } = useShopSettings()
+  const { detergentItems, fabricConditionerItems, loading: inventoryLoading, error: inventoryError } = useInventoryConsumables()
   const [form, setForm] = useState<FormState>(() => formToState(transaction))
   const [selectedAddOns, setSelectedAddOns] = useState<Record<string, number>>(() => addOnsFromItems(transaction.add_on_items))
+  const [inventoryUsage, setInventoryUsage] = useState<InventoryUsageDraft>(() => ({
+    ...emptyInventoryUsageDraft(),
+    detergent_item_id: transaction.detergent_item_id ?? '',
+    detergent_quantity: transaction.detergent_quantity != null ? String(transaction.detergent_quantity) : '',
+    fabric_conditioner_item_id: transaction.fabric_conditioner_item_id ?? '',
+    fabric_conditioner_quantity: transaction.fabric_conditioner_quantity != null ? String(transaction.fabric_conditioner_quantity) : '',
+  }))
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const saveLockRef = useRef(false)
@@ -209,6 +224,10 @@ export default function EditTransactionModal({ transaction, onClose }: { transac
     e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>
   ) => setForm((f) => ({ ...f, [field]: e.target.value }))
 
+  const updateInventoryUsage = (field: keyof InventoryUsageDraft, value: string) => {
+    setInventoryUsage((current) => ({ ...current, [field]: value }))
+  }
+
   const handleSave = async () => {
     if (saveLockRef.current) return
     saveLockRef.current = true
@@ -231,6 +250,14 @@ export default function EditTransactionModal({ transaction, onClose }: { transac
       }
       if (isWeightBased && (!form.kg || Number(form.kg) <= 0)) {
         setError('Enter the Kg after selecting the service so Loads and Base Amount can be calculated.')
+        return
+      }
+      if (inventoryError) {
+        setError('Inventory items could not be loaded. Refresh the page before saving the transaction.')
+        return
+      }
+      if (transaction.order_status !== 'completed' && !inventoryUsageIsComplete(inventoryUsage)) {
+        setError('Select a Liquid Detergent item, Fabric Conditioner item, and enter both quantities before saving.')
         return
       }
       if (settings.require_pickup_date && !form.pickup_date) {
@@ -277,6 +304,10 @@ export default function EditTransactionModal({ transaction, onClose }: { transac
           phone_number: form.phone_number.trim() || null,
           transaction_date: form.transaction_date,
           service_id: form.service_id,
+          detergent_item_id: inventoryUsage.detergent_item_id || null,
+          detergent_quantity: inventoryUsage.detergent_quantity ? Number(inventoryUsage.detergent_quantity) : null,
+          fabric_conditioner_item_id: inventoryUsage.fabric_conditioner_item_id || null,
+          fabric_conditioner_quantity: inventoryUsage.fabric_conditioner_quantity ? Number(inventoryUsage.fabric_conditioner_quantity) : null,
           kg: form.kg ? Number(form.kg) : null,
           no_of_loads: form.no_of_loads ? Number(form.no_of_loads) : null,
           base_amount: form.base_amount ? Number(form.base_amount) : 0,
@@ -378,6 +409,15 @@ export default function EditTransactionModal({ transaction, onClose }: { transac
             <input type="number" value={form.add_ons} readOnly className={autoInputClass} />
           </div>
         </div>
+
+        <InventoryUsageFields
+          usage={inventoryUsage}
+          detergentItems={detergentItems}
+          fabricConditionerItems={fabricConditionerItems}
+          loading={inventoryLoading}
+          disabled={transaction.order_status === 'completed'}
+          onChange={updateInventoryUsage}
+        />
 
         <section className="rounded-xl border border-slate-200 p-4 dark:border-slate-700">
           <div className="flex items-center justify-between gap-3 mb-3">
@@ -483,7 +523,7 @@ export default function EditTransactionModal({ transaction, onClose }: { transac
 
         <div className="flex items-center justify-end gap-2">
           <button type="button" onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">Cancel</button>
-          <button type="button" onClick={() => void handleSave()} disabled={saving} className="inline-flex items-center gap-2 bg-sky-600 hover:bg-sky-700 disabled:opacity-60 text-white font-medium rounded-lg px-4 py-2 text-sm transition">
+          <button type="button" onClick={() => void handleSave()} disabled={saving || inventoryLoading} className="inline-flex items-center gap-2 bg-sky-600 hover:bg-sky-700 disabled:opacity-60 text-white font-medium rounded-lg px-4 py-2 text-sm transition">
             {saving && <ButtonSpinner />}{saving ? 'Saving…' : 'Save Changes'}
           </button>
         </div>
