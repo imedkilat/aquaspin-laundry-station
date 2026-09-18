@@ -8,7 +8,8 @@ import {
   validateProfileImage,
 } from '../lib/storage-images'
 import { ButtonSpinner, InlineAlert, LoadingPanel } from './UiFeedback'
-import type { PaymentMethod, ShopSettings } from '../types/database'
+import { DEFAULT_LOYALTY_SETTINGS } from '../lib/loyalty-settings'
+import type { LoyaltySettings, PaymentMethod, ShopSettings } from '../types/database'
 
 const inputClass =
   'w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100'
@@ -20,15 +21,48 @@ export default function OwnerSettingsManager() {
   const [uploadingLogo, setUploadingLogo] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
   const [saveError, setSaveError] = useState<string | null>(null)
+  const [loyaltyDraft, setLoyaltyDraft] = useState<LoyaltySettings>(DEFAULT_LOYALTY_SETTINGS)
+  const [loyaltyLoading, setLoyaltyLoading] = useState(true)
+  const [loyaltySaving, setLoyaltySaving] = useState(false)
+  const [loyaltyError, setLoyaltyError] = useState<string | null>(null)
+  const [loyaltyMessage, setLoyaltyMessage] = useState<string | null>(null)
 
   useEffect(() => {
     setDraft(settings)
   }, [settings])
 
+  useEffect(() => {
+    let active = true
+    const loadLoyaltySettings = async () => {
+      setLoyaltyLoading(true)
+      const { data, error: queryError } = await supabase
+        .from('loyalty_settings')
+        .select('*')
+        .eq('id', 1)
+        .maybeSingle()
+      if (!active) return
+      if (queryError) {
+        setLoyaltyError(queryError.message)
+      } else {
+        setLoyaltyDraft({ ...DEFAULT_LOYALTY_SETTINGS, ...(data ?? {}) })
+        setLoyaltyError(null)
+      }
+      setLoyaltyLoading(false)
+    }
+    void loadLoyaltySettings()
+    return () => { active = false }
+  }, [])
+
   const set = <K extends keyof ShopSettings>(key: K, value: ShopSettings[K]) => {
     setDraft((current) => ({ ...current, [key]: value }))
     setMessage(null)
     setSaveError(null)
+  }
+
+  const setLoyalty = <K extends keyof LoyaltySettings>(key: K, value: LoyaltySettings[K]) => {
+    setLoyaltyDraft((current) => ({ ...current, [key]: value }))
+    setLoyaltyMessage(null)
+    setLoyaltyError(null)
   }
 
   const save = async () => {
@@ -81,6 +115,42 @@ export default function OwnerSettingsManager() {
 
     await reload()
     setMessage('Settings saved. Open Staff browsers will receive the new access rules automatically.')
+  }
+
+  const saveLoyalty = async () => {
+    const pointsPerKg = Number(loyaltyDraft.points_per_kg)
+    const pointsRequired = Number(loyaltyDraft.points_required_for_reward)
+    const rewardDescription = loyaltyDraft.reward_description.trim()
+    if (!Number.isFinite(pointsPerKg) || pointsPerKg <= 0) {
+      setLoyaltyError('Points per kg must be greater than zero.')
+      return
+    }
+    if (!Number.isInteger(pointsRequired) || pointsRequired <= 0) {
+      setLoyaltyError('Points required for a reward must be a positive whole number.')
+      return
+    }
+    if (!rewardDescription) {
+      setLoyaltyError('Reward description is required.')
+      return
+    }
+
+    setLoyaltySaving(true)
+    setLoyaltyError(null)
+    setLoyaltyMessage(null)
+    const { data, error: updateError } = await supabase
+      .from('loyalty_settings')
+      .update({ points_per_kg: pointsPerKg, points_required_for_reward: pointsRequired, reward_description: rewardDescription })
+      .eq('id', 1)
+      .select('*')
+      .maybeSingle()
+    setLoyaltySaving(false)
+
+    if (updateError) {
+      setLoyaltyError(updateError.message)
+      return
+    }
+    if (data) setLoyaltyDraft({ ...DEFAULT_LOYALTY_SETTINGS, ...data })
+    setLoyaltyMessage('Loyalty settings saved.')
   }
 
   const uploadLogo = async (file: File) => {
@@ -207,6 +277,31 @@ export default function OwnerSettingsManager() {
               )}
             </div>
           </div>
+        </div>
+      </section>
+
+      <section className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
+        <div className="mb-4">
+          <h2 className="font-semibold text-slate-900 dark:text-slate-100">Loyalty / Rewards</h2>
+          <p className="mt-1 text-sm text-slate-500">Simple rewards for repeat customers: points are earned per kg and exchanged for one free service after the threshold. No tiers or expiring points.</p>
+        </div>
+        {loyaltyError && <InlineAlert variant="warning" title="Loyalty settings are not ready">{loyaltyError}. The fields below remain safe defaults until the Phase 7 migration is active.</InlineAlert>}
+        {loyaltyMessage && <InlineAlert variant="success" title="Loyalty settings updated">{loyaltyMessage}</InlineAlert>}
+        <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-3">
+          <Field label="Points per kg">
+            <input type="number" min="0.01" step="0.01" value={loyaltyDraft.points_per_kg} onChange={(e) => setLoyalty('points_per_kg', Number(e.target.value))} className={inputClass} disabled={loyaltyLoading} />
+          </Field>
+          <Field label="Points required for reward">
+            <input type="number" min="1" step="1" value={loyaltyDraft.points_required_for_reward} onChange={(e) => setLoyalty('points_required_for_reward', Number(e.target.value))} className={inputClass} disabled={loyaltyLoading} />
+          </Field>
+          <Field label="Reward description">
+            <input value={loyaltyDraft.reward_description} onChange={(e) => setLoyalty('reward_description', e.target.value)} maxLength={300} className={inputClass} disabled={loyaltyLoading} />
+          </Field>
+        </div>
+        <div className="mt-4 flex justify-end">
+          <button type="button" disabled={loyaltyLoading || loyaltySaving} onClick={() => void saveLoyalty()} className="inline-flex items-center gap-2 rounded-xl border border-sky-300 px-4 py-2 text-sm font-semibold text-sky-700 hover:bg-sky-50 disabled:opacity-50 dark:border-sky-800 dark:text-sky-300 dark:hover:bg-sky-950/40">
+            {loyaltySaving && <ButtonSpinner />}{loyaltySaving ? 'Saving Loyalty…' : 'Save Loyalty Settings'}
+          </button>
         </div>
       </section>
 
