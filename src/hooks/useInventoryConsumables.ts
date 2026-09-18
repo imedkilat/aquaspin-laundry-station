@@ -4,28 +4,34 @@ import type { InventoryItem } from '../types/database'
 
 export const LIQUID_DETERGENT_CATEGORY = 'liquid detergent'
 export const FABRIC_CONDITIONER_CATEGORY = 'fabric conditioner'
+export const OTHER_INVENTORY_SOURCE = 'other'
 
 export type InventoryUsageDraft = {
   detergent_item_id: string
   detergent_quantity: string
+  detergent_other_reason: string
   fabric_conditioner_item_id: string
   fabric_conditioner_quantity: string
+  fabric_conditioner_other_reason: string
 }
 
 export const emptyInventoryUsageDraft = (): InventoryUsageDraft => ({
   detergent_item_id: '',
   detergent_quantity: '',
+  detergent_other_reason: '',
   fabric_conditioner_item_id: '',
   fabric_conditioner_quantity: '',
+  fabric_conditioner_other_reason: '',
 })
 
+const sideIsComplete = (itemId: string, quantity: string, otherReason: string) =>
+  itemId === OTHER_INVENTORY_SOURCE
+    ? Boolean(otherReason.trim())
+    : Boolean(itemId && Number(quantity) > 0)
+
 export function inventoryUsageIsComplete(usage: InventoryUsageDraft) {
-  return Boolean(
-    usage.detergent_item_id &&
-      Number(usage.detergent_quantity) > 0 &&
-      usage.fabric_conditioner_item_id &&
-      Number(usage.fabric_conditioner_quantity) > 0
-  )
+  return sideIsComplete(usage.detergent_item_id, usage.detergent_quantity, usage.detergent_other_reason) &&
+    sideIsComplete(usage.fabric_conditioner_item_id, usage.fabric_conditioner_quantity, usage.fabric_conditioner_other_reason)
 }
 
 export function useInventoryConsumables() {
