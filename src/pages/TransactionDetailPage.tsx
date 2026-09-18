@@ -12,6 +12,7 @@ import { makeRealtimeTopic } from '../lib/realtime'
 import { openTransactionReceipt } from '../lib/receipt'
 import { useShopSettings } from '../lib/shop-settings-context'
 import { getShopLogoUrl } from '../lib/storage-images'
+import { isDropOffTransaction } from '../lib/service-classification'
 import { supabase } from '../lib/supabase'
 import type { TransactionCustomerItem, TransactionWithService } from '../types/database'
 
@@ -238,12 +239,14 @@ export default function TransactionDetailPage() {
           onRefresh={reload}
         />
 
-        <CustomerItemsCard
-          transactionId={transaction.id}
-          items={customerItems}
-          canEdit={canEdit && !transaction.deleted_at && !['completed', 'cancelled'].includes(transaction.order_status)}
-          onSaved={reload}
-        />
+        {isDropOffTransaction(transaction) && (
+          <CustomerItemsCard
+            transactionId={transaction.id}
+            items={customerItems}
+            canEdit={canEdit && !transaction.deleted_at && !['completed', 'cancelled'].includes(transaction.order_status)}
+            onSaved={reload}
+          />
+        )}
 
         <section className="grid gap-4 lg:grid-cols-3">
           <DetailCard title="Customer">

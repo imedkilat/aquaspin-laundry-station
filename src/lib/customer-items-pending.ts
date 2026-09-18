@@ -1,5 +1,6 @@
 import type { OrderStatus } from '../types/customer-status'
 import type { Role, TransactionWithService } from '../types/database'
+import { isDropOffTransaction } from './service-classification.ts'
 
 export const PENDING_CUSTOMER_ITEM_STATUSES: readonly OrderStatus[] = [
   'received',
@@ -19,7 +20,7 @@ export const CUSTOMER_ITEM_STATUS_LABELS: Record<OrderStatus, string> = {
   cancelled: 'Cancelled',
 }
 
-export type CustomerItemCoverageRow = Pick<TransactionWithService, 'deleted_at' | 'order_status'> & {
+export type CustomerItemCoverageRow = Pick<TransactionWithService, 'deleted_at' | 'order_status' | 'service_code_snapshot' | 'services'> & {
   hasCustomerItems?: boolean
 }
 
@@ -30,6 +31,7 @@ export function hasPositiveCustomerItems(items: Array<{ quantity: number | null 
 export function isCustomerItemsPending(row: CustomerItemCoverageRow) {
   return row.deleted_at == null
     && PENDING_CUSTOMER_ITEM_STATUSES.includes(row.order_status)
+    && isDropOffTransaction(row)
     && row.hasCustomerItems === false
 }
 
