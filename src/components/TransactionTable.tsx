@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import type { TransactionWithService } from '../types/database'
+import type { OrderStatus } from '../types/customer-status'
 import { supabase } from '../lib/supabase'
 import { useShopSettings } from '../lib/shop-settings-context'
 import PaymentBadge from './PaymentBadge'
@@ -25,6 +26,26 @@ const formatPickupTime = (time: string) => {
 
 const formatDateTime = (iso: string) =>
   new Date(iso).toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' })
+
+const ORDER_STATUS_LABELS: Record<OrderStatus, string> = {
+  received: 'Received',
+  washing: 'Washing',
+  drying: 'Drying',
+  ready_for_pickup: 'Ready for Pickup',
+  completed: 'Completed',
+  on_hold: 'On Hold',
+  cancelled: 'Cancelled',
+}
+
+const ORDER_STATUS_CLASSES: Record<OrderStatus, string> = {
+  received: 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300',
+  washing: 'bg-sky-100 text-sky-700 dark:bg-sky-950/60 dark:text-sky-300',
+  drying: 'bg-indigo-100 text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300',
+  ready_for_pickup: 'bg-amber-100 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300',
+  completed: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300',
+  on_hold: 'bg-orange-100 text-orange-700 dark:bg-orange-950/60 dark:text-orange-300',
+  cancelled: 'bg-red-100 text-red-700 dark:bg-red-950/60 dark:text-red-300',
+}
 
 type TransactionTableProps = {
   rows: TransactionWithService[]
@@ -105,7 +126,7 @@ export default function TransactionTable({ rows, loading, isOwner = false, onEdi
         <table className="w-full text-sm">
           <thead>
             <tr className="text-left text-xs text-slate-500 border-b border-slate-200 dark:border-slate-800">
-              <th className="py-2 pr-3 font-medium">Transaction ID</th><th className="py-2 pr-3 font-medium">Date</th><th className="py-2 pr-3 font-medium">Customer</th><th className="py-2 pr-3 font-medium">Phone</th><th className="py-2 pr-3 font-medium">Service</th><th className="py-2 pr-3 font-medium">Kg</th><th className="py-2 pr-3 font-medium">Loads</th><th className="py-2 pr-3 font-medium">Total</th><th className="py-2 pr-3 font-medium">Payment</th><th className="py-2 pr-3 font-medium">Pickup</th>{isOwner && <th className="py-2 pr-3 font-medium">Entered By</th>}{hasActions && <th className="py-2 pr-3 font-medium">Actions</th>}
+              <th className="py-2 pr-3 font-medium">Transaction ID</th><th className="py-2 pr-3 font-medium">Date</th><th className="py-2 pr-3 font-medium">Customer</th><th className="py-2 pr-3 font-medium">Phone</th><th className="py-2 pr-3 font-medium">Service</th><th className="py-2 pr-3 font-medium">Kg</th><th className="py-2 pr-3 font-medium">Loads</th><th className="py-2 pr-3 font-medium">Total</th><th className="py-2 pr-3 font-medium">Payment</th><th className="py-2 pr-3 font-medium">Order Status</th><th className="py-2 pr-3 font-medium">Pickup</th>{isOwner && <th className="py-2 pr-3 font-medium">Entered By</th>}{hasActions && <th className="py-2 pr-3 font-medium">Actions</th>}
             </tr>
           </thead>
           <tbody>
@@ -125,6 +146,7 @@ export default function TransactionTable({ rows, loading, isOwner = false, onEdi
                   </td>
                   <td className="py-2 pr-3 text-slate-500">{r.phone_number || '—'}</td><td className="py-2 pr-3">{r.service_code_snapshot || r.services?.code || '—'}</td><td className="py-2 pr-3">{r.kg ?? '—'}</td><td className="py-2 pr-3">{r.no_of_loads ?? '—'}</td><td className="py-2 pr-3 font-medium">{peso(r.total_amount)}</td>
                   <td className="py-2 pr-3"><PaymentBadge method={r.payment_method} />{r.payment_method === 'gcash' && <p className="mt-1 text-[11px] text-slate-500 whitespace-nowrap">Ref: {r.gcash_reference || 'Legacy / not recorded'}</p>}</td>
+                  <td className="py-2 pr-3 whitespace-nowrap"><span className={`inline-flex rounded-full px-2 py-1 text-[11px] font-semibold ${ORDER_STATUS_CLASSES[r.order_status]}`}>{ORDER_STATUS_LABELS[r.order_status]}</span></td>
                   <td className="py-2 pr-3 text-slate-500 whitespace-nowrap">{r.pickup_date ? <>{r.pickup_date}{r.pickup_time && <span className="text-slate-400"> · {formatPickupTime(r.pickup_time)}</span>}</> : '—'}</td>
                   {isOwner && <td className="py-2 pr-3 text-slate-500 whitespace-nowrap">{r.created_by_profile?.full_name ?? '—'}{r.updated_by_profile?.full_name && r.updated_by_profile.full_name !== r.created_by_profile?.full_name && <p className="mt-0.5 text-[11px] text-slate-400">Edited by {r.updated_by_profile.full_name}</p>}</td>}
                   {hasActions && (
