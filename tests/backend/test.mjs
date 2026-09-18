@@ -52,6 +52,22 @@ async function status(t, next, reason = null, override = false) {
 async function customerItems(t, items) {
   return q('select * from public.save_transaction_customer_items($1,$2::jsonb)', [t.id, JSON.stringify(items)]);
 }
+async function pendingCustomerItems() {
+  return q(`
+    select t.id, t.order_status
+    from public.transactions t
+    where t.deleted_at is null
+      and t.transaction_date <= (now() at time zone 'Asia/Manila')::date
+      and t.order_status in ('received', 'washing', 'drying', 'ready_for_pickup', 'on_hold')
+      and not exists (
+        select 1
+        from public.transaction_customer_items i
+        where i.transaction_id = t.id
+          and i.quantity > 0
+      )
+    order by t.id
+  `);
+}
 async function softDelete(t, reason = 'Routine deletion') {
   return one('select * from public.soft_delete_transaction($1,$2,$3)', [t.id, t.token, reason]);
 }
@@ -174,6 +190,48 @@ try {
     assert.equal(blocked.order_status, 'completed');
     assert.equal((await q('select id from transaction_customer_items where transaction_id=$1', [blocked.id])).length, 1);
     await assert.rejects(customerItems(blocked, [{ item_type: 'pants', quantity: 2 }]), e => e.code === '42501');
+    await asUser(owner);
+  });
+  await test('customer items pending coverage follows status, quantity, date, deletion, and RLS rules', async () => {
+    const received = await transaction({ customer_name: 'Pending received', phone_number: null });
+    let washing = await transaction({ customer_name: 'Pending washing', phone_number: null });
+    washing = await status(washing, 'washing');
+    let ready = await transaction({ customer_name: 'Pending ready', phone_number: null });
+    ready = await status(ready, 'ready_for_pickup', 'Wash and dry completed');
+    const covered = await transaction({ customer_name: 'Covered item list', phone_number: null });
+    await customerItems(covered, [{ item_type: 'towels', quantity: 2 }]);
+    let completed = await transaction({ customer_name: 'Completed item list', phone_number: null });
+    await customerItems(completed, [{ item_type: 'pants', quantity: 1 }]);
+    completed = await status(completed, 'washing');
+    completed = await status(completed, 'drying');
+    completed = await status(completed, 'ready_for_pickup');
+    completed = await status(completed, 'completed');
+    const cancelled = await transaction({ customer_name: 'Cancelled no item list', phone_number: null });
+    await status(cancelled, 'cancelled', 'Customer cancelled');
+    const deleted = await transaction({ customer_name: 'Deleted no item list', phone_number: null });
+    await softDelete(deleted, 'Duplicate pending fixture');
+    const future = await transaction({ customer_name: 'Future no item list', phone_number: null, transaction_date: '2099-01-01' });
+
+    const pending = await pendingCustomerItems();
+    const pendingIds = pending.map(row => row.id);
+    assert.ok(pendingIds.includes(received.id));
+    assert.ok(pendingIds.includes(washing.id));
+    assert.ok(pendingIds.includes(ready.id));
+    assert.equal(pendingIds.includes(covered.id), false);
+    assert.equal(pendingIds.includes(completed.id), false);
+    assert.equal(pendingIds.includes(cancelled.id), false);
+    assert.equal(pendingIds.includes(deleted.id), false);
+    assert.equal(pendingIds.includes(future.id), false);
+    assert.equal(new Set(pendingIds).size, pendingIds.length, 'pending coverage must not duplicate transactions');
+
+    await customerItems(received, [{ item_type: 'shorts', quantity: 1 }]);
+    assert.equal((await pendingCustomerItems()).some(row => row.id === received.id), false, 'saving a positive item removes the order from pending');
+    await q('delete from public.transaction_customer_items where transaction_id=$1', [received.id]);
+    assert.equal((await pendingCustomerItems()).some(row => row.id === received.id), true, 'removing all items makes the active order pending again');
+
+    await asUser(staff);
+    const staffPending = await pendingCustomerItems();
+    assert.ok(staffPending.some(row => row.id === received.id), 'Staff sees the same visible pending order through existing RLS');
     await asUser(owner);
   });
   await asUser(owner);

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import BentoCard from '../components/BentoCard'
+import CustomerItemsPendingCard from '../components/CustomerItemsPendingCard'
 import PaymentBadge from '../components/PaymentBadge'
 import UiIcon, { type IconName } from '../components/UiIcon'
 import { ButtonSpinner, InlineAlert, LoadingPanel } from '../components/UiFeedback'
@@ -8,7 +9,9 @@ import { useShopDate } from '../hooks/useShopDate'
 import { useTransactions } from '../hooks/useTransactions'
 import { useAuth } from '../lib/auth-context'
 import { supabase } from '../lib/supabase'
+import { useShopSettings } from '../lib/shop-settings-context'
 import { calculateSalesMetrics } from '../lib/sales-metrics'
+import { canEditCustomerItems, isCustomerItemsPending, PENDING_CUSTOMER_ITEM_STATUSES } from '../lib/customer-items-pending'
 import type { InventoryItemSummary } from '../types/database'
 
 const peso = (value: number) =>
@@ -16,6 +19,7 @@ const peso = (value: number) =>
 
 export default function HomePage() {
   const { profile } = useAuth()
+  const { settings } = useShopSettings()
   const today = useShopDate()
   const isOwner = profile?.role === 'owner'
   const monthStart = `${today.slice(0, 8)}01`
@@ -31,11 +35,30 @@ export default function HomePage() {
     fetchAll: true,
     paymentMethod: 'pay_later',
   })
+  const {
+    rows: pendingCoverageRows,
+    loading: pendingLoading,
+    error: pendingError,
+    realtimeState: pendingRealtimeState,
+    reload: reloadPending,
+  } = useTransactions({
+    dateTo: today,
+    limit: 1000,
+    fetchAll: true,
+    orderStatuses: PENDING_CUSTOMER_ITEM_STATUSES,
+    includeCustomerItemCoverage: true,
+  })
+
+  const pendingRows = useMemo(
+    () => pendingCoverageRows.filter(isCustomerItemsPending),
+    [pendingCoverageRows],
+  )
 
   const reload = useCallback(() => {
     void reloadActivity()
     void reloadOutstanding()
-  }, [reloadActivity, reloadOutstanding])
+    void reloadPending()
+  }, [reloadActivity, reloadOutstanding, reloadPending])
 
   const stats = useMemo(() => {
     const periodMetrics = calculateSalesMetrics(rows, today, monthStart)
@@ -54,10 +77,10 @@ export default function HomePage() {
     }
   }, [monthStart, outstandingRows, rows, today])
 
-  const combinedError = error || outstandingError
-  const realtimeOffline = [realtimeState, outstandingRealtimeState].some((state) => state === 'disconnected' || state === 'error')
+  const combinedError = error || outstandingError || pendingError
+  const realtimeOffline = [realtimeState, outstandingRealtimeState, pendingRealtimeState].some((state) => state === 'disconnected' || state === 'error')
 
-  if ((loading || outstandingLoading) && rows.length === 0 && outstandingRows.length === 0) {
+  if ((loading || outstandingLoading || pendingLoading) && rows.length === 0 && outstandingRows.length === 0 && pendingCoverageRows.length === 0) {
     return <LoadingPanel label="Opening today's shop view…" slowLabel="Still loading today's laundry activity…" />
   }
 
@@ -107,6 +130,14 @@ export default function HomePage() {
         <MetricCard label="Orders" value={String(stats.orders)} hint="Active transactions" icon="orders" />
         <MetricCard label="Outstanding Pay Later" value={peso(stats.outstandingPayLater)} hint={isOwner ? `Since ${monthStart}` : "Today's receivables"} icon="alert" tone={stats.outstandingPayLater > 0 ? 'warning' : 'default'} />
       </section>
+
+      <CustomerItemsPendingCard
+        rows={pendingRows}
+        loading={pendingLoading}
+        error={pendingError}
+        canEdit={canEditCustomerItems(profile?.role, settings.staff_can_edit_transactions)}
+        onRefresh={() => void reloadPending()}
+      />
 
       {isOwner && <LowStockInventory />}
 

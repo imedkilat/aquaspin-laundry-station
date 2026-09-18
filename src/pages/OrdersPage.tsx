@@ -11,6 +11,7 @@ import { useTransactions } from '../hooks/useTransactions'
 import { useAuth } from '../lib/auth-context'
 import { shopDateDaysAgo } from '../lib/date'
 import { useShopSettings } from '../lib/shop-settings-context'
+import { isCustomerItemsPending } from '../lib/customer-items-pending'
 import type { PaymentMethod, TransactionWithService } from '../types/database'
 
 const peso = (value: number) =>
@@ -27,6 +28,7 @@ export default function OrdersPage() {
   const [dateTo, setDateTo] = useState(today)
   const [search, setSearch] = useState('')
   const [methodFilter, setMethodFilter] = useState<PaymentMethod | 'all'>('all')
+  const [customerItemsFilter, setCustomerItemsFilter] = useState<'all' | 'pending'>('all')
   const [showDeleted, setShowDeleted] = useState(false)
   const [editingTransaction, setEditingTransaction] = useState<TransactionWithService | null>(null)
   const [deletingTransaction, setDeletingTransaction] = useState<TransactionWithService | null>(null)
@@ -40,17 +42,19 @@ export default function OrdersPage() {
     limit: 1000,
     includeDeleted: isOwner && showDeleted,
     fetchAll: true,
+    includeCustomerItemCoverage: true,
   })
 
   const filtered = useMemo(() => {
     const needle = search.trim().toLowerCase()
     return rows.filter((row) => {
       if (methodFilter !== 'all' && row.payment_method !== methodFilter) return false
+      if (customerItemsFilter === 'pending' && !isCustomerItemsPending(row)) return false
       if (!needle) return true
       return [row.customer_name, row.phone_number || '', row.transaction_code || '']
         .some((value) => value.toLowerCase().includes(needle))
     })
-  }, [rows, search, methodFilter])
+  }, [rows, search, methodFilter, customerItemsFilter])
 
   const stats = useMemo(() => {
     const activeRows = filtered.filter((row) => !row.deleted_at)
@@ -114,7 +118,7 @@ export default function OrdersPage() {
         </section>
 
         <BentoCard title="Find an order" description="Search by customer, phone, transaction ID, payment method, or date range." icon="search">
-          <div className="grid gap-3 lg:grid-cols-[1fr_auto_auto] lg:items-end">
+          <div className="grid gap-3 lg:grid-cols-[1fr_auto_auto_auto] lg:items-end">
             <div>
               <label htmlFor="orders-search" className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Search</label>
               <input
@@ -137,6 +141,18 @@ export default function OrdersPage() {
                 <option value="paid">Cash</option>
                 <option value="gcash">GCash</option>
                 <option value="pay_later">Pay Later</option>
+              </select>
+            </div>
+            <div>
+              <label htmlFor="orders-customer-items" className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Customer items</label>
+              <select
+                id="orders-customer-items"
+                value={customerItemsFilter}
+                onChange={(event) => setCustomerItemsFilter(event.target.value as 'all' | 'pending')}
+                className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950 lg:w-48"
+              >
+                <option value="all">All item lists</option>
+                <option value="pending">Customer Items Pending</option>
               </select>
             </div>
             <button
