@@ -9,6 +9,7 @@ import { ButtonSpinner, InlineAlert, LoadingPanel } from './UiFeedback'
 import InventoryUsageFields from './InventoryUsageFields'
 import {
   emptyInventoryUsageDraft,
+  OTHER_INVENTORY_SOURCE,
   inventoryUsageIsComplete,
   useInventoryConsumables,
   type InventoryUsageDraft,
@@ -79,10 +80,12 @@ export default function EditTransactionModal({ transaction, onClose }: { transac
   const [selectedAddOns, setSelectedAddOns] = useState<Record<string, number>>(() => addOnsFromItems(transaction.add_on_items))
   const [inventoryUsage, setInventoryUsage] = useState<InventoryUsageDraft>(() => ({
     ...emptyInventoryUsageDraft(),
-    detergent_item_id: transaction.detergent_item_id ?? '',
+    detergent_item_id: transaction.detergent_source === 'customer_supplied' ? OTHER_INVENTORY_SOURCE : transaction.detergent_item_id ?? '',
     detergent_quantity: transaction.detergent_quantity != null ? String(transaction.detergent_quantity) : '',
-    fabric_conditioner_item_id: transaction.fabric_conditioner_item_id ?? '',
+    detergent_other_reason: transaction.detergent_other_reason ?? '',
+    fabric_conditioner_item_id: transaction.fabric_conditioner_source === 'customer_supplied' ? OTHER_INVENTORY_SOURCE : transaction.fabric_conditioner_item_id ?? '',
     fabric_conditioner_quantity: transaction.fabric_conditioner_quantity != null ? String(transaction.fabric_conditioner_quantity) : '',
+    fabric_conditioner_other_reason: transaction.fabric_conditioner_other_reason ?? '',
   }))
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -257,7 +260,7 @@ export default function EditTransactionModal({ transaction, onClose }: { transac
         return
       }
       if (transaction.order_status !== 'completed' && !inventoryUsageIsComplete(inventoryUsage)) {
-        setError('Select a Liquid Detergent item, Fabric Conditioner item, and enter both quantities before saving.')
+        setError('Complete both inventory usage details. If the customer supplied a product, select Other and enter the reason.')
         return
       }
       if (settings.require_pickup_date && !form.pickup_date) {
@@ -297,6 +300,9 @@ export default function EditTransactionModal({ transaction, onClose }: { transac
 
       setSaving(true)
 
+      const detergentCustomerSupplied = inventoryUsage.detergent_item_id === OTHER_INVENTORY_SOURCE
+      const conditionerCustomerSupplied = inventoryUsage.fabric_conditioner_item_id === OTHER_INVENTORY_SOURCE
+
       const { data: updatedRows, error: updateError } = await supabase
         .from('transactions')
         .update({
@@ -304,10 +310,14 @@ export default function EditTransactionModal({ transaction, onClose }: { transac
           phone_number: form.phone_number.trim() || null,
           transaction_date: form.transaction_date,
           service_id: form.service_id,
-          detergent_item_id: inventoryUsage.detergent_item_id || null,
-          detergent_quantity: inventoryUsage.detergent_quantity ? Number(inventoryUsage.detergent_quantity) : null,
-          fabric_conditioner_item_id: inventoryUsage.fabric_conditioner_item_id || null,
-          fabric_conditioner_quantity: inventoryUsage.fabric_conditioner_quantity ? Number(inventoryUsage.fabric_conditioner_quantity) : null,
+          detergent_source: detergentCustomerSupplied ? 'customer_supplied' : 'inventory',
+          detergent_item_id: detergentCustomerSupplied ? null : inventoryUsage.detergent_item_id || null,
+          detergent_quantity: detergentCustomerSupplied ? null : inventoryUsage.detergent_quantity ? Number(inventoryUsage.detergent_quantity) : null,
+          detergent_other_reason: detergentCustomerSupplied ? inventoryUsage.detergent_other_reason.trim() : null,
+          fabric_conditioner_source: conditionerCustomerSupplied ? 'customer_supplied' : 'inventory',
+          fabric_conditioner_item_id: conditionerCustomerSupplied ? null : inventoryUsage.fabric_conditioner_item_id || null,
+          fabric_conditioner_quantity: conditionerCustomerSupplied ? null : inventoryUsage.fabric_conditioner_quantity ? Number(inventoryUsage.fabric_conditioner_quantity) : null,
+          fabric_conditioner_other_reason: conditionerCustomerSupplied ? inventoryUsage.fabric_conditioner_other_reason.trim() : null,
           kg: form.kg ? Number(form.kg) : null,
           no_of_loads: form.no_of_loads ? Number(form.no_of_loads) : null,
           base_amount: form.base_amount ? Number(form.base_amount) : 0,
