@@ -9,6 +9,13 @@ import type { PaymentMethod, TransactionAddOnItem } from '../types/database'
 import { shopDate } from '../lib/date'
 import { toTitleCaseName } from '../lib/text'
 import { ButtonSpinner, InlineAlert, LoadingPanel } from './UiFeedback'
+import InventoryUsageFields from './InventoryUsageFields'
+import {
+  emptyInventoryUsageDraft,
+  inventoryUsageIsComplete,
+  useInventoryConsumables,
+  type InventoryUsageDraft,
+} from '../hooks/useInventoryConsumables'
 
 const makeEmptyForm = (defaultPaymentMethod: PaymentMethod) => ({
   customer_name: '',
@@ -46,11 +53,13 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
   const { rows: customers, loading: customersLoading, error: customersError } = useCustomers()
   const { profile } = useAuth()
   const { settings } = useShopSettings()
+  const { detergentItems, fabricConditionerItems, loading: inventoryLoading, error: inventoryError } = useInventoryConsumables()
   const isOwner = profile?.role === 'owner'
   const canCreate = isOwner || settings.staff_can_create_transactions
 
   const [form, setForm] = useState<TransactionFormState>(() => makeEmptyForm(settings.default_payment_method))
   const [selectedAddOns, setSelectedAddOns] = useState<Record<string, number>>({})
+  const [inventoryUsage, setInventoryUsage] = useState<InventoryUsageDraft>(() => emptyInventoryUsageDraft())
   const [totalTouched, setTotalTouched] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -215,8 +224,13 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
   const resetForm = () => {
     setForm(makeEmptyForm(settings.default_payment_method))
     setSelectedAddOns({})
+    setInventoryUsage(emptyInventoryUsageDraft())
     setTotalTouched(false)
     setClientRequestId(crypto.randomUUID())
+  }
+
+  const updateInventoryUsage = (field: keyof InventoryUsageDraft, value: string) => {
+    setInventoryUsage((current) => ({ ...current, [field]: value }))
   }
 
   const handleSubmit = async (e: FormEvent) => {
@@ -243,6 +257,14 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
       }
       if (isWeightBased && (!form.kg || Number(form.kg) <= 0)) {
         setError('Enter the Kg after selecting the service so Loads and Base Amount can be calculated.')
+        return
+      }
+      if (inventoryError) {
+        setError('Inventory items could not be loaded. Refresh the page before saving the transaction.')
+        return
+      }
+      if (!inventoryUsageIsComplete(inventoryUsage)) {
+        setError('Select a Liquid Detergent item, Fabric Conditioner item, and enter both quantities before saving.')
         return
       }
       if (settings.require_pickup_date && !form.pickup_date) {
@@ -288,6 +310,10 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
         phone_number: form.phone_number.trim() || null,
         transaction_date: form.transaction_date,
         service_id: form.service_id,
+        detergent_item_id: inventoryUsage.detergent_item_id,
+        detergent_quantity: Number(inventoryUsage.detergent_quantity),
+        fabric_conditioner_item_id: inventoryUsage.fabric_conditioner_item_id,
+        fabric_conditioner_quantity: Number(inventoryUsage.fabric_conditioner_quantity),
         kg: form.kg ? Number(form.kg) : null,
         no_of_loads: form.no_of_loads ? Number(form.no_of_loads) : null,
         base_amount: form.base_amount ? Number(form.base_amount) : 0,
@@ -548,7 +574,7 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
       {error && <InlineAlert variant="error" title="Transaction was not saved">{error}</InlineAlert>}
       {success && <InlineAlert variant="success" title="Transaction saved">{success}</InlineAlert>}
 
-      <button type="submit" disabled={submitting || servicesLoading} className="inline-flex items-center gap-2 bg-sky-600 hover:bg-sky-700 disabled:opacity-60 text-white font-medium rounded-lg px-4 py-2 text-sm transition">
+      <button type="submit" disabled={submitting || servicesLoading || inventoryLoading} className="inline-flex items-center gap-2 bg-sky-600 hover:bg-sky-700 disabled:opacity-60 text-white font-medium rounded-lg px-4 py-2 text-sm transition">
         {submitting && <ButtonSpinner />}{submitting ? 'Saving…' : 'Add Transaction'}
       </button>
     </form>
