@@ -121,4 +121,3 @@ export function openTransactionReceipt({
 </html>`)
   receiptWindow.document.close()
 }
-

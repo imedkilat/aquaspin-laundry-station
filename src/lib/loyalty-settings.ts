@@ -8,4 +8,3 @@ export const DEFAULT_LOYALTY_SETTINGS: LoyaltySettings = {
   updated_at: new Date(0).toISOString(),
   updated_by: null,
 }
-

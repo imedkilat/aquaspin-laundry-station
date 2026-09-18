@@ -10,6 +10,8 @@ import type {
   InventoryUnit,
 } from '../types/database'
 import { ButtonSpinner, EmptyState, InlineAlert, LoadingPanel } from './UiFeedback'
+import BentoCard from './BentoCard'
+import UiIcon from './UiIcon'
 
 const INPUT = 'w-full rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100'
 const UNITS: InventoryUnit[] = ['pcs', 'ml', 'L', 'g', 'kg']
@@ -149,17 +151,21 @@ export default function InventoryManager() {
           <h1 className="mt-1 text-2xl font-semibold text-slate-900 dark:text-slate-100">Inventory & Consumables</h1>
           <p className="mt-1 max-w-2xl text-sm text-slate-500">Set up supplies and record every stock movement. Balances come from the append-only ledger, not manually editable quantity fields.</p>
         </div>
-        <button type="button" onClick={() => void load(true)} disabled={loading || refreshing} className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">{refreshing ? 'Refreshing…' : '↻ Refresh'}</button>
+        <button type="button" onClick={() => void load(true)} disabled={loading || refreshing} className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 disabled:opacity-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"><UiIcon name="refresh" size={16} />{refreshing ? 'Refreshing…' : 'Refresh'}</button>
       </div>
 
       {error && <InlineAlert variant="error" title="Inventory could not be refreshed" actionLabel="Try again" onAction={() => void load()}>{error} Existing loaded rows remain visible.</InlineAlert>}
       {notice && <InlineAlert variant={notice.type}>{notice.text}</InlineAlert>}
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-        <Metric label="Active items" value={String(items.filter((item) => item.active).length)} hint={`${items.length} total configured`} />
-        <Metric label="Low stock" value={String(lowStockCount)} hint="Active items at or below threshold" />
-        <Metric label="Stock value" value={peso(totalStockValue)} hint="Based on average cost × ledger balance" />
+        <Metric label="Active items" value={String(items.filter((item) => item.active).length)} hint={`${items.length} total configured`} icon="box" />
+        <Metric label="Low stock" value={String(lowStockCount)} hint="Active items at or below threshold" icon="alert" warning={lowStockCount > 0} />
+        <Metric label="Stock value" value={peso(totalStockValue)} hint="Based on average cost × ledger balance" icon="money" />
       </div>
+
+      {lowStockCount > 0 && <BentoCard title={`${lowStockCount} item${lowStockCount === 1 ? '' : 's'} need restocking`} description="Review the highlighted items and record stock in from their movement controls." icon="alert" tone="amber" action={<button type="button" onClick={() => document.getElementById('inventory-items')?.scrollIntoView({ behavior: 'smooth', block: 'start' })} className="inline-flex items-center gap-2 rounded-lg border border-amber-300 px-3 py-2 text-sm font-medium text-amber-800 hover:bg-amber-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 dark:border-amber-800 dark:text-amber-200 dark:hover:bg-amber-950/60"><UiIcon name="box" size={16} />Review items</button>}>
+        <p className="text-sm text-amber-800 dark:text-amber-200">Low-stock balances are calculated from the inventory ledger and remain visible until replenished.</p>
+      </BentoCard>}
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
         <form onSubmit={addCategory} className="rounded-2xl border border-slate-200 bg-white p-5 space-y-4 dark:border-slate-800 dark:bg-slate-900">
@@ -185,7 +191,7 @@ export default function InventoryManager() {
         </form>
       </div>
 
-      <section className="rounded-2xl border border-slate-200 bg-white p-5 space-y-4 dark:border-slate-800 dark:bg-slate-900">
+      <section id="inventory-items" className="scroll-mt-6 rounded-2xl border border-slate-200 bg-white p-5 space-y-4 shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:border-slate-800 dark:bg-slate-900">
         <div><h2 className="font-semibold text-slate-900 dark:text-slate-100">Inventory Items</h2><p className="mt-1 text-sm text-slate-500">Edit item settings or record a stock movement. Quantity is always calculated from the ledger.</p></div>
         {loading ? <LoadingPanel label="Loading inventory…" slowLabel="Still loading inventory… the connection may be slow." /> : items.length === 0 ? <EmptyState title="No inventory items yet" description="Add a category and item above to start tracking supplies." /> : <div className="space-y-3">{items.map((item) => <InventoryItemRow key={item.id} item={item} summary={summaryMap.get(item.id)} categories={categories} onSaved={() => void load(true)} />)}</div>}
       </section>
@@ -331,7 +337,7 @@ function InventoryItemRow({ item, summary, categories, onSaved }: { item: Invent
     <div className={`rounded-xl border p-4 ${lowStock ? 'border-amber-300 bg-amber-50/50 dark:border-amber-800 dark:bg-amber-950/20' : 'border-slate-200 dark:border-slate-700'}`}>
       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
         <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><p className="font-semibold text-slate-900 dark:text-slate-100">{item.item_name}</p><span className={item.active ? 'rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-medium text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300' : 'rounded-full bg-slate-200 px-2 py-0.5 text-[11px] font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-400'}>{item.active ? 'Active' : 'Inactive'}</span>{lowStock && <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-700 dark:bg-amber-950 dark:text-amber-300">Low stock</span>}</div><p className="mt-1 text-xs text-slate-500">{summary?.category_name ?? 'Uncategorized'} · {item.unit_label} · {peso(stockValue)} stock value</p></div>
-        <div className="flex flex-wrap items-center gap-2"><div className="rounded-lg bg-slate-50 px-3 py-2 text-right dark:bg-slate-950"><p className="text-[11px] text-slate-500">Balance</p><p className="font-semibold text-slate-900 dark:text-slate-100">{currentQuantity} {item.unit_label}</p></div><button type="button" onClick={() => { setMovementOpen((open) => !open); setNotice(null) }} className="rounded-lg bg-emerald-600 px-3 py-2 text-sm font-medium text-white hover:bg-emerald-700">{movementOpen ? 'Close movement' : 'Record movement'}</button><button type="button" onClick={() => { setEditing((open) => !open); setNotice(null) }} className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">{editing ? 'Close edit' : 'Edit item'}</button></div>
+        <div className="flex flex-wrap items-center gap-2"><div className="rounded-lg bg-slate-50 px-3 py-2 text-right dark:bg-slate-950"><p className="text-[11px] text-slate-500">Balance</p><p className="font-semibold text-slate-900 dark:text-slate-100">{currentQuantity} {item.unit_label}</p></div><button type="button" onClick={() => { setMovementOpen((open) => !open); setNotice(null) }} className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-3 py-2 text-sm font-medium text-white hover:bg-emerald-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"><UiIcon name="box" size={16} />{movementOpen ? 'Close movement' : 'Record movement'}</button><button type="button" onClick={() => { setEditing((open) => !open); setNotice(null) }} className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"><UiIcon name="settings" size={16} />{editing ? 'Close edit' : 'Edit item'}</button></div>
       </div>
 
       {editing && <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 rounded-xl bg-slate-50 p-3 dark:bg-slate-950"><Field label="Item name"><input value={name} onChange={(event) => setName(event.target.value)} maxLength={120} className={INPUT} /></Field><Field label="Category"><select value={categoryId} onChange={(event) => setCategoryId(event.target.value)} className={INPUT}><option value="">Uncategorized</option>{categories.map((category) => <option key={category.id} value={category.id}>{category.name}{category.active ? '' : ' (inactive)'}</option>)}</select></Field><Field label="Unit"><select value={unit} onChange={(event) => setUnit(event.target.value as InventoryUnit)} className={INPUT}>{UNITS.map((value) => <option key={value} value={value}>{value}</option>)}</select></Field><Field label="Reorder threshold"><input type="number" min="0" step="0.001" value={threshold} onChange={(event) => setThreshold(event.target.value)} className={INPUT} /></Field><Field label="Average cost (₱)"><input type="number" min="0" step="0.01" value={cost} onChange={(event) => setCost(event.target.value)} className={INPUT} /></Field><Field label="Notes"><input value={notes} onChange={(event) => setNotes(event.target.value)} maxLength={500} className={INPUT} /></Field><label className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300"><input type="checkbox" checked={active} onChange={(event) => setActive(event.target.checked)} />Active item</label><div className="sm:col-span-2 lg:col-span-2 flex flex-wrap items-center gap-2"><button type="button" onClick={() => void save()} disabled={saving} className="inline-flex items-center gap-2 rounded-lg bg-sky-600 px-4 py-2 text-sm font-medium text-white hover:bg-sky-700 disabled:opacity-60">{saving && <ButtonSpinner />}{saving ? 'Saving…' : 'Save item'}</button><button type="button" onClick={() => void deletePermanently()} disabled={saving} className="rounded-lg border border-rose-300 px-3 py-2 text-sm font-medium text-rose-700 hover:bg-rose-50 disabled:opacity-60 dark:border-rose-900 dark:text-rose-300 dark:hover:bg-rose-950/30">Delete permanently</button></div></div>}
@@ -347,6 +353,6 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   return <label className="block text-xs font-medium text-slate-600 dark:text-slate-400">{label}<span className="mt-1 block">{children}</span></label>
 }
 
-function Metric({ label, value, hint }: { label: string; value: string; hint: string }) {
-  return <div className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900"><p className="text-xs text-slate-500">{label}</p><p className="mt-1 text-2xl font-semibold text-slate-900 dark:text-slate-100">{value}</p><p className="mt-1 text-xs text-slate-400">{hint}</p></div>
+function Metric({ label, value, hint, icon, warning = false }: { label: string; value: string; hint: string; icon: 'box' | 'alert' | 'money'; warning?: boolean }) {
+  return <div className={`rounded-2xl border bg-white p-4 shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:bg-slate-900 ${warning ? 'border-amber-200 dark:border-amber-900' : 'border-slate-200 dark:border-slate-800'}`}><span className={`mb-3 flex h-9 w-9 items-center justify-center rounded-xl ${warning ? 'bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300' : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'}`}><UiIcon name={icon} size={18} /></span><p className="text-xs text-slate-500">{label}</p><p className={`mt-1 text-2xl font-semibold ${warning ? 'text-amber-700 dark:text-amber-300' : 'text-slate-900 dark:text-slate-100'}`}>{value}</p><p className="mt-1 text-xs text-slate-400">{hint}</p></div>
 }

@@ -236,6 +236,26 @@ export type TransactionAddOnItem = {
   line_total: number
 }
 
+export type CustomerItemType = 'shorts' | 't_shirts' | 'pants' | 'underwear' | 'dresses' | 'towels' | 'bedsheets' | 'jackets' | 'other'
+
+export type TransactionCustomerItem = {
+  id: string
+  transaction_id: string
+  item_type: CustomerItemType
+  quantity: number
+  custom_item_name: string | null
+  created_at: string
+  updated_at: string
+  created_by: string
+  updated_by: string
+}
+
+export type TransactionCustomerItemInput = {
+  item_type: CustomerItemType
+  quantity: number
+  custom_item_name?: string | null
+}
+
 export type Transaction = {
   id: string
   transaction_no: number
@@ -375,6 +395,27 @@ export type Database = {
           staff_can_view_historical_pay_later?: boolean
           staff_can_edit_own_profile?: boolean
           staff_can_manage_customers?: boolean
+        }
+        Relationships: []
+      }
+      transaction_customer_items: {
+        Row: TransactionCustomerItem
+        Insert: {
+          id?: string
+          transaction_id: string
+          item_type: CustomerItemType
+          quantity: number
+          custom_item_name?: string | null
+          created_at?: string
+          updated_at?: string
+          created_by: string
+          updated_by: string
+        }
+        Update: {
+          quantity?: number
+          custom_item_name?: string | null
+          updated_at?: string
+          updated_by?: string
         }
         Relationships: []
       }
@@ -720,6 +761,13 @@ export type Database = {
           p_override?: boolean
         }
         Returns: Transaction
+      }
+      save_transaction_customer_items: {
+        Args: {
+          p_transaction_id: string
+          p_items: TransactionCustomerItemInput[]
+        }
+        Returns: TransactionCustomerItem[]
       }
       soft_delete_transaction: {
         Args: {
