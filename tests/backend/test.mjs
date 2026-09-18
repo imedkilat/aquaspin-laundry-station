@@ -49,6 +49,9 @@ async function fresh(id) { return one('select *, updated_at::text as token from 
 async function status(t, next, reason = null, override = false) {
   return one('select *, updated_at::text as token from public.set_transaction_status($1,$2,$3,$4,$5)', [t.id, next, t.token, reason, override]);
 }
+async function customerItems(t, items) {
+  return q('select * from public.save_transaction_customer_items($1,$2::jsonb)', [t.id, JSON.stringify(items)]);
+}
 async function softDelete(t, reason = 'Routine deletion') {
   return one('select * from public.soft_delete_transaction($1,$2,$3)', [t.id, t.token, reason]);
 }
@@ -93,7 +96,7 @@ try {
   await q("update public.transactions set deleted_at=now(), delete_reason='Duplicate entry' where id=$1", [legacyDeleted.id]);
   await admin();
   const migrations = filenames.filter(isCustomerStatusMigration);
-  assert.equal(migrations.length, 4, 'All forward customer/status migrations must exist');
+  assert.equal(migrations.length, 5, 'All forward customer/status migrations must exist');
   await test('migration 1 denies status and SMS direct UPDATE with drifted columns', async () => {
     const before = await one("select count(*)::int as count from pg_attribute where attrelid='public.transactions'::regclass and attname in ('sms_sent_at','sms_sent_by','sms_message_id') and not attisdropped");
     assert.equal(before.count, 0, 'Baseline schema has no optional SMS audit columns');
@@ -136,11 +139,43 @@ try {
   });
   await admin();
   await db.exec(await read('supabase/migrations/' + migrations[3]));
+  await db.exec(await read('supabase/migrations/' + migrations[4]));
   await db.exec(await read('supabase/migrations/' + deferredBeforeStatus));
   for (const file of filenames.filter(f => !early.includes(f) && !isCustomerStatusMigration(f) && migrationNumber(f) > 20260921050000n)) {
     await db.exec(await read('supabase/migrations/' + file));
   }
   inventoryUsageEnabled = true;
+  await asUser(owner);
+  await test('customer item workflow enforces validation, permissions, completion, and history', async () => {
+    const grants = await one("select has_function_privilege('authenticated','public.save_transaction_customer_items(uuid,jsonb)','execute') auth_ok, has_function_privilege('anon','public.save_transaction_customer_items(uuid,jsonb)','execute') anon_ok");
+    assert.equal(grants.auth_ok, true); assert.equal(grants.anon_ok, false);
+    assert.equal((await q("select * from pg_publication_tables where pubname='supabase_realtime' and tablename='transaction_customer_items'")).length, 1);
+    const empty = await transaction({ customer_name: 'No item list yet', phone_number: null });
+    assert.equal((await q('select id from transaction_customer_items where transaction_id=$1', [empty.id])).length, 0);
+    const existingWithoutItems = await fresh(legacy.id);
+    assert.equal((await q('select id from transaction_customer_items where transaction_id=$1', [existingWithoutItems.id])).length, 0);
+    await assert.rejects(status(existingWithoutItems, 'completed'), e => e.code === '23514' && e.message.includes("Please record the customer's item list before completing this order."));
+    assert.equal((await fresh(existingWithoutItems.id)).order_status, 'received');
+    await asUser(staff);
+    const staffOrder = await transaction({ created_by: staff, customer_name: 'Staff clothing items', phone_number: null });
+    assert.equal((await customerItems(staffOrder, [{ item_type: 'shorts', quantity: 2 }, { item_type: 'other', quantity: 1, custom_item_name: 'Blanket' }])).length, 2);
+    await asUser(owner);
+    assert.equal((await customerItems(staffOrder, [{ item_type: 'shorts', quantity: 4 }, { item_type: 'towels', quantity: 3 }])).length, 2);
+    assert.equal((await one("select quantity from transaction_customer_items where transaction_id=$1 and item_type='shorts'", [staffOrder.id])).quantity, 4);
+    assert.equal((await q('select item_type from transaction_customer_items where transaction_id=$1', [staffOrder.id])).length, 2);
+    await assert.rejects(customerItems(staffOrder, [{ item_type: 'shorts', quantity: 0 }]), e => e.code === '22023');
+    await assert.rejects(customerItems(staffOrder, [{ item_type: 'other', quantity: 1 }]), e => e.code === '22023');
+    await assert.rejects(customerItems(staffOrder, [{ item_type: 'shorts', quantity: 1 }, { item_type: 'shorts', quantity: 2 }]), e => e.code === '22023');
+    let blocked = await transaction({ customer_name: 'Blocked completion', phone_number: null });
+    blocked = await status(blocked, 'washing'); blocked = await status(blocked, 'drying'); blocked = await status(blocked, 'ready_for_pickup');
+    await assert.rejects(status(blocked, 'completed'), e => e.code === '23514' && e.message.includes("Please record the customer's item list before completing this order."));
+    await customerItems(blocked, [{ item_type: 'pants', quantity: 1 }]);
+    blocked = await status(await fresh(blocked.id), 'completed');
+    assert.equal(blocked.order_status, 'completed');
+    assert.equal((await q('select id from transaction_customer_items where transaction_id=$1', [blocked.id])).length, 1);
+    await assert.rejects(customerItems(blocked, [{ item_type: 'pants', quantity: 2 }]), e => e.code === '42501');
+    await asUser(owner);
+  });
   await asUser(owner);
   await test('legacy NULL customer, received status and honest baseline history', async () => {
     const t = await fresh(legacy.id);
@@ -218,6 +253,7 @@ try {
     await asUser(owner);
   });
   let flow = await transaction();
+  await customerItems(flow, [{ item_type: 't_shirts', quantity: 1 }]);
   for (const next of ['washing', 'drying', 'ready_for_pickup', 'completed']) {
     await test(`${flow.order_status} -> ${next}; history and audit metadata`, async () => {
       const old = flow; flow = await status(flow, next);
@@ -247,6 +283,7 @@ try {
     resumed = await status(resumed, 'washing', 'Maintenance complete');
     resumed = await status(resumed, 'drying');
     resumed = await status(resumed, 'ready_for_pickup');
+    await customerItems(resumed, [{ item_type: 'towels', quantity: 2 }]);
     resumed = await status(resumed, 'completed');
     assert.equal(resumed.order_status, 'completed');
     let skipped = await transaction({ created_by: staff, customer_name: 'Hold resume skip' });
@@ -262,7 +299,7 @@ try {
     const t = await fresh(cash.id);
     await assert.rejects(status(t, 'invalid'), e => e.code === '22023');
     await assert.rejects(status(t, null), e => e.code === '22023');
-    await assert.rejects(status(t, 'completed'), e => e.code === '22023');
+    await assert.rejects(status(t, 'completed'), e => e.code === '22023' || e.code === '23514');
     await assert.rejects(status(t, 'received'), e => e.code === '22023');
     await assert.rejects(status({ ...t, token: null }, 'washing'), e => e.code === '22023');
   });
@@ -285,7 +322,7 @@ try {
     const t = await fresh(debt.id); await setting('staff_can_edit_transactions', false); await asUser(staff);
     await assert.rejects(status(t, 'washing'), e => e.code === '42501');
     await setting('staff_can_edit_transactions', true); await asUser(staff);
-    await assert.rejects(status(t, 'completed', 'Bypass', true), e => e.code === '42501');
+    await assert.rejects(status(t, 'completed', 'Bypass', true), e => e.code === '42501' || e.code === '23514');
     assert.equal((await status(t, 'washing')).updated_by, staff); await asUser(owner);
   });
   await test('soft delete blocks status; owner sees ledger; restore preserves lifecycle', async () => {
@@ -335,6 +372,7 @@ try {
     let skip3 = await transaction({ created_by: staff, customer_name: 'Skip drying to complete' });
     skip3 = await status(skip3, 'washing');
     skip3 = await status(skip3, 'drying');
+    await customerItems(skip3, [{ item_type: 'jackets', quantity: 1 }]);
     skip3 = await status(skip3, 'completed', 'Customer collected directly');
     assert.equal(skip3.order_status, 'completed');
     await assert.rejects(status(skip3, 'washing', 'Reopen'), e => e.code === '42501');
@@ -410,7 +448,7 @@ try {
   await test('authenticated helper EXECUTE retained; anonymous RPC denied; realtime membership unique', async () => {
     const grants = await one("select has_function_privilege('authenticated','private.has_staff_permission(text)','execute') helper, has_function_privilege('anon','public.set_transaction_status(uuid,text,timestamptz,text,boolean)','execute') anon");
     assert.equal(grants.helper, true); assert.equal(grants.anon, false);
-    for (const table of ['transactions','customers','transaction_status_history']) {
+    for (const table of ['transactions','customers','transaction_status_history','transaction_customer_items']) {
       assert.equal((await q("select * from pg_publication_tables where pubname='supabase_realtime' and tablename=$1", [table])).length, 1);
     }
   });

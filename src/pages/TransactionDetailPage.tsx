@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import ActionErrorBoundary from '../components/ActionErrorBoundary'
+import CustomerItemsCard from '../components/CustomerItemsCard'
 import DeleteTransactionModal from '../components/DeleteTransactionModal'
 import EditTransactionModal from '../components/EditTransactionModal'
 import PaymentBadge from '../components/PaymentBadge'
@@ -12,7 +13,7 @@ import { openTransactionReceipt } from '../lib/receipt'
 import { useShopSettings } from '../lib/shop-settings-context'
 import { getShopLogoUrl } from '../lib/storage-images'
 import { supabase } from '../lib/supabase'
-import type { TransactionWithService } from '../types/database'
+import type { TransactionCustomerItem, TransactionWithService } from '../types/database'
 
 const SELECT = `*, services ( code, label ),
   created_by_profile:profiles!transactions_created_by_fkey ( full_name ),
@@ -48,6 +49,7 @@ export default function TransactionDetailPage() {
   const canDelete = isOwner || settings.staff_can_delete_transactions
 
   const [transaction, setTransaction] = useState<TransactionWithService | null>(null)
+  const [customerItems, setCustomerItems] = useState<TransactionCustomerItem[]>([])
   const [history, setHistory] = useState<TransactionStatusHistoryWithActor[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -60,9 +62,10 @@ export default function TransactionDetailPage() {
     setLoading(true)
     setError(null)
 
-    const [transactionResult, historyResult] = await Promise.all([
+    const [transactionResult, historyResult, customerItemsResult] = await Promise.all([
       supabase.from('transactions').select(SELECT).eq('id', id).maybeSingle(),
       supabase.from('transaction_status_history').select(HISTORY_SELECT).eq('transaction_id', id).order('changed_at', { ascending: false }),
+      supabase.from('transaction_customer_items').select('*').eq('transaction_id', id).order('item_type'),
     ])
 
     if (transactionResult.error) {
@@ -72,6 +75,7 @@ export default function TransactionDetailPage() {
     }
 
     setTransaction((transactionResult.data as unknown as TransactionWithService | null) ?? null)
+    setCustomerItems(customerItemsResult.error ? [] : (customerItemsResult.data as unknown as TransactionCustomerItem[]) ?? [])
     if (historyResult.error) {
       setHistory([])
       setError('The order opened, but its status history could not be loaded. Refresh and try again.')
@@ -99,6 +103,11 @@ export default function TransactionDetailPage() {
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'transaction_status_history', filter: `transaction_id=eq.${id}` },
+        () => void reload()
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'transaction_customer_items', filter: `transaction_id=eq.${id}` },
         () => void reload()
       )
       .subscribe((status) => {
@@ -222,10 +231,18 @@ export default function TransactionDetailPage() {
 
         <TransactionStatusPanel
           transaction={transaction}
+          hasCustomerItems={customerItems.length > 0 && customerItems.some((item) => item.quantity > 0)}
           history={history}
           canEdit={canEdit && !transaction.deleted_at}
           isOwner={isOwner}
           onRefresh={reload}
+        />
+
+        <CustomerItemsCard
+          transactionId={transaction.id}
+          items={customerItems}
+          canEdit={canEdit && !transaction.deleted_at && !['completed', 'cancelled'].includes(transaction.order_status)}
+          onSaved={reload}
         />
 
         <section className="grid gap-4 lg:grid-cols-3">
