@@ -2,11 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { hasPositiveCustomerItems, isCustomerItemsPending, canEditCustomerItems, customerItemsHref } from '../src/lib/customer-items-pending.ts';
+import { DROP_OFF_SERVICE_CODES, SELF_SERVICE_CODES, isDropOffServiceCode } from '../src/lib/service-classification.ts';
 
 const activeRow = (order_status, overrides = {}) => ({
   id: `${order_status}-id`,
   order_status,
   deleted_at: null,
+  service_code_snapshot: 'WDF',
+  services: { code: 'WDF', label: 'Wash-Dry-Fold' },
   hasCustomerItems: false,
   ...overrides,
 });
@@ -21,6 +24,22 @@ test('positive item quantities remove an order from pending coverage', () => {
   assert.equal(hasPositiveCustomerItems([{ quantity: 0 }, { quantity: 2 }]), true);
   assert.equal(isCustomerItemsPending(activeRow('received', { hasCustomerItems: true })), false);
   assert.equal(isCustomerItemsPending(activeRow('received', { hasCustomerItems: undefined })), false, 'missing coverage fails closed');
+});
+
+test('service classification includes only the configured Drop Off codes', () => {
+  assert.deepEqual(DROP_OFF_SERVICE_CODES, ['CSDB', 'LWB', 'PWDF', 'WDF']);
+  assert.deepEqual(SELF_SERVICE_CODES, ['SSD', 'SSW', 'WDSS']);
+  for (const code of DROP_OFF_SERVICE_CODES) assert.equal(isDropOffServiceCode(code), true);
+  for (const code of SELF_SERVICE_CODES) assert.equal(isDropOffServiceCode(code), false);
+  assert.equal(isCustomerItemsPending(activeRow('received', { service_code_snapshot: 'SSD', services: { code: 'SSD', label: 'Self-Service Dry' } })), false);
+});
+
+test('frontend completion guard and editor are scoped to Drop Off services', async () => {
+  const statusPanel = await readFile(new URL('../src/components/TransactionStatusPanel.tsx', import.meta.url), 'utf8');
+  const detailPage = await readFile(new URL('../src/pages/TransactionDetailPage.tsx', import.meta.url), 'utf8');
+  assert.match(statusPanel, /const requiresCustomerItems = isDropOffTransaction\(transaction\)/);
+  assert.match(statusPanel, /status === 'completed' && requiresCustomerItems && !hasCustomerItems/);
+  assert.match(detailPage, /isDropOffTransaction\(transaction\) &&/);
 });
 
 test('Completed, Cancelled, soft-deleted, and unsupported statuses are never pending', () => {

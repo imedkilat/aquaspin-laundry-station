@@ -1,5 +1,6 @@
 import { useMemo, useState, type FormEvent } from 'react'
 import { supabase } from '../lib/supabase'
+import { isDropOffTransaction } from '../lib/service-classification'
 import type { OrderStatus, TransactionStatusHistory } from '../types/customer-status'
 import type { TransactionWithService } from '../types/database'
 import { ButtonSpinner, InlineAlert } from './UiFeedback'
@@ -63,15 +64,16 @@ export default function TransactionStatusPanel({
   const currentIndex = STATUS_ORDER.indexOf(currentStatus)
   const nextStatus = currentIndex >= 0 ? STATUS_ORDER[currentIndex + 1] : null
   const isTerminal = currentStatus === 'completed' || currentStatus === 'cancelled'
-  const completionBlocked = !hasCustomerItems && !isTerminal
+  const requiresCustomerItems = isDropOffTransaction(transaction)
+  const completionBlocked = requiresCustomerItems && !hasCustomerItems && !isTerminal
   const availableOverrideStatuses = useMemo(
-    () => (Object.keys(STATUS_LABELS) as OrderStatus[]).filter((status) => status !== currentStatus && (status !== 'completed' || hasCustomerItems)),
-    [currentStatus, hasCustomerItems],
+    () => (Object.keys(STATUS_LABELS) as OrderStatus[]).filter((status) => status !== currentStatus && (status !== 'completed' || !requiresCustomerItems || hasCustomerItems)),
+    [currentStatus, hasCustomerItems, requiresCustomerItems],
   )
 
   const changeStatus = async (status: OrderStatus, useOverride = false, actionReason = '') => {
     if (!canEdit || busy || transaction.deleted_at) return
-    if (status === 'completed' && !hasCustomerItems) {
+    if (status === 'completed' && requiresCustomerItems && !hasCustomerItems) {
       setError("Please record the customer's item list before completing this order.")
       return
     }
@@ -133,7 +135,7 @@ export default function TransactionStatusPanel({
             <button
               type="button"
               onClick={() => void changeStatus(nextStatus)}
-              disabled={busy || (nextStatus === 'completed' && !hasCustomerItems)}
+              disabled={busy || (nextStatus === 'completed' && requiresCustomerItems && !hasCustomerItems)}
               className="inline-flex items-center gap-2 rounded-xl bg-sky-600 px-3.5 py-2 text-sm font-semibold text-white hover:bg-sky-700 disabled:opacity-60"
             >
               {busy && <ButtonSpinner />}

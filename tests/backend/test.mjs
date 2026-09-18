@@ -46,6 +46,11 @@ async function transaction(fields = {}) {
   return one(`insert into public.transactions (${keys.join(',')}) values (${keys.map((_, i) => '$' + (i + 1)).join(',')}) returning *, updated_at::text as token`, Object.values(data));
 }
 async function fresh(id) { return one('select *, updated_at::text as token from public.transactions where id=$1', [id]); }
+async function serviceId(code) {
+  const service = await one('select id from public.services where code=$1', [code]);
+  assert.ok(service, `Test service ${code} must exist`);
+  return service.id;
+}
 async function status(t, next, reason = null, override = false) {
   return one('select *, updated_at::text as token from public.set_transaction_status($1,$2,$3,$4,$5)', [t.id, next, t.token, reason, override]);
 }
@@ -58,6 +63,7 @@ async function pendingCustomerItems() {
     from public.transactions t
     where t.deleted_at is null
       and t.transaction_date <= (now() at time zone 'Asia/Manila')::date
+      and private.is_drop_off_service(t.service_code_snapshot)
       and t.order_status in ('received', 'washing', 'drying', 'ready_for_pickup', 'on_hold')
       and not exists (
         select 1
@@ -163,17 +169,18 @@ try {
   inventoryUsageEnabled = true;
   await asUser(owner);
   await test('customer item workflow enforces validation, permissions, completion, and history', async () => {
+    const wdfServiceId = await serviceId('WDF');
     const grants = await one("select has_function_privilege('authenticated','public.save_transaction_customer_items(uuid,jsonb)','execute') auth_ok, has_function_privilege('anon','public.save_transaction_customer_items(uuid,jsonb)','execute') anon_ok");
     assert.equal(grants.auth_ok, true); assert.equal(grants.anon_ok, false);
     assert.equal((await q("select * from pg_publication_tables where pubname='supabase_realtime' and tablename='transaction_customer_items'")).length, 1);
-    const empty = await transaction({ customer_name: 'No item list yet', phone_number: null });
+    const empty = await transaction({ customer_name: 'No item list yet', phone_number: null, service_id: wdfServiceId });
     assert.equal((await q('select id from transaction_customer_items where transaction_id=$1', [empty.id])).length, 0);
-    const existingWithoutItems = await fresh(legacy.id);
+    const existingWithoutItems = await transaction({ customer_name: 'Existing Drop Off without items', phone_number: null, service_id: wdfServiceId });
     assert.equal((await q('select id from transaction_customer_items where transaction_id=$1', [existingWithoutItems.id])).length, 0);
     await assert.rejects(status(existingWithoutItems, 'completed'), e => e.code === '23514' && e.message.includes("Please record the customer's item list before completing this order."));
     assert.equal((await fresh(existingWithoutItems.id)).order_status, 'received');
     await asUser(staff);
-    const staffOrder = await transaction({ created_by: staff, customer_name: 'Staff clothing items', phone_number: null });
+    const staffOrder = await transaction({ created_by: staff, customer_name: 'Staff clothing items', phone_number: null, service_id: wdfServiceId });
     assert.equal((await customerItems(staffOrder, [{ item_type: 'shorts', quantity: 2 }, { item_type: 'other', quantity: 1, custom_item_name: 'Blanket' }])).length, 2);
     await asUser(owner);
     assert.equal((await customerItems(staffOrder, [{ item_type: 'shorts', quantity: 4 }, { item_type: 'towels', quantity: 3 }])).length, 2);
@@ -182,7 +189,7 @@ try {
     await assert.rejects(customerItems(staffOrder, [{ item_type: 'shorts', quantity: 0 }]), e => e.code === '22023');
     await assert.rejects(customerItems(staffOrder, [{ item_type: 'other', quantity: 1 }]), e => e.code === '22023');
     await assert.rejects(customerItems(staffOrder, [{ item_type: 'shorts', quantity: 1 }, { item_type: 'shorts', quantity: 2 }]), e => e.code === '22023');
-    let blocked = await transaction({ customer_name: 'Blocked completion', phone_number: null });
+    let blocked = await transaction({ customer_name: 'Blocked completion', phone_number: null, service_id: wdfServiceId });
     blocked = await status(blocked, 'washing'); blocked = await status(blocked, 'drying'); blocked = await status(blocked, 'ready_for_pickup');
     await assert.rejects(status(blocked, 'completed'), e => e.code === '23514' && e.message.includes("Please record the customer's item list before completing this order."));
     await customerItems(blocked, [{ item_type: 'pants', quantity: 1 }]);
@@ -193,24 +200,25 @@ try {
     await asUser(owner);
   });
   await test('customer items pending coverage follows status, quantity, date, deletion, and RLS rules', async () => {
-    const received = await transaction({ customer_name: 'Pending received', phone_number: null });
-    let washing = await transaction({ customer_name: 'Pending washing', phone_number: null });
+    const wdfServiceId = await serviceId('WDF');
+    const received = await transaction({ customer_name: 'Pending received', phone_number: null, service_id: wdfServiceId });
+    let washing = await transaction({ customer_name: 'Pending washing', phone_number: null, service_id: wdfServiceId });
     washing = await status(washing, 'washing');
-    let ready = await transaction({ customer_name: 'Pending ready', phone_number: null });
+    let ready = await transaction({ customer_name: 'Pending ready', phone_number: null, service_id: wdfServiceId });
     ready = await status(ready, 'ready_for_pickup', 'Wash and dry completed');
-    const covered = await transaction({ customer_name: 'Covered item list', phone_number: null });
+    const covered = await transaction({ customer_name: 'Covered item list', phone_number: null, service_id: wdfServiceId });
     await customerItems(covered, [{ item_type: 'towels', quantity: 2 }]);
-    let completed = await transaction({ customer_name: 'Completed item list', phone_number: null });
+    let completed = await transaction({ customer_name: 'Completed item list', phone_number: null, service_id: wdfServiceId });
     await customerItems(completed, [{ item_type: 'pants', quantity: 1 }]);
     completed = await status(completed, 'washing');
     completed = await status(completed, 'drying');
     completed = await status(completed, 'ready_for_pickup');
     completed = await status(completed, 'completed');
-    const cancelled = await transaction({ customer_name: 'Cancelled no item list', phone_number: null });
+    const cancelled = await transaction({ customer_name: 'Cancelled no item list', phone_number: null, service_id: wdfServiceId });
     await status(cancelled, 'cancelled', 'Customer cancelled');
-    const deleted = await transaction({ customer_name: 'Deleted no item list', phone_number: null });
+    const deleted = await transaction({ customer_name: 'Deleted no item list', phone_number: null, service_id: wdfServiceId });
     await softDelete(deleted, 'Duplicate pending fixture');
-    const future = await transaction({ customer_name: 'Future no item list', phone_number: null, transaction_date: '2099-01-01' });
+    const future = await transaction({ customer_name: 'Future no item list', phone_number: null, service_id: wdfServiceId, transaction_date: '2099-01-01' });
 
     const pending = await pendingCustomerItems();
     const pendingIds = pending.map(row => row.id);
@@ -232,6 +240,54 @@ try {
     await asUser(staff);
     const staffPending = await pendingCustomerItems();
     assert.ok(staffPending.some(row => row.id === received.id), 'Staff sees the same visible pending order through existing RLS');
+    await asUser(owner);
+  });
+  await test('customer item requirements apply only to Drop Off services', async () => {
+    await admin();
+    await q(`
+      insert into public.services (code, label, default_rate, pricing_type, max_kg_per_load)
+      values
+        ('LWB', 'Laundry Wash Basic', 100, 'per_load_by_weight', 8),
+        ('PWDF', 'Premium Wash-Dry-Fold', 250, 'per_load_by_weight', 8),
+        ('WDSS', 'Self-Service Wash-Dry', 120, 'per_load_by_weight', 8)
+      on conflict (code) do nothing
+    `);
+    const classification = await q(`
+      select code, private.is_drop_off_service(code) as is_drop_off
+      from (values ('CSDB'), ('LWB'), ('PWDF'), ('WDF'), ('SSD'), ('SSW'), ('WDSS'), ('UNKNOWN')) as codes(code)
+      order by code
+    `);
+    assert.deepEqual(Object.fromEntries(classification.map(row => [row.code, row.is_drop_off])), {
+      CSDB: true, LWB: true, PWDF: true, SSD: false, SSW: false, UNKNOWN: false, WDSS: false, WDF: true,
+    });
+    await asUser(owner);
+
+    const wdfServiceId = await serviceId('WDF');
+    let dropOff = await transaction({ customer_name: 'Drop Off without items', phone_number: null, service_id: wdfServiceId });
+    assert.equal((await pendingCustomerItems()).some(row => row.id === dropOff.id), true);
+    await assert.rejects(status(dropOff, 'completed', 'Drop Off completion attempt'), e => e.code === '23514' && e.message.includes("Please record the customer's item list before completing this order."));
+    assert.equal((await fresh(dropOff.id)).order_status, 'received');
+
+    let dropOffWithItems = await transaction({ customer_name: 'Drop Off with items', phone_number: null, service_id: wdfServiceId });
+    await customerItems(dropOffWithItems, [{ item_type: 'towels', quantity: 2 }]);
+    dropOffWithItems = await status(dropOffWithItems, 'washing');
+    dropOffWithItems = await status(dropOffWithItems, 'drying');
+    dropOffWithItems = await status(dropOffWithItems, 'ready_for_pickup');
+    dropOffWithItems = await status(dropOffWithItems, 'completed');
+    assert.equal(dropOffWithItems.order_status, 'completed');
+
+    for (const code of ['WDSS', 'SSD', 'SSW']) {
+      const selfService = await transaction({ customer_name: `${code} without items`, phone_number: null, service_id: await serviceId(code) });
+      assert.equal((await pendingCustomerItems()).some(row => row.id === selfService.id), false, `${code} must not be pending`);
+      await assert.rejects(customerItems(selfService, [{ item_type: 'shorts', quantity: 1 }]), e => e.code === '42501' && e.message.includes('only applicable to Drop Off'));
+      const completedSelfService = await status(selfService, 'completed', `${code} completed without item list`);
+      assert.equal(completedSelfService.order_status, 'completed');
+    }
+
+    const invalidService = await transaction({ customer_name: 'Unclassified service', phone_number: null });
+    assert.equal((await pendingCustomerItems()).some(row => row.id === invalidService.id), false);
+    const completedInvalidService = await status(invalidService, 'completed', 'Unclassified service completed');
+    assert.equal(completedInvalidService.order_status, 'completed');
     await asUser(owner);
   });
   await asUser(owner);
@@ -310,7 +366,8 @@ try {
     await rejects("insert into customers(full_name) values ('Unprofiled')", [], '42501');
     await asUser(owner);
   });
-  let flow = await transaction();
+  const lifecycleDropOffServiceId = await serviceId('WDF');
+  let flow = await transaction({ service_id: lifecycleDropOffServiceId });
   await customerItems(flow, [{ item_type: 't_shirts', quantity: 1 }]);
   for (const next of ['washing', 'drying', 'ready_for_pickup', 'completed']) {
     await test(`${flow.order_status} -> ${next}; history and audit metadata`, async () => {
@@ -335,7 +392,7 @@ try {
   });
   await test('hold history does not contaminate resumed forward transitions', async () => {
     await setting('staff_can_edit_transactions', true); await asUser(staff);
-    let resumed = await transaction({ created_by: staff, customer_name: 'Hold resume lifecycle' });
+    let resumed = await transaction({ created_by: staff, customer_name: 'Hold resume lifecycle', service_id: lifecycleDropOffServiceId });
     resumed = await status(resumed, 'washing');
     resumed = await status(resumed, 'on_hold', 'Machine maintenance');
     resumed = await status(resumed, 'washing', 'Maintenance complete');
@@ -427,7 +484,7 @@ try {
     skip2 = await status(skip2, 'washing');
     skip2 = await status(skip2, 'ready_for_pickup', 'Air dry completed off-machine');
     assert.equal(skip2.order_status, 'ready_for_pickup');
-    let skip3 = await transaction({ created_by: staff, customer_name: 'Skip drying to complete' });
+    let skip3 = await transaction({ created_by: staff, customer_name: 'Skip drying to complete', service_id: lifecycleDropOffServiceId });
     skip3 = await status(skip3, 'washing');
     skip3 = await status(skip3, 'drying');
     await customerItems(skip3, [{ item_type: 'jackets', quantity: 1 }]);
