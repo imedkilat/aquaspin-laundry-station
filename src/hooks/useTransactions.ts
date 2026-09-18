@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { supabase } from '../lib/supabase'
 import { makeRealtimeTopic } from '../lib/realtime'
-import type { TransactionWithService } from '../types/database'
+import type { PaymentMethod, TransactionWithService } from '../types/database'
 import type { RealtimeState } from './useServices'
 
 interface Options {
@@ -10,6 +10,7 @@ interface Options {
   limit?: number
   includeDeleted?: boolean
   fetchAll?: boolean
+  paymentMethod?: PaymentMethod
 }
 
 const SELECT = `*, services ( code, label ),
@@ -18,7 +19,7 @@ const SELECT = `*, services ( code, label ),
   deleted_by_profile:profiles!transactions_deleted_by_fkey ( full_name )`
 
 export function useTransactions(options: Options = {}) {
-  const { dateFrom, dateTo, limit = 200, includeDeleted = false, fetchAll = false } = options
+  const { dateFrom, dateTo, limit = 200, includeDeleted = false, fetchAll = false, paymentMethod } = options
   const [rows, setRows] = useState<TransactionWithService[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -41,6 +42,7 @@ export function useTransactions(options: Options = {}) {
 
       if (dateFrom) query = query.gte('transaction_date', dateFrom)
       if (dateTo) query = query.lte('transaction_date', dateTo)
+      if (paymentMethod) query = query.eq('payment_method', paymentMethod)
       if (!includeDeleted) query = query.is('deleted_at', null)
 
       return fetchAll
@@ -84,7 +86,7 @@ export function useTransactions(options: Options = {}) {
 
     setRows(allRows)
     setLoading(false)
-  }, [dateFrom, dateTo, limit, includeDeleted, fetchAll])
+  }, [dateFrom, dateTo, limit, includeDeleted, fetchAll, paymentMethod])
 
   useEffect(() => {
     void reload()

@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { DEFAULT_LOYALTY_SETTINGS } from '../lib/loyalty-settings'
 import { supabase } from '../lib/supabase'
 import { ButtonSpinner, EmptyState, InlineAlert, LoadingPanel } from './UiFeedback'
+import BentoCard from './BentoCard'
+import UiIcon from './UiIcon'
 import type { CustomerLoyaltyBalance, LoyaltyPointEvent, LoyaltyRedemption, LoyaltySettings } from '../types/database'
 
 const points = (value: number) => Number(value || 0).toLocaleString('en-PH', { maximumFractionDigits: 2 })
@@ -79,19 +81,12 @@ export default function LoyaltyManager() {
       {error && <InlineAlert variant="error" title="Loyalty data could not be refreshed" actionLabel="Try again" onAction={() => void reload()}>{error}</InlineAlert>}
       {message && <InlineAlert variant="success" title="Reward redeemed">{message}</InlineAlert>}
 
-      <section className="rounded-2xl border border-sky-200 bg-sky-50 p-5 dark:border-sky-900/60 dark:bg-sky-950/20">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-sky-700 dark:text-sky-300">Phase 7</p>
-            <h2 className="mt-1 text-xl font-semibold text-slate-900 dark:text-slate-100">Loyalty / Rewards</h2>
-            <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">Customers earn {points(settings.points_per_kg)} point{Number(settings.points_per_kg) === 1 ? '' : 's'} per kg processed. At {points(settings.points_required_for_reward)} points, redeem one: {settings.reward_description}.</p>
-          </div>
-          <button type="button" onClick={() => void reload()} className="rounded-lg border border-sky-300 px-3 py-1.5 text-sm font-medium text-sky-700 hover:bg-white dark:border-sky-800 dark:text-sky-300 dark:hover:bg-slate-900">↻ Refresh</button>
-        </div>
-      </section>
+      <BentoCard title="Loyalty / Rewards" description={`Customers earn ${points(settings.points_per_kg)} point${Number(settings.points_per_kg) === 1 ? '' : 's'} per kg processed. At ${points(settings.points_required_for_reward)} points, redeem one: ${settings.reward_description}.`} icon="gift" tone="sky" action={<button type="button" onClick={() => void reload()} className="inline-flex items-center gap-2 rounded-lg border border-sky-300 px-3 py-1.5 text-sm font-medium text-sky-700 hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 dark:border-sky-800 dark:text-sky-300 dark:hover:bg-slate-900"><UiIcon name="refresh" size={16} />Refresh</button>}>
+        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-sky-700 dark:text-sky-300">Phase 7 · Auditable rewards</p>
+      </BentoCard>
 
       {customers.length === 0 ? <EmptyState title="No customers yet" description="Loyalty balances will appear when canonical customers are added." /> : (
-        <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+        <BentoCard title="Customer balances" description={`${customers.length} customer${customers.length === 1 ? '' : 's'} with loyalty records`} icon="customers" className="overflow-hidden">
           <div className="divide-y divide-slate-200 dark:divide-slate-800">
             {customers.map((customer) => {
               const balance = Number(customer.points_balance || 0)
@@ -105,8 +100,8 @@ export default function LoyaltyManager() {
                       <div className="flex flex-wrap items-center gap-2"><h3 className="font-semibold text-slate-900 dark:text-slate-100">{customer.full_name}</h3><span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600 dark:bg-slate-800 dark:text-slate-300">{customer.customer_code}</span>{!customer.active && <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs text-amber-700 dark:bg-amber-950 dark:text-amber-300">Inactive</span>}</div>
                       <p className="mt-1 text-sm text-slate-500">{points(balance)} points · {canRedeem ? 'Reward available' : `${points(Math.max(required - balance, 0))} more needed`}</p>
                     </div>
-                    <button type="button" disabled={!canRedeem || redeemingCustomerId !== null} onClick={() => void redeem(customer)} className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50">
-                      {redeemingCustomerId === customer.customer_id && <ButtonSpinner />}Redeem Reward
+                    <button type="button" disabled={!canRedeem || redeemingCustomerId !== null} onClick={() => void redeem(customer)} className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 disabled:cursor-not-allowed disabled:opacity-50">
+                      {redeemingCustomerId === customer.customer_id && <ButtonSpinner />}{redeemingCustomerId !== customer.customer_id && <UiIcon name="gift" size={16} />}Redeem Reward
                     </button>
                   </div>
                   <details className="mt-3">
@@ -117,9 +112,8 @@ export default function LoyaltyManager() {
               )
             })}
           </div>
-        </section>
+        </BentoCard>
       )}
     </div>
   )
 }
-
