@@ -36,7 +36,7 @@ export default function CustomersPage() {
         <div><p className="text-xs font-semibold uppercase tracking-[0.18em] text-sky-600 dark:text-sky-400">Phase 2</p><h1 className="mt-1 text-2xl font-semibold text-slate-900 dark:text-slate-100">Customers</h1><p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Find repeat customers and review their laundry history in one place.</p></div>
         {canManage && <button type="button" onClick={() => setEditing(null)} className="rounded-xl bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-700">+ Add customer</button>}
       </section>
-      {editing !== undefined && <CustomerForm customer={editing} isOwner={isOwner} onCancel={() => setEditing(undefined)} onSaved={() => { setEditing(undefined); void reload() }} />}
+      {editing !== undefined && <CustomerForm customer={editing} isOwner={isOwner} onCancel={() => setEditing(undefined)} onSaved={() => { setEditing(undefined); void reload() }} onDeleted={() => { setEditing(undefined); void reload() }} />}
       {!canManage && <InlineAlert variant="info" title="Customer changes are disabled">The Owner has turned off Staff customer management. You can still search and review customer records.</InlineAlert>}
       {error && <InlineAlert variant="error" title="Customers could not be refreshed" actionLabel="Try again" onAction={() => void reload()}>{error}</InlineAlert>}
       {!error && (realtimeState === 'error' || realtimeState === 'disconnected') && <InlineAlert variant="warning" title="Live customer sync is temporarily offline" actionLabel="Refresh now" onAction={() => void reload()}>Existing rows remain visible until the connection recovers.</InlineAlert>}
