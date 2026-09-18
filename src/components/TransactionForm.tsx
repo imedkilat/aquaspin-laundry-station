@@ -459,6 +459,14 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
         </div>
       </div>
 
+      <InventoryUsageFields
+        usage={inventoryUsage}
+        detergentItems={detergentItems}
+        fabricConditionerItems={fabricConditionerItems}
+        loading={inventoryLoading}
+        onChange={updateInventoryUsage}
+      />
+
       <section className="rounded-xl border border-slate-200 p-4 dark:border-slate-700">
         <div className="flex items-center justify-between gap-3 mb-3">
           <div>
