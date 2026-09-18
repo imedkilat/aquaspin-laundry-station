@@ -413,7 +413,7 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
             disabled={customersLoading}
             className={`${inputClass} disabled:opacity-60`}
           >
-            <option value="">{customersLoading ? 'Loading customers…' : 'Walk-in / new customer'}</option>
+            <option value="">{customersLoading ? 'Loading customers…' : 'Walk-In / New Customer'}</option>
             {customers.filter((customer) => customer.active).map((customer) => (
               <option key={customer.id} value={customer.id}>
                 {customer.customer_code} · {customer.full_name}{customer.phone_number ? ` · ${customer.phone_number}` : ''}
