@@ -19,11 +19,25 @@ import { useAuth } from '../lib/auth-context'
 import { useShopSettings } from '../lib/shop-settings-context'
 import { edgeFunctionErrorMessage } from '../lib/edge-functions'
 import { openTransactionPdfReport } from '../lib/pdf-report'
+import UiIcon, { type IconName } from '../components/UiIcon'
 
 const peso = (n: number) =>
   `₱${n.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 
 type Tab = 'overview' | 'staff' | 'pricing' | 'addons' | 'discounts' | 'inventory' | 'expenses' | 'reports' | 'loyalty' | 'settings'
+
+const TAB_ICONS: Record<Tab, IconName> = {
+  overview: 'dashboard',
+  staff: 'staff',
+  pricing: 'tag',
+  addons: 'gift',
+  discounts: 'tag',
+  inventory: 'inventory',
+  expenses: 'money',
+  reports: 'download',
+  loyalty: 'gift',
+  settings: 'settings',
+}
 
 export default function OwnerDashboard() {
   const { profile } = useAuth()
@@ -183,7 +197,7 @@ export default function OwnerDashboard() {
   }
 
   const tabClass = (active: boolean) =>
-    `px-3 py-1.5 rounded-lg text-sm font-medium transition ${
+    `inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 ${
       active
         ? 'bg-sky-600 text-white'
         : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50 dark:bg-slate-900 dark:text-slate-300 dark:border-slate-700 dark:hover:bg-slate-800'
@@ -194,18 +208,18 @@ export default function OwnerDashboard() {
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-2 flex-wrap">
-        <button onClick={() => setTab('overview')} className={tabClass(tab === 'overview')}>Overview</button>
+        <button type="button" onClick={() => setTab('overview')} className={tabClass(tab === 'overview')}><UiIcon name={TAB_ICONS.overview} size={16} />Overview</button>
         {isOwner && (
           <>
-            <button onClick={() => setTab('staff')} className={tabClass(tab === 'staff')}>Staff Accounts</button>
-            <button onClick={() => setTab('pricing')} className={tabClass(tab === 'pricing')}>Service Pricing</button>
-            <button onClick={() => setTab('addons')} className={tabClass(tab === 'addons')}>Add-ons</button>
-            <button onClick={() => setTab('discounts')} className={tabClass(tab === 'discounts')}>Discounts & Promos</button>
-            <button onClick={() => setTab('inventory')} className={tabClass(tab === 'inventory')}>Inventory</button>
-            <button onClick={() => setTab('expenses')} className={tabClass(tab === 'expenses')}>Expenses</button>
-            <button onClick={() => setTab('reports')} className={tabClass(tab === 'reports')}>Reports</button>
-            <button onClick={() => setTab('loyalty')} className={tabClass(tab === 'loyalty')}>Loyalty</button>
-            <button onClick={() => setTab('settings')} className={tabClass(tab === 'settings')}>Settings</button>
+            <button type="button" onClick={() => setTab('staff')} className={tabClass(tab === 'staff')}><UiIcon name={TAB_ICONS.staff} size={16} />Staff Accounts</button>
+            <button type="button" onClick={() => setTab('pricing')} className={tabClass(tab === 'pricing')}><UiIcon name={TAB_ICONS.pricing} size={16} />Service Pricing</button>
+            <button type="button" onClick={() => setTab('addons')} className={tabClass(tab === 'addons')}><UiIcon name={TAB_ICONS.addons} size={16} />Add-ons</button>
+            <button type="button" onClick={() => setTab('discounts')} className={tabClass(tab === 'discounts')}><UiIcon name={TAB_ICONS.discounts} size={16} />Discounts &amp; Promos</button>
+            <button type="button" onClick={() => setTab('inventory')} className={tabClass(tab === 'inventory')}><UiIcon name={TAB_ICONS.inventory} size={16} />Inventory</button>
+            <button type="button" onClick={() => setTab('expenses')} className={tabClass(tab === 'expenses')}><UiIcon name={TAB_ICONS.expenses} size={16} />Expenses</button>
+            <button type="button" onClick={() => setTab('reports')} className={tabClass(tab === 'reports')}><UiIcon name={TAB_ICONS.reports} size={16} />Reports</button>
+            <button type="button" onClick={() => setTab('loyalty')} className={tabClass(tab === 'loyalty')}><UiIcon name={TAB_ICONS.loyalty} size={16} />Loyalty</button>
+            <button type="button" onClick={() => setTab('settings')} className={tabClass(tab === 'settings')}><UiIcon name={TAB_ICONS.settings} size={16} />Settings</button>
           </>
         )}
       </div>
@@ -236,18 +250,19 @@ export default function OwnerDashboard() {
           </div>
 
           <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
-            <div className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
+            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:border-slate-800 dark:bg-slate-900">
+              <span className="mb-3 flex h-9 w-9 items-center justify-center rounded-xl bg-sky-100 text-sky-700 dark:bg-sky-950 dark:text-sky-300"><UiIcon name="money" size={18} /></span>
               <p className="text-xs text-slate-500">Today's Sales</p>
               <p className="mt-1 text-2xl font-semibold text-slate-900 dark:text-slate-100">{peso(stats.salesToday)}</p>
               <p className="mt-1 text-xs text-slate-400">{stats.countToday} transactions today</p>
             </div>
-            <PaymentFilterCard label={todayOnlyForStaff ? "Today's Sales" : 'Selected Sales'} value={peso(stats.salesRange)} hint={`${activeRows.length} transactions · click for all`} active={methodFilter === 'all'} onClick={() => setMethodFilter('all')} />
-            <PaymentFilterCard label="Cash" value={peso(stats.cashTotal)} hint={`${stats.cashCount} customers · click to view`} active={methodFilter === 'paid'} onClick={() => setMethodFilter('paid')} />
-            <PaymentFilterCard label="GCash" value={peso(stats.gcashTotal)} hint={`${stats.gcashCount} customers · click to view`} active={methodFilter === 'gcash'} onClick={() => setMethodFilter('gcash')} />
-            <PaymentFilterCard label="Pay Later" value={peso(stats.payLaterTotal)} hint={`${stats.payLaterCount} accounts · click to view`} active={methodFilter === 'pay_later'} onClick={() => setMethodFilter('pay_later')} />
+            <PaymentFilterCard label={todayOnlyForStaff ? "Today's Sales" : 'Selected Sales'} value={peso(stats.salesRange)} hint={`${activeRows.length} transactions · click for all`} icon="dashboard" active={methodFilter === 'all'} onClick={() => setMethodFilter('all')} />
+            <PaymentFilterCard label="Cash" value={peso(stats.cashTotal)} hint={`${stats.cashCount} customers · click to view`} icon="money" active={methodFilter === 'paid'} onClick={() => setMethodFilter('paid')} />
+            <PaymentFilterCard label="GCash" value={peso(stats.gcashTotal)} hint={`${stats.gcashCount} customers · click to view`} icon="money" active={methodFilter === 'gcash'} onClick={() => setMethodFilter('gcash')} />
+            <PaymentFilterCard label="Pay Later" value={peso(stats.payLaterTotal)} hint={`${stats.payLaterCount} accounts · click to view`} icon="alert" active={methodFilter === 'pay_later'} onClick={() => setMethodFilter('pay_later')} />
           </div>
 
-          <div className="bg-white rounded-2xl border border-slate-200 p-5 space-y-4 dark:bg-slate-900 dark:border-slate-800">
+          <div className="bg-white rounded-2xl border border-slate-200 p-5 space-y-4 shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:bg-slate-900 dark:border-slate-800">
             <div className="flex items-center justify-between gap-3 flex-wrap">
               <div>
                 <h2 className="font-semibold text-slate-900 dark:text-slate-100">Transactions</h2>
@@ -256,17 +271,17 @@ export default function OwnerDashboard() {
               <div className="flex items-center gap-2 flex-wrap">
                 {isOwner && (
                   <>
-                    <button type="button" onClick={exportPdf} className="rounded-lg border border-violet-300 px-3 py-1.5 text-sm font-medium text-violet-700 hover:bg-violet-50 dark:border-violet-800 dark:text-violet-300 dark:hover:bg-violet-950/40">⇩ Export PDF</button>
+                    <button type="button" onClick={exportPdf} className="inline-flex items-center gap-2 rounded-lg border border-violet-300 px-3 py-1.5 text-sm font-medium text-violet-700 hover:bg-violet-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 dark:border-violet-800 dark:text-violet-300 dark:hover:bg-violet-950/40"><UiIcon name="download" size={16} />Export PDF</button>
                     <button type="button" onClick={() => void exportSpreadsheet('csv')} disabled={exporting} className="inline-flex items-center gap-2 rounded-lg border border-sky-300 px-3 py-1.5 text-sm font-medium text-sky-700 hover:bg-sky-50 disabled:opacity-50 dark:border-sky-800 dark:text-sky-300 dark:hover:bg-sky-950/40">
-                      {exporting && <ButtonSpinner />}{exporting ? 'Exporting…' : '⇩ Export CSV'}
+                      {exporting && <ButtonSpinner />}{!exporting && <UiIcon name="download" size={16} />}{exporting ? 'Exporting…' : 'Export CSV'}
                     </button>
                     <button type="button" onClick={() => void exportSpreadsheet('google_sheets')} disabled={exporting} className="inline-flex items-center gap-2 rounded-lg border border-emerald-300 px-3 py-1.5 text-sm font-medium text-emerald-700 hover:bg-emerald-50 disabled:opacity-50 dark:border-emerald-800 dark:text-emerald-300 dark:hover:bg-emerald-950/40">
-                      {exporting && <ButtonSpinner />}{exporting ? 'Exporting…' : '⇗ Export to Google Sheets'}
+                      {exporting && <ButtonSpinner />}{!exporting && <UiIcon name="download" size={16} />}{exporting ? 'Exporting…' : 'Export to Google Sheets'}
                     </button>
                   </>
                 )}
-                <button type="button" onClick={() => void reload()} disabled={loading} className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">
-                  {loading ? 'Refreshing…' : '↻ Refresh'}
+                <button type="button" onClick={() => void reload()} disabled={loading} className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 disabled:opacity-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">
+                  <UiIcon name="refresh" size={16} />{loading ? 'Refreshing…' : 'Refresh'}
                 </button>
               </div>
             </div>
@@ -328,13 +343,13 @@ export default function OwnerDashboard() {
   )
 }
 
-function PaymentFilterCard({ label, value, hint, active, onClick }: { label: string; value: string; hint: string; active: boolean; onClick: () => void }) {
+function PaymentFilterCard({ label, value, hint, icon, active, onClick }: { label: string; value: string; hint: string; icon: IconName; active: boolean; onClick: () => void }) {
   return (
-    <button type="button" onClick={onClick} className={`rounded-2xl border p-4 text-left transition ${active ? 'border-sky-400 bg-sky-50 ring-2 ring-sky-100 dark:border-sky-700 dark:bg-sky-950/30 dark:ring-sky-950' : 'border-slate-200 bg-white hover:border-sky-300 hover:bg-sky-50/40 dark:border-slate-800 dark:bg-slate-900 dark:hover:border-sky-800 dark:hover:bg-slate-800'}`}>
+    <button type="button" onClick={onClick} className={`rounded-2xl border p-4 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 ${active ? 'border-sky-400 bg-sky-50 ring-2 ring-sky-100 dark:border-sky-700 dark:bg-sky-950/30 dark:ring-sky-950' : 'border-slate-200 bg-white hover:border-sky-300 hover:bg-sky-50/40 dark:border-slate-800 dark:bg-slate-900 dark:hover:border-sky-800 dark:hover:bg-slate-800'}`}>
+      <span className={`mb-3 flex h-9 w-9 items-center justify-center rounded-xl ${active ? 'bg-sky-100 text-sky-700 dark:bg-sky-950 dark:text-sky-300' : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'}`}><UiIcon name={icon} size={18} /></span>
       <p className="text-xs text-slate-500 dark:text-slate-400">{label}</p>
       <p className="mt-1 text-2xl font-semibold text-slate-900 dark:text-slate-100">{value}</p>
       <p className="mt-1 text-xs text-slate-400">{hint}</p>
     </button>
   )
 }
-

@@ -8,6 +8,7 @@
     "prebuild": "npm run check:migrations",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
+    "test:sales-metrics": "node --test tests/sales-metrics.test.mjs",
     "check:migrations": "node scripts/check-migrations.mjs",
     "preview": "vite preview"
   },

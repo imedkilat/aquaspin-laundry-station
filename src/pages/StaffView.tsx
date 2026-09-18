@@ -4,6 +4,8 @@ import TransactionTable from '../components/TransactionTable'
 import EditTransactionModal from '../components/EditTransactionModal'
 import DeleteTransactionModal from '../components/DeleteTransactionModal'
 import ActionErrorBoundary from '../components/ActionErrorBoundary'
+import BentoCard from '../components/BentoCard'
+import UiIcon from '../components/UiIcon'
 import { InlineAlert } from '../components/UiFeedback'
 import { useTransactions } from '../hooks/useTransactions'
 import { useAuth } from '../lib/auth-context'
@@ -49,25 +51,32 @@ export default function StaffView() {
   return (
     <>
       <div className="space-y-6">
+        <BentoCard title="Today’s operations" description="Capture new laundry orders and keep today’s queue moving." icon="wash" tone="sky">
+          <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+            <span className="rounded-full bg-sky-50 px-2.5 py-1 font-medium text-sky-700 dark:bg-sky-950/60 dark:text-sky-300">{todayStr}</span>
+            <span>New orders appear in the live transaction list below.</span>
+          </div>
+        </BentoCard>
+
         <TransactionForm onAdded={() => void reload()} />
 
-        <div className="bg-white rounded-2xl border border-slate-200 p-5 dark:bg-slate-900 dark:border-slate-800">
-          <div className="flex items-center justify-between gap-3 mb-3 flex-wrap">
-            <div>
-              <h2 className="font-semibold text-slate-900 dark:text-slate-100">Today's Transactions</h2>
-              <span className="text-xs text-slate-400">
-                {todayStr} · {rows.length} entries · only today's records are shown
-              </span>
-            </div>
+        <BentoCard
+          title="Today’s transactions"
+          description={`${todayStr} · ${rows.length} entries · only today’s records are shown`}
+          icon="orders"
+          action={(
             <button
               type="button"
               onClick={refreshToday}
               disabled={loading}
-              className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+              aria-label="Refresh today's transactions"
+              className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 disabled:opacity-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
             >
-              {loading ? 'Refreshing…' : '↻ Refresh'}
+              <UiIcon name="refresh" size={16} />
+              {loading ? 'Refreshing…' : 'Refresh'}
             </button>
-          </div>
+          )}
+        >
 
           <div className="mb-3 space-y-2">
             {error && (
@@ -89,7 +98,7 @@ export default function StaffView() {
             onEdit={setEditingTransaction}
             onDelete={setDeletingTransaction}
           />
-        </div>
+        </BentoCard>
       </div>
 
       {editingTransaction && (

@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
+import BentoCard from '../components/BentoCard'
 import PaymentBadge from '../components/PaymentBadge'
+import UiIcon, { type IconName } from '../components/UiIcon'
 import { ButtonSpinner, InlineAlert, LoadingPanel } from '../components/UiFeedback'
 import { useShopDate } from '../hooks/useShopDate'
 import { useTransactions } from '../hooks/useTransactions'
 import { useAuth } from '../lib/auth-context'
 import { supabase } from '../lib/supabase'
+import { calculateSalesMetrics } from '../lib/sales-metrics'
 import type { InventoryItemSummary } from '../types/database'
 
 const peso = (value: number) =>
@@ -16,54 +19,80 @@ export default function HomePage() {
   const today = useShopDate()
   const isOwner = profile?.role === 'owner'
   const monthStart = `${today.slice(0, 8)}01`
-  const { rows, loading, error, realtimeState, reload } = useTransactions({
+  const { rows, loading, error, realtimeState, reload: reloadActivity } = useTransactions({
     dateFrom: isOwner ? monthStart : today,
     dateTo: today,
     limit: 500,
     fetchAll: true,
   })
+  const { rows: outstandingRows, loading: outstandingLoading, error: outstandingError, realtimeState: outstandingRealtimeState, reload: reloadOutstanding } = useTransactions({
+    dateTo: today,
+    limit: 500,
+    fetchAll: true,
+    paymentMethod: 'pay_later',
+  })
+
+  const reload = useCallback(() => {
+    void reloadActivity()
+    void reloadOutstanding()
+  }, [reloadActivity, reloadOutstanding])
 
   const stats = useMemo(() => {
-    const activeRows = rows.filter((row) => !row.deleted_at)
-    const todayRows = activeRows.filter((row) => row.transaction_date === today)
+    const periodMetrics = calculateSalesMetrics(rows, today, monthStart)
+    const outstandingMetrics = calculateSalesMetrics(outstandingRows, today, monthStart)
+    const recent = rows
+      .filter((row) => row.transaction_date === today && row.deleted_at == null && row.order_status !== 'cancelled' && Number.isFinite(Number(row.total_amount)) && Number(row.total_amount) >= 0)
+      .slice(0, 5)
     return {
-      sales: todayRows.reduce((sum, row) => sum + (row.total_amount || 0), 0),
-      monthlySales: activeRows.reduce((sum, row) => sum + (row.total_amount || 0), 0),
-      kg: todayRows.reduce((sum, row) => sum + (row.kg || 0), 0),
-      orders: todayRows.length,
-      receivables: todayRows
-        .filter((row) => row.payment_method === 'pay_later')
-        .reduce((sum, row) => sum + (row.total_amount || 0), 0),
-      recent: todayRows.slice(0, 5),
+      sales: periodMetrics.todaySales,
+      monthlySales: periodMetrics.monthlySales,
+      cashCollected: periodMetrics.cashCollected,
+      kg: periodMetrics.todayWeight,
+      orders: periodMetrics.todayOrders,
+      outstandingPayLater: outstandingMetrics.outstandingPayLater,
+      recent,
     }
-  }, [rows, today])
+  }, [monthStart, outstandingRows, rows, today])
 
-  if (loading && rows.length === 0) {
+  const combinedError = error || outstandingError
+  const realtimeOffline = [realtimeState, outstandingRealtimeState].some((state) => state === 'disconnected' || state === 'error')
+
+  if ((loading || outstandingLoading) && rows.length === 0 && outstandingRows.length === 0) {
     return <LoadingPanel label="Opening today's shop view…" slowLabel="Still loading today's laundry activity…" />
   }
 
   return (
     <div className="space-y-6">
-      <section className="rounded-3xl bg-sky-600 p-5 text-white shadow-sm sm:p-6">
-        <p className="text-sm text-sky-100">{today}</p>
-        <div className="mt-1 flex flex-wrap items-end justify-between gap-4">
-          <div>
-            <h1 className="text-2xl font-semibold sm:text-3xl">Good day, {profile?.full_name?.split(' ')[0] || 'Aquaspin'}.</h1>
-            <p className="mt-1 max-w-2xl text-sm text-sky-100">Run today's laundry operations from one place. Add orders, check balances, and review recent activity.</p>
+      <div className="grid gap-4 lg:grid-cols-[1.35fr_.65fr]">
+        <section className="rounded-2xl border border-sky-700 bg-sky-600 p-5 text-white shadow-sm sm:p-6">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <p className="text-sm text-sky-100">{today}</p>
+              <h1 className="mt-1 text-2xl font-semibold sm:text-3xl">Good day, {profile?.full_name?.split(' ')[0] || 'Aquaspin'}.</h1>
+              <p className="mt-2 max-w-2xl text-sm leading-6 text-sky-100">Run today's laundry operations from one place. Add orders, check balances, and review recent activity.</p>
+            </div>
+            <span className="hidden h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-white/15 text-white sm:flex"><UiIcon name="home" size={24} /></span>
           </div>
-          <Link to="/new" className="rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-sky-700 shadow-sm transition hover:bg-sky-50">
-            + New Order
+          <Link to="/new" className="mt-5 inline-flex items-center gap-2 rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-sky-700 shadow-sm transition hover:bg-sky-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-sky-600">
+            <UiIcon name="plus" size={18} /> New Order <UiIcon name="arrow-right" size={16} />
           </Link>
-        </div>
-      </section>
+        </section>
+
+        <BentoCard title="Quick actions" description="Common operational shortcuts" icon="dashboard" tone="violet" className="flex flex-col justify-between">
+          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-1">
+            <QuickAction to="/orders" title="Orders" description="Search and review" icon="orders" />
+            {isOwner ? <QuickAction to="/dashboard" title="Dashboard" description="Reports and controls" icon="dashboard" /> : <QuickAction to="/profile" title="My Profile" description="Review account details" icon="profile" />}
+          </div>
+        </BentoCard>
+      </div>
 
       <div className="space-y-2">
-        {error && (
+        {combinedError && (
           <InlineAlert variant="error" title="Today's activity could not be refreshed" actionLabel="Try again" onAction={() => void reload()}>
-            {error} Existing figures remain visible until the refresh succeeds.
+            {combinedError} Existing figures remain visible until the refresh succeeds.
           </InlineAlert>
         )}
-        {!error && (realtimeState === 'disconnected' || realtimeState === 'error') && (
+        {!combinedError && realtimeOffline && (
           <InlineAlert variant="warning" title="Live sync is temporarily offline" actionLabel="Refresh now" onAction={() => void reload()}>
             Aquaspin is still usable, but changes from another browser may take longer to appear.
           </InlineAlert>
@@ -71,33 +100,17 @@ export default function HomePage() {
       </div>
 
       <section className="grid grid-cols-2 gap-3 lg:grid-cols-4 xl:grid-cols-5">
-        <MetricCard label="Today's Sales" value={peso(stats.sales)} hint={`${stats.orders} orders`} />
-        {isOwner && <MetricCard label="Monthly Sales" value={peso(stats.monthlySales)} hint={`Since ${monthStart}`} />}
-        <MetricCard label="Laundry Weight" value={`${stats.kg.toFixed(stats.kg % 1 === 0 ? 0 : 1)} kg`} hint="Processed today" />
-        <MetricCard label="Orders" value={String(stats.orders)} hint="Active transactions" />
-        <MetricCard label="Pay Later" value={peso(stats.receivables)} hint="Today's receivables" tone={stats.receivables > 0 ? 'warning' : 'default'} />
+        <MetricCard label="Today's Sales" value={peso(stats.sales)} hint={`${stats.orders} orders`} icon="money" />
+        {isOwner && <MetricCard label="Monthly Sales" value={peso(stats.monthlySales)} hint={`Since ${monthStart}`} icon="calendar" />}
+        <MetricCard label="Cash Collected" value={peso(stats.cashCollected)} hint={isOwner ? `Since ${monthStart}` : "Today's paid orders"} icon="money" tone="success" />
+        <MetricCard label="Laundry Weight" value={`${stats.kg.toFixed(stats.kg % 1 === 0 ? 0 : 1)} kg`} hint="Processed today" icon="wash" />
+        <MetricCard label="Orders" value={String(stats.orders)} hint="Active transactions" icon="orders" />
+        <MetricCard label="Outstanding Pay Later" value={peso(stats.outstandingPayLater)} hint={isOwner ? `Since ${monthStart}` : "Today's receivables"} icon="alert" tone={stats.outstandingPayLater > 0 ? 'warning' : 'default'} />
       </section>
 
       {isOwner && <LowStockInventory />}
 
-      <section className="grid gap-3 sm:grid-cols-3">
-        <QuickAction to="/new" title="New Order" description="Record a laundry transaction" icon="＋" />
-        <QuickAction to="/orders" title="Orders" description="Search and review transactions" icon="⌕" />
-        {isOwner ? (
-          <QuickAction to="/dashboard" title="Owner Dashboard" description="Reports, exports and shop controls" icon="▦" />
-        ) : (
-          <QuickAction to="/profile" title="My Profile" description="Review your account details" icon="◎" />
-        )}
-      </section>
-
-      <section className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
-        <div className="mb-4 flex items-center justify-between gap-3">
-          <div>
-            <h2 className="font-semibold text-slate-900 dark:text-slate-100">Recent Orders</h2>
-            <p className="text-xs text-slate-500 dark:text-slate-400">Latest transactions recorded today</p>
-          </div>
-          <Link to="/orders" className="text-sm font-medium text-sky-600 hover:text-sky-700 dark:text-sky-400">View all</Link>
-        </div>
+      <BentoCard title="Recent Orders" description="Latest transactions recorded today" icon="orders" action={<Link to="/orders" className="inline-flex items-center gap-1 text-sm font-semibold text-sky-600 hover:text-sky-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 dark:text-sky-400"><span>View all</span><UiIcon name="arrow-right" size={16} /></Link>}>
 
         {stats.recent.length === 0 ? (
           <div className="rounded-xl border border-dashed border-slate-200 px-4 py-8 text-center text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">
@@ -124,7 +137,7 @@ export default function HomePage() {
             ))}
           </div>
         )}
-      </section>
+      </BentoCard>
     </div>
   )
 }
@@ -158,7 +171,7 @@ function LowStockInventory() {
       setItems([])
     } else {
       const lowStock = ((data ?? []) as InventoryItemSummary[]).filter(
-        (item) => Number(item.reorder_threshold) > 0 && Number(item.current_quantity) <= Number(item.reorder_threshold)
+        (item) => Number(item.reorder_threshold) > 0 && Number(item.current_quantity) <= Number(item.reorder_threshold),
       )
       setItems(lowStock)
     }
@@ -226,7 +239,7 @@ function LowStockInventory() {
 
     const itemName = restockItem.item_name
     closeRestock()
-    setNotice({ type: 'success', text: itemName + ' restock recorded successfully.' })
+    setNotice({ type: 'success', text: `${itemName} restock recorded successfully.` })
     await load()
   }
 
@@ -237,7 +250,7 @@ function LowStockInventory() {
 
   return (
     <>
-      <section className="rounded-2xl border border-amber-200 bg-amber-50/70 p-5 dark:border-amber-900/70 dark:bg-amber-950/20">
+      <section className="rounded-2xl border border-amber-200 bg-amber-50/70 p-5 shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:border-amber-900/70 dark:bg-amber-950/20">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <div className="flex items-center gap-2">
@@ -257,9 +270,7 @@ function LowStockInventory() {
         {loading ? (
           <div className="mt-4"><LoadingPanel compact label="Checking inventory balances…" slowLabel="Still checking inventory balances…" /></div>
         ) : error ? null : items.length === 0 ? (
-          <div className="mt-4 rounded-xl border border-dashed border-amber-300 px-4 py-5 text-center text-sm text-amber-800 dark:border-amber-800 dark:text-amber-200">
-            All active inventory items are sufficiently stocked.
-          </div>
+          <div className="mt-4 rounded-xl border border-dashed border-amber-300 px-4 py-5 text-center text-sm text-amber-800 dark:border-amber-800 dark:text-amber-200">All active inventory items are sufficiently stocked.</div>
         ) : (
           <div className="mt-4 space-y-2">
             {items.map((item) => {
@@ -270,17 +281,11 @@ function LowStockInventory() {
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
                       <p className="font-medium text-slate-900 dark:text-slate-100">{item.item_name}</p>
-                      <span className={outOfStock ? 'rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-semibold text-rose-700 dark:bg-rose-950 dark:text-rose-300' : 'rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-700 dark:bg-amber-950 dark:text-amber-300'}>
-                        {outOfStock ? 'Out of stock' : 'Low stock'}
-                      </span>
+                      <span className={outOfStock ? 'rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-semibold text-rose-700 dark:bg-rose-950 dark:text-rose-300' : 'rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-700 dark:bg-amber-950 dark:text-amber-300'}>{outOfStock ? 'Out of stock' : 'Low stock'}</span>
                     </div>
-                    <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                      {item.category_name || 'Uncategorized'} · {quantityText(current)} {item.unit_label} remaining · reorder at {quantityText(Number(item.reorder_threshold))} {item.unit_label}
-                    </p>
+                    <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{item.category_name || 'Uncategorized'} · {quantityText(current)} {item.unit_label} remaining · reorder at {quantityText(Number(item.reorder_threshold))} {item.unit_label}</p>
                   </div>
-                  <button type="button" onClick={() => openRestock(item)} className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-700">
-                    Restock
-                  </button>
+                  <button type="button" onClick={() => openRestock(item)} className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500">Restock</button>
                 </div>
               )
             })}
@@ -301,26 +306,15 @@ function LowStockInventory() {
             </div>
 
             <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <label className="block text-xs font-medium text-slate-600 dark:text-slate-400">
-                Quantity to add *
-                <input autoFocus required type="number" min="0.001" step={restockItem.unit_label === 'pcs' ? '1' : '0.001'} value={quantity} onChange={(event) => setQuantity(event.target.value)} placeholder="Enter quantity" className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100" />
-              </label>
-              <label className="block text-xs font-medium text-slate-600 dark:text-slate-400">
-                Unit cost (₱)
-                <input type="number" min="0" step="0.01" value={unitCost} onChange={(event) => setUnitCost(event.target.value)} placeholder="Optional" className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100" />
-              </label>
+              <label className="block text-xs font-medium text-slate-600 dark:text-slate-400">Quantity to add *<input autoFocus required type="number" min="0.001" step={restockItem.unit_label === 'pcs' ? '1' : '0.001'} value={quantity} onChange={(event) => setQuantity(event.target.value)} placeholder="Enter quantity" className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100" /></label>
+              <label className="block text-xs font-medium text-slate-600 dark:text-slate-400">Unit cost (₱)<input type="number" min="0" step="0.01" value={unitCost} onChange={(event) => setUnitCost(event.target.value)} placeholder="Optional" className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100" /></label>
             </div>
 
-            <label className="mt-4 block text-xs font-medium text-slate-600 dark:text-slate-400">
-              Reason *
-              <input required value={reason} onChange={(event) => setReason(event.target.value)} maxLength={500} className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100" />
-            </label>
+            <label className="mt-4 block text-xs font-medium text-slate-600 dark:text-slate-400">Reason *<input required value={reason} onChange={(event) => setReason(event.target.value)} maxLength={500} className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100" /></label>
 
             <div className="mt-5 flex flex-wrap justify-end gap-2">
               <button type="button" onClick={closeRestock} disabled={saving} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">Cancel</button>
-              <button type="button" onClick={() => void recordRestock()} disabled={saving} className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-60">
-                {saving && <ButtonSpinner />}{saving ? 'Recording…' : 'Record Restock'}
-              </button>
+              <button type="button" onClick={() => void recordRestock()} disabled={saving} className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-60">{saving && <ButtonSpinner />}{saving ? 'Recording…' : 'Record Restock'}</button>
             </div>
           </div>
         </div>
@@ -329,25 +323,25 @@ function LowStockInventory() {
   )
 }
 
-function MetricCard({ label, value, hint, tone = 'default' }: { label: string; value: string; hint: string; tone?: 'default' | 'warning' }) {
+function MetricCard({ label, value, hint, icon, tone = 'default' }: { label: string; value: string; hint: string; icon: IconName; tone?: 'default' | 'warning' | 'success' }) {
   return (
-    <div className={`rounded-2xl border bg-white p-4 dark:bg-slate-900 ${tone === 'warning' ? 'border-amber-200 dark:border-amber-900' : 'border-slate-200 dark:border-slate-800'}`}>
-      <p className="text-xs font-medium text-slate-500 dark:text-slate-400">{label}</p>
-      <p className={`mt-1 text-xl font-semibold sm:text-2xl ${tone === 'warning' ? 'text-amber-700 dark:text-amber-300' : 'text-slate-900 dark:text-slate-100'}`}>{value}</p>
+    <div className={`rounded-2xl border bg-white p-4 shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:bg-slate-900 ${tone === 'warning' ? 'border-amber-200 dark:border-amber-900' : tone === 'success' ? 'border-emerald-200 dark:border-emerald-900' : 'border-slate-200 dark:border-slate-800'}`}>
+      <div className="flex items-center justify-between gap-3"><p className="text-xs font-medium text-slate-500 dark:text-slate-400">{label}</p><span className={`flex h-8 w-8 items-center justify-center rounded-lg ${tone === 'warning' ? 'bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300' : tone === 'success' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300' : 'bg-sky-50 text-sky-700 dark:bg-sky-950 dark:text-sky-300'}`}><UiIcon name={icon} size={17} /></span></div>
+      <p className={`mt-3 text-xl font-semibold sm:text-2xl ${tone === 'warning' ? 'text-amber-700 dark:text-amber-300' : tone === 'success' ? 'text-emerald-700 dark:text-emerald-300' : 'text-slate-900 dark:text-slate-100'}`}>{value}</p>
       <p className="mt-1 text-xs text-slate-400">{hint}</p>
     </div>
   )
 }
 
-function QuickAction({ to, title, description, icon }: { to: string; title: string; description: string; icon: string }) {
+function QuickAction({ to, title, description, icon }: { to: string; title: string; description: string; icon: IconName }) {
   return (
-    <Link to={to} className="group flex items-center gap-3 rounded-2xl border border-slate-200 bg-white p-4 transition hover:border-sky-300 hover:shadow-sm dark:border-slate-800 dark:bg-slate-900 dark:hover:border-sky-800">
-      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-sky-50 text-xl font-semibold text-sky-700 transition group-hover:bg-sky-100 dark:bg-sky-950 dark:text-sky-300">{icon}</span>
+    <Link to={to} className="group flex items-center gap-3 rounded-xl border border-slate-200 bg-white p-3 transition hover:border-sky-300 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 dark:border-slate-800 dark:bg-slate-900 dark:hover:border-sky-800">
+      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-sky-50 text-sky-700 transition group-hover:bg-sky-100 dark:bg-sky-950 dark:text-sky-300"><UiIcon name={icon} size={18} /></span>
       <span className="min-w-0">
         <span className="block font-medium text-slate-900 dark:text-slate-100">{title}</span>
         <span className="block text-xs text-slate-500 dark:text-slate-400">{description}</span>
       </span>
+      <UiIcon name="arrow-right" size={16} className="ml-auto text-slate-400 transition group-hover:translate-x-0.5 group-hover:text-sky-600" />
     </Link>
   )
 }
-

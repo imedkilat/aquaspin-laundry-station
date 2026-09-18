@@ -3,6 +3,8 @@ import ActionErrorBoundary from '../components/ActionErrorBoundary'
 import DeleteTransactionModal from '../components/DeleteTransactionModal'
 import EditTransactionModal from '../components/EditTransactionModal'
 import TransactionTable from '../components/TransactionTable'
+import BentoCard from '../components/BentoCard'
+import UiIcon, { type IconName } from '../components/UiIcon'
 import { InlineAlert } from '../components/UiFeedback'
 import { useShopDate } from '../hooks/useShopDate'
 import { useTransactions } from '../hooks/useTransactions'
@@ -105,13 +107,13 @@ export default function OrdersPage() {
         </div>
 
         <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-          <SummaryCard label="Sales" value={peso(stats.sales)} />
-          <SummaryCard label="Orders" value={String(stats.orders)} />
-          <SummaryCard label="Weight" value={`${stats.kg.toFixed(stats.kg % 1 === 0 ? 0 : 1)} kg`} />
-          <SummaryCard label="Pay Later" value={peso(stats.receivables)} warning={stats.receivables > 0} />
+          <SummaryCard label="Sales" value={peso(stats.sales)} icon="money" />
+          <SummaryCard label="Orders" value={String(stats.orders)} icon="orders" />
+          <SummaryCard label="Weight" value={`${stats.kg.toFixed(stats.kg % 1 === 0 ? 0 : 1)} kg`} icon="wash" />
+          <SummaryCard label="Pay Later" value={peso(stats.receivables)} icon="alert" warning={stats.receivables > 0} />
         </section>
 
-        <section className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900 sm:p-5">
+        <BentoCard title="Find an order" description="Search by customer, phone, transaction ID, payment method, or date range." icon="search">
           <div className="grid gap-3 lg:grid-cols-[1fr_auto_auto] lg:items-end">
             <div>
               <label htmlFor="orders-search" className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Search</label>
@@ -141,9 +143,10 @@ export default function OrdersPage() {
               type="button"
               onClick={() => void reload()}
               disabled={loading}
-              className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+              className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 disabled:opacity-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
             >
-              {loading ? 'Refreshing…' : '↻ Refresh'}
+              <UiIcon name="refresh" size={16} />
+              {loading ? 'Refreshing…' : 'Refresh'}
             </button>
           </div>
 
@@ -168,15 +171,9 @@ export default function OrdersPage() {
               )}
             </div>
           )}
-        </section>
+        </BentoCard>
 
-        <section className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900 sm:p-5">
-          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-            <div>
-              <h2 className="font-semibold text-slate-900 dark:text-slate-100">Transaction History</h2>
-              <p className="text-xs text-slate-500 dark:text-slate-400">{filtered.length} matching records · {effectiveDateFrom} to {effectiveDateTo}</p>
-            </div>
-          </div>
+        <BentoCard title="Transaction history" description={`${filtered.length} matching records · ${effectiveDateFrom} to ${effectiveDateTo}`} icon="orders">
           <TransactionTable
             rows={filtered}
             loading={loading}
@@ -184,7 +181,7 @@ export default function OrdersPage() {
             onEdit={setEditingTransaction}
             onDelete={setDeletingTransaction}
           />
-        </section>
+        </BentoCard>
       </div>
 
       {editingTransaction && (
@@ -202,9 +199,10 @@ export default function OrdersPage() {
   )
 }
 
-function SummaryCard({ label, value, warning = false }: { label: string; value: string; warning?: boolean }) {
+function SummaryCard({ label, value, icon, warning = false }: { label: string; value: string; icon: IconName; warning?: boolean }) {
   return (
-    <div className={`rounded-2xl border bg-white p-4 dark:bg-slate-900 ${warning ? 'border-amber-200 dark:border-amber-900' : 'border-slate-200 dark:border-slate-800'}`}>
+    <div className={`rounded-2xl border bg-white p-4 shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:bg-slate-900 ${warning ? 'border-amber-200 dark:border-amber-900' : 'border-slate-200 dark:border-slate-800'}`}>
+      <span className={`mb-3 flex h-9 w-9 items-center justify-center rounded-xl ${warning ? 'bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300' : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'}`}><UiIcon name={icon} size={18} /></span>
       <p className="text-xs font-medium text-slate-500 dark:text-slate-400">{label}</p>
       <p className={`mt-1 text-xl font-semibold ${warning ? 'text-amber-700 dark:text-amber-300' : 'text-slate-900 dark:text-slate-100'}`}>{value}</p>
     </div>
