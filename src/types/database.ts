@@ -224,6 +224,10 @@ export type Transaction = {
   phone_number: string | null
   transaction_date: string // date
   service_id: string | null
+  detergent_item_id: string | null
+  detergent_quantity: number | null
+  fabric_conditioner_item_id: string | null
+  fabric_conditioner_quantity: number | null
   kg: number | null
   no_of_loads: number | null
   base_amount: number
@@ -510,6 +514,10 @@ export type Database = {
           phone_number?: string | null
           transaction_date?: string
           service_id?: string | null
+          detergent_item_id?: string | null
+          detergent_quantity?: number | null
+          fabric_conditioner_item_id?: string | null
+          fabric_conditioner_quantity?: number | null
           kg?: number | null
           no_of_loads?: number | null
           base_amount?: number
@@ -543,6 +551,10 @@ export type Database = {
           phone_number?: string | null
           transaction_date?: string
           service_id?: string | null
+          detergent_item_id?: string | null
+          detergent_quantity?: number | null
+          fabric_conditioner_item_id?: string | null
+          fabric_conditioner_quantity?: number | null
           kg?: number | null
           no_of_loads?: number | null
           base_amount?: number
