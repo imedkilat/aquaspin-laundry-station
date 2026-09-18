@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAddOns } from '../hooks/useAddOns'
 import { useDiscountPromos } from '../hooks/useDiscountPromos'
