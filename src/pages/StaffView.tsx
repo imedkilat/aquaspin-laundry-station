@@ -18,7 +18,11 @@ export default function StaffView() {
   const [todayStr, setTodayStr] = useState(shopDate())
   const [editingTransaction, setEditingTransaction] = useState<TransactionWithService | null>(null)
   const [deletingTransaction, setDeletingTransaction] = useState<TransactionWithService | null>(null)
-  const { rows, loading, error, realtimeState, reload } = useTransactions({ dateFrom: todayStr, dateTo: todayStr })
+  const { rows, loading, error, realtimeState, reload } = useTransactions({
+    dateFrom: todayStr,
+    dateTo: todayStr,
+    includeCustomerItemCoverage: true,
+  })
 
   useEffect(() => {
     const timer = window.setInterval(() => {

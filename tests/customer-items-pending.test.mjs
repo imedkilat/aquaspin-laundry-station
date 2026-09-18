@@ -48,3 +48,14 @@ test('pending coverage uses one scoped batch item query and listens for item cha
   assert.match(source, /table: 'transaction_customer_items'/);
   assert.match(source, /hasCustomerItems: coveredIds\.has\(row\.id\)/);
 });
+
+test('StaffView requests coverage and reuses the shared pending badge and action table', async () => {
+  const staffView = await readFile(new URL('../src/pages/StaffView.tsx', import.meta.url), 'utf8');
+  const transactionTable = await readFile(new URL('../src/components/TransactionTable.tsx', import.meta.url), 'utf8');
+  assert.match(staffView, /includeCustomerItemCoverage: true/);
+  assert.match(staffView, /<TransactionTable/);
+  assert.match(transactionTable, /isCustomerItemsPending\(r\)/);
+  assert.match(transactionTable, /Items Pending/);
+  assert.match(transactionTable, /customerItemsHref\(r\.id\)/);
+  assert.match(transactionTable, />Add Items</);
+});
