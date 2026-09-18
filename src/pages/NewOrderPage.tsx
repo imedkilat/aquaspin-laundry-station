@@ -12,7 +12,7 @@ export default function NewOrderPage() {
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.18em] text-sky-600 dark:text-sky-400">Laundry intake</p>
           <h1 className="mt-1 text-2xl font-semibold text-slate-900 dark:text-slate-100">New Order</h1>
-          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Record the customer, weight, service, add-ons, payment, and pickup details.</p>
+          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Record the customer, weight, service, inventory usage, add-ons, payment, and pickup details.</p>
         </div>
         <Link to="/orders" className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">
           View Orders
