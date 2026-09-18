@@ -171,6 +171,12 @@ value.
   quantity on the transaction form; the selected name/unit/price/quantity is
   **snapshotted onto the transaction** (`add_on_items` JSONB) so a later
   catalog price change never rewrites old transaction history.
+- **Customer clothing items** — from an order's detail page, Staff and Owner
+  users can record the submitted clothing breakdown after intake (Shorts,
+  T-shirts, Pants, Underwear, Dresses, Towels, Bedsheets, Jackets, or a named
+  Other item). Counts are informational only and do not affect pricing or
+  inventory usage. The audited status RPC blocks completion until at least one
+  positive item quantity has been saved; completed rows remain read-only history.
 - **Payment Method** — `Paid` (cash), `GCash`, or `Pay Later`. Cash payments
   block saving if the cash received is less than the total, and show change
   due when it's more. GCash payments require the amount to match the total

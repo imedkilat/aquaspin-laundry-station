@@ -39,12 +39,14 @@ export function StatusBadge({ status }: { status: OrderStatus }) {
 
 export default function TransactionStatusPanel({
   transaction,
+  hasCustomerItems,
   history,
   canEdit,
   isOwner,
   onRefresh,
 }: {
   transaction: TransactionWithService
+  hasCustomerItems: boolean
   history: TransactionStatusHistoryWithActor[]
   canEdit: boolean
   isOwner: boolean
@@ -61,13 +63,18 @@ export default function TransactionStatusPanel({
   const currentIndex = STATUS_ORDER.indexOf(currentStatus)
   const nextStatus = currentIndex >= 0 ? STATUS_ORDER[currentIndex + 1] : null
   const isTerminal = currentStatus === 'completed' || currentStatus === 'cancelled'
+  const completionBlocked = !hasCustomerItems && !isTerminal
   const availableOverrideStatuses = useMemo(
-    () => (Object.keys(STATUS_LABELS) as OrderStatus[]).filter((status) => status !== currentStatus),
-    [currentStatus],
+    () => (Object.keys(STATUS_LABELS) as OrderStatus[]).filter((status) => status !== currentStatus && (status !== 'completed' || hasCustomerItems)),
+    [currentStatus, hasCustomerItems],
   )
 
   const changeStatus = async (status: OrderStatus, useOverride = false, actionReason = '') => {
     if (!canEdit || busy || transaction.deleted_at) return
+    if (status === 'completed' && !hasCustomerItems) {
+      setError("Please record the customer's item list before completing this order.")
+      return
+    }
     setBusy(true)
     setError(null)
 
@@ -112,13 +119,21 @@ export default function TransactionStatusPanel({
 
       {error && <div className="mt-4"><InlineAlert variant="error" title="Status change did not finish">{error}</InlineAlert></div>}
 
+      {completionBlocked && canEdit && (
+        <div className="mt-4">
+          <InlineAlert variant="warning" title="Customer item list required">
+            Please record the customer's item list before completing this order.
+          </InlineAlert>
+        </div>
+      )}
+
       {!transaction.deleted_at && canEdit && !isTerminal && (
         <div className="mt-4 flex flex-wrap gap-2">
           {nextStatus && (
             <button
               type="button"
               onClick={() => void changeStatus(nextStatus)}
-              disabled={busy}
+              disabled={busy || (nextStatus === 'completed' && !hasCustomerItems)}
               className="inline-flex items-center gap-2 rounded-xl bg-sky-600 px-3.5 py-2 text-sm font-semibold text-white hover:bg-sky-700 disabled:opacity-60"
             >
               {busy && <ButtonSpinner />}
