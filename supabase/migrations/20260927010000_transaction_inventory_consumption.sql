@@ -63,7 +63,6 @@ create policy transaction_inventory_consumption_owner_select
   to authenticated
   using ((select private.is_owner()));
 
-drop function if exists private.validate_transaction_inventory_usage();
 create or replace function private.validate_transaction_inventory_usage()
 returns trigger
 language plpgsql
@@ -189,7 +188,6 @@ create trigger transactions_validate_inventory_usage
   on public.transactions
   for each row execute function private.validate_transaction_inventory_usage();
 
-drop function if exists private.consume_transaction_inventory();
 create or replace function private.consume_transaction_inventory()
 returns trigger
 language plpgsql
