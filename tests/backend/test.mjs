@@ -57,7 +57,7 @@ async function pendingCustomerItems() {
     select t.id, t.order_status
     from public.transactions t
     where t.deleted_at is null
-      and t.transaction_date <= current_date
+      and t.transaction_date <= (now() at time zone 'Asia/Manila')::date
       and t.order_status in ('received', 'washing', 'drying', 'ready_for_pickup', 'on_hold')
       and not exists (
         select 1
