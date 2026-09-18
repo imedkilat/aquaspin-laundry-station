@@ -232,7 +232,7 @@ function LowStockInventory() {
 
   const quantityText = (value: number) => {
     const normalized = Number(value)
-    return Number.isInteger(normalized) ? String(normalized) : normalized.toFixed(3).replace(/\\.?0+$/, '')
+    return Number.isInteger(normalized) ? String(normalized) : normalized.toFixed(3).replace(/\.?0+$/, '')
   }
 
   return (
