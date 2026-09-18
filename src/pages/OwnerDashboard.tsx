@@ -5,6 +5,7 @@ import TransactionTable from '../components/TransactionTable'
 import StaffAccountsManager from '../components/StaffAccountsManager'
 import ServicePricingManager from '../components/ServicePricingManager'
 import AddOnsManager from '../components/AddOnsManager'
+import DiscountPromosManager from '../components/DiscountPromosManager'
 import OwnerSettingsManager from '../components/OwnerSettingsManager'
 import InventoryManager from '../components/InventoryManager'
 import ExpensesManager from '../components/ExpensesManager'
@@ -22,7 +23,7 @@ import { openTransactionPdfReport } from '../lib/pdf-report'
 const peso = (n: number) =>
   `₱${n.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 
-type Tab = 'overview' | 'staff' | 'pricing' | 'addons' | 'inventory' | 'expenses' | 'reports' | 'loyalty' | 'settings'
+type Tab = 'overview' | 'staff' | 'pricing' | 'addons' | 'discounts' | 'inventory' | 'expenses' | 'reports' | 'loyalty' | 'settings'
 
 export default function OwnerDashboard() {
   const { profile } = useAuth()
@@ -199,6 +200,7 @@ export default function OwnerDashboard() {
             <button onClick={() => setTab('staff')} className={tabClass(tab === 'staff')}>Staff Accounts</button>
             <button onClick={() => setTab('pricing')} className={tabClass(tab === 'pricing')}>Service Pricing</button>
             <button onClick={() => setTab('addons')} className={tabClass(tab === 'addons')}>Add-ons</button>
+            <button onClick={() => setTab('discounts')} className={tabClass(tab === 'discounts')}>Discounts & Promos</button>
             <button onClick={() => setTab('inventory')} className={tabClass(tab === 'inventory')}>Inventory</button>
             <button onClick={() => setTab('expenses')} className={tabClass(tab === 'expenses')}>Expenses</button>
             <button onClick={() => setTab('reports')} className={tabClass(tab === 'reports')}>Reports</button>
@@ -316,6 +318,7 @@ export default function OwnerDashboard() {
       {isOwner && tab === 'staff' && <StaffAccountsManager />}
       {isOwner && tab === 'pricing' && <ServicePricingManager />}
       {isOwner && tab === 'addons' && <AddOnsManager />}
+      {isOwner && tab === 'discounts' && <DiscountPromosManager />}
       {isOwner && tab === 'inventory' && <InventoryManager />}
       {isOwner && tab === 'expenses' && <ExpensesManager />}
       {isOwner && tab === 'reports' && <ReportsManager />}

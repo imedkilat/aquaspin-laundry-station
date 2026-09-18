@@ -2,10 +2,11 @@ import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { supabase } from '../lib/supabase'
 import { useServices } from '../hooks/useServices'
 import { useAddOns } from '../hooks/useAddOns'
+import { useDiscountPromos } from '../hooks/useDiscountPromos'
 import { useCustomers } from '../hooks/useCustomers'
 import { useAuth } from '../lib/auth-context'
 import { useShopSettings } from '../lib/shop-settings-context'
-import type { PaymentMethod, TransactionAddOnItem } from '../types/database'
+import type { DiscountPromo, PaymentMethod, TransactionAddOnItem } from '../types/database'
 import { shopDate } from '../lib/date'
 import { toTitleCaseName } from '../lib/text'
 import { ButtonSpinner, InlineAlert, LoadingPanel } from './UiFeedback'
@@ -51,6 +52,7 @@ const unitLabel = (unit: string, quantity = 1) => {
 export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
   const { services, loading: servicesLoading, error: servicesError } = useServices()
   const { addOns, loading: addOnsLoading, error: addOnsError } = useAddOns()
+  const { promos: discountPromos, loading: discountPromosLoading, error: discountPromosError, realtimeState: discountRealtimeState } = useDiscountPromos()
   const { rows: customers, loading: customersLoading, error: customersError } = useCustomers()
   const { profile } = useAuth()
   const { settings } = useShopSettings()
@@ -60,6 +62,7 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
 
   const [form, setForm] = useState<TransactionFormState>(() => makeEmptyForm(settings.default_payment_method))
   const [selectedAddOns, setSelectedAddOns] = useState<Record<string, number>>({})
+  const [selectedPromoId, setSelectedPromoId] = useState('')
   const [inventoryUsage, setInventoryUsage] = useState<InventoryUsageDraft>(() => emptyInventoryUsageDraft())
   const [totalTouched, setTotalTouched] = useState(false)
   const [submitting, setSubmitting] = useState(false)
@@ -95,6 +98,30 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
     () => selectedAddOnItems.reduce((sum, item) => sum + item.line_total, 0),
     [selectedAddOnItems]
   )
+
+  const applicablePromos = useMemo(() => {
+    const now = Date.now()
+    return discountPromos.filter((promo) => {
+      if (!promo.active || now < new Date(promo.starts_at).getTime() || now > new Date(promo.ends_at).getTime()) return false
+      if (promo.applies_to === 'service') return promo.service_id === form.service_id
+      if (promo.applies_to === 'add_on') return selectedAddOnItems.some((item) => item.add_on_id === promo.add_on_id)
+      return true
+    })
+  }, [discountPromos, form.service_id, selectedAddOnItems])
+
+  const selectedPromo = useMemo<DiscountPromo | null>(
+    () => applicablePromos.find((promo) => promo.id === selectedPromoId) ?? null,
+    [applicablePromos, selectedPromoId]
+  )
+
+  const subtotal = (parseFloat(form.base_amount) || 0) + addOnsTotal
+  const discountAmount = useMemo(() => {
+    if (!selectedPromo) return 0
+    if (selectedPromo.discount_type === 'percentage') {
+      return Math.min(subtotal, Number((subtotal * selectedPromo.discount_value / 100).toFixed(2)))
+    }
+    return Math.min(subtotal, selectedPromo.discount_value)
+  }, [selectedPromo, subtotal])
 
   const isWeightBased =
     selectedService?.pricing_type === 'per_load_by_weight' &&
@@ -167,9 +194,13 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
     if (totalTouched && settings.allow_manual_total_override) return
     const base = parseFloat(form.base_amount) || 0
     const addOnAmount = parseFloat(form.add_ons) || 0
-    setForm((f) => ({ ...f, total_amount: (base + addOnAmount).toFixed(2) }))
+    setForm((f) => ({ ...f, total_amount: Math.max(0, base + addOnAmount - discountAmount).toFixed(2) }))
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [form.base_amount, form.add_ons, totalTouched, settings.allow_manual_total_override])
+  }, [form.base_amount, form.add_ons, discountAmount, totalTouched, settings.allow_manual_total_override])
+
+  useEffect(() => {
+    if (selectedPromoId && !selectedPromo) setSelectedPromoId('')
+  }, [selectedPromo, selectedPromoId])
 
   useEffect(() => {
     if (!settings.allow_manual_total_override) setTotalTouched(false)
@@ -225,6 +256,7 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
   const resetForm = () => {
     setForm(makeEmptyForm(settings.default_payment_method))
     setSelectedAddOns({})
+    setSelectedPromoId('')
     setInventoryUsage(emptyInventoryUsageDraft())
     setTotalTouched(false)
     setClientRequestId(crypto.randomUUID())
@@ -266,6 +298,10 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
       }
       if (!inventoryUsageIsComplete(inventoryUsage)) {
         setError('Complete both inventory usage details. If the customer supplied a product, select Other and enter the reason.')
+        return
+      }
+      if (selectedPromoId && !selectedPromo) {
+        setError('That discount or promo is no longer active. Please choose another offer.')
         return
       }
       if (settings.require_pickup_date && !form.pickup_date) {
@@ -327,6 +363,12 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
         base_amount: form.base_amount ? Number(form.base_amount) : 0,
         add_ons: addOnsTotal,
         add_on_items: selectedAddOnItems,
+        discount_promo_id: selectedPromo?.id ?? null,
+        discount_promo_name_snapshot: selectedPromo?.name ?? null,
+        discount_promo_kind_snapshot: selectedPromo?.kind ?? null,
+        discount_type_snapshot: selectedPromo?.discount_type ?? null,
+        discount_value_snapshot: selectedPromo?.discount_value ?? null,
+        discount_amount: discountAmount,
         total_amount: form.total_amount ? Number(form.total_amount) : 0,
         cash_amount: form.cash_amount ? Number(form.cash_amount) : 0,
         gcash_amount: form.gcash_amount ? Number(form.gcash_amount) : 0,
@@ -361,7 +403,8 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
       const changeMessage = form.payment_method === 'paid' && changeDue > 0 ? ` · Change ${peso(changeDue)}` : ''
       const gcashMessage = form.payment_method === 'gcash' ? ` · GCash #${form.gcash_reference.trim()}` : ''
       const addOnMessage = selectedAddOnItems.length > 0 ? ` · Add-ons ${peso(addOnsTotal)}` : ''
-      setSuccess(`Added — ${normalizedCustomerName}${addOnMessage}${changeMessage}${gcashMessage}`)
+      const discountMessage = discountAmount > 0 && selectedPromo ? ` · ${selectedPromo.name} -${peso(discountAmount)}` : ''
+      setSuccess(`Added — ${normalizedCustomerName}${addOnMessage}${discountMessage}${changeMessage}${gcashMessage}`)
       resetForm()
       onAdded?.()
       setTimeout(() => setSuccess(null), 4000)
@@ -390,9 +433,14 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
     <form onSubmit={handleSubmit} className="bg-white rounded-2xl border border-slate-200 p-5 space-y-5 dark:bg-slate-900 dark:border-slate-800">
       <h2 className="font-semibold text-slate-900 dark:text-slate-100">Add Customer Transaction</h2>
 
-      {(servicesError || addOnsError || customersError) && (
+      {(servicesError || addOnsError || customersError || discountPromosError) && (
         <InlineAlert variant="warning" title="Some catalog data could not be refreshed">
-          {servicesError || addOnsError || customersError}. Existing loaded options remain available where possible.
+          {servicesError || addOnsError || customersError || discountPromosError}. Existing loaded options remain available where possible.
+        </InlineAlert>
+      )}
+      {!discountPromosError && (discountRealtimeState === 'disconnected' || discountRealtimeState === 'error') && (
+        <InlineAlert variant="warning" title="Live discount sync is temporarily offline">
+          New Owner changes may need a manual refresh until Realtime reconnects.
         </InlineAlert>
       )}
 
@@ -527,6 +575,26 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
         )}
       </section>
 
+      <section className="rounded-xl border border-violet-200 bg-violet-50/50 p-4 dark:border-violet-900/60 dark:bg-violet-950/20">
+        <div className="flex items-center justify-between gap-3 mb-3">
+          <div>
+            <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Discount / Promo</h3>
+            <p className="text-xs text-slate-600 dark:text-slate-400">Optional. Staff selects one offer for this order. Only live and applicable offers appear here.</p>
+          </div>
+          {discountAmount > 0 && <span className="text-sm font-semibold text-emerald-600">-{peso(discountAmount)}</span>}
+        </div>
+        <select value={selectedPromoId} onChange={(e) => setSelectedPromoId(e.target.value)} disabled={discountPromosLoading} className={inputClass + ' disabled:opacity-60'}>
+          <option value="">{discountPromosLoading ? 'Loading discounts and promos…' : 'No discount / promo'}</option>
+          {applicablePromos.map((promo) => (
+            <option key={promo.id} value={promo.id}>
+              {promo.name} · {promo.discount_type === 'percentage' ? promo.discount_value + '% off' : peso(promo.discount_value) + ' off'} · until {new Date(promo.ends_at).toLocaleDateString('en-PH')}
+            </option>
+          ))}
+        </select>
+        {selectedPromo && <p className="mt-2 text-xs text-emerald-700 dark:text-emerald-400">Applied: {selectedPromo.name} · Total discount {peso(discountAmount)}. The offer details will be saved with this transaction.</p>}
+        {!discountPromosLoading && applicablePromos.length === 0 && <p className="mt-2 text-xs text-slate-500">No live applicable discount or promo right now.</p>}
+      </section>
+
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div>
           <label className={labelClass}>Total (₱){settings.allow_manual_total_override ? '' : ' · Auto'}</label>
@@ -542,7 +610,7 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
             } : undefined}
             className={settings.allow_manual_total_override ? inputClass : autoInputClass}
           />
-          {!settings.allow_manual_total_override && <p className="mt-1 text-xs text-slate-500">Locked by Owner settings: Base Amount + Add-ons only.</p>}
+          {!settings.allow_manual_total_override && <p className="mt-1 text-xs text-slate-500">Locked by Owner settings: Base Amount + Add-ons - Discount / Promo.</p>}
         </div>
         <div>
           <label className={labelClass}>Payment Method *</label>

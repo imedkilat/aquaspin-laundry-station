@@ -17,6 +17,9 @@ export type PaymentMethod = 'paid' | 'gcash' | 'pay_later'
 export type InventoryUsageSource = 'inventory' | 'customer_supplied'
 export type PricingType = 'per_load_by_weight' | 'per_load_manual' | 'per_item'
 export type AddOnUnit = 'piece' | 'load' | 'sachet' | 'dose' | 'cycle' | 'kg' | 'flat'
+export type DiscountPromoKind = 'discount' | 'promo'
+export type DiscountType = 'percentage' | 'fixed'
+export type DiscountAppliesTo = 'all' | 'service' | 'add_on'
 
 export type Profile = {
   id: string
@@ -109,6 +112,26 @@ export type AddOn = {
   updated_at: string
 }
 
+
+export type DiscountPromo = {
+  id: string
+  name: string
+  kind: DiscountPromoKind
+  discount_type: DiscountType
+  discount_value: number
+  occasion: string | null
+  applies_to: DiscountAppliesTo
+  service_id: string | null
+  add_on_id: string | null
+  starts_at: string
+  ends_at: string
+  active: boolean
+  notes: string | null
+  created_at: string
+  updated_at: string
+  created_by: string | null
+  updated_by: string | null
+}
 
 export type InventoryUnit = 'pcs' | 'ml' | 'L' | 'g' | 'kg'
 export type InventoryMovementType = 'stock_in' | 'adjustment' | 'consumption' | 'wastage' | 'correction'
@@ -233,6 +256,12 @@ export type Transaction = {
   fabric_conditioner_item_id: string | null
   fabric_conditioner_quantity: number | null
   fabric_conditioner_other_reason: string | null
+  discount_promo_id: string | null
+  discount_promo_name_snapshot: string | null
+  discount_promo_kind_snapshot: DiscountPromoKind | null
+  discount_type_snapshot: DiscountType | null
+  discount_value_snapshot: number | null
+  discount_amount: number
   kg: number | null
   no_of_loads: number | null
   base_amount: number
@@ -426,6 +455,46 @@ export type Database = {
         }
         Relationships: []
       }
+      discounts_promos: {
+        Row: DiscountPromo
+        Insert: {
+          id?: string
+          name: string
+          kind?: DiscountPromoKind
+          discount_type?: DiscountType
+          discount_value: number
+          occasion?: string | null
+          applies_to?: DiscountAppliesTo
+          service_id?: string | null
+          add_on_id?: string | null
+          starts_at: string
+          ends_at: string
+          active?: boolean
+          notes?: string | null
+          created_at?: string
+          updated_at?: string
+          created_by?: string | null
+          updated_by?: string | null
+        }
+        Update: {
+          id?: string
+          name?: string
+          kind?: DiscountPromoKind
+          discount_type?: DiscountType
+          discount_value?: number
+          occasion?: string | null
+          applies_to?: DiscountAppliesTo
+          service_id?: string | null
+          add_on_id?: string | null
+          starts_at?: string
+          ends_at?: string
+          active?: boolean
+          notes?: string | null
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: []
+      }
       inventory_categories: {
         Row: InventoryCategory
         Insert: {
@@ -532,6 +601,12 @@ export type Database = {
           base_amount?: number
           add_ons?: number
           add_on_items?: TransactionAddOnItem[]
+          discount_promo_id?: string | null
+          discount_promo_name_snapshot?: string | null
+          discount_promo_kind_snapshot?: DiscountPromoKind | null
+          discount_type_snapshot?: DiscountType | null
+          discount_value_snapshot?: number | null
+          discount_amount?: number
           total_amount?: number
           cash_amount?: number
           gcash_amount?: number
@@ -573,6 +648,12 @@ export type Database = {
           base_amount?: number
           add_ons?: number
           add_on_items?: TransactionAddOnItem[]
+          discount_promo_id?: string | null
+          discount_promo_name_snapshot?: string | null
+          discount_promo_kind_snapshot?: DiscountPromoKind | null
+          discount_type_snapshot?: DiscountType | null
+          discount_value_snapshot?: number | null
+          discount_amount?: number
           total_amount?: number
           cash_amount?: number
           gcash_amount?: number
