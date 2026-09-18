@@ -218,7 +218,9 @@ begin
     return new;
   end if;
 
-  if new.detergent_source not in ('inventory', 'customer_supplied')
+  if new.detergent_source is null
+     or new.detergent_source not in ('inventory', 'customer_supplied')
+     or new.fabric_conditioner_source is null
      or new.fabric_conditioner_source not in ('inventory', 'customer_supplied') then
     raise exception 'Inventory usage details are required before completing the transaction'
       using errcode = '23514';
