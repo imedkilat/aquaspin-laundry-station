@@ -23,24 +23,35 @@ export default function EditStaffAccountModal({
     setError(null)
     setSaving(true)
 
-    const { data, error: functionError } = await supabase.functions.invoke('manage-staff-user', {
-      body: {
-        action: 'update',
-        user_id: account.id,
-        full_name: fullName.trim(),
-        email: email.trim(),
-        password,
-      },
-    })
+    const trimmedName = fullName.trim()
+    const trimmedEmail = email.trim().toLowerCase()
+    if (!trimmedName) {
+      setSaving(false)
+      setError('Staff name is required.')
+      return
+    }
+    const authChangeRequested = Boolean(password || (trimmedEmail && trimmedEmail !== account.email.toLowerCase()))
+    const directProfileUpdate = !authChangeRequested
+      ? await supabase.from('profiles').update({ full_name: trimmedName }).eq('id', account.id)
+      : null
+    const functionResult = authChangeRequested
+      ? await supabase.functions.invoke('manage-staff-user', {
+          body: { action: 'update', user_id: account.id, full_name: trimmedName, email: trimmedEmail, password },
+        })
+      : null
 
     setSaving(false)
 
-    if (functionError) {
-      setError(await edgeFunctionErrorMessage(functionError, 'Could not update the staff account. Please try again.'))
+    if (directProfileUpdate?.error) {
+      setError(directProfileUpdate.error.message)
       return
     }
-    if (data?.error) {
-      setError(String(data.error))
+    if (functionResult?.error) {
+      setError(await edgeFunctionErrorMessage(functionResult.error, 'Could not update the staff account. Please try again.'))
+      return
+    }
+    if (functionResult?.data?.error) {
+      setError(String(functionResult.data.error))
       return
     }
 
@@ -58,15 +69,15 @@ export default function EditStaffAccountModal({
       >
         <div>
           <h2 id="edit-staff-account-title" className="font-semibold text-slate-900 dark:text-slate-100">Edit Staff Account</h2>
-          <p className="mt-1 text-sm text-slate-500">Update the staff name or login details. Leave the password blank to keep it unchanged.</p>
+          <p className="mt-1 text-sm text-slate-500">Update the staff name or login details. Leave email and password blank to keep them unchanged.</p>
         </div>
 
         <div className="grid gap-3 sm:grid-cols-2">
           <label className="text-xs font-medium text-slate-600 dark:text-slate-400">Staff Name
             <input value={fullName} onChange={(event) => setFullName(event.target.value)} maxLength={120} className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100" />
           </label>
-          <label className="text-xs font-medium text-slate-600 dark:text-slate-400">Login Email
-            <input value={email} onChange={(event) => setEmail(event.target.value)} type="email" className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100" />
+          <label className="text-xs font-medium text-slate-600 dark:text-slate-400">Login Email (optional)
+            <input value={email} onChange={(event) => setEmail(event.target.value)} type="email" placeholder="Enter only when changing the email" className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100" />
           </label>
           <label className="text-xs font-medium text-slate-600 dark:text-slate-400 sm:col-span-2">New Temporary Password (optional)
             <input value={password} onChange={(event) => setPassword(event.target.value)} minLength={8} type="password" placeholder="Leave blank to keep the current password" className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100" />
