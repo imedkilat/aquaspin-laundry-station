@@ -479,7 +479,7 @@ export default function EditTransactionModal({ transaction, onClose }: { transac
           detergentItems={detergentItems}
           fabricConditionerItems={fabricConditionerItems}
           loading={inventoryLoading}
-          disabled={transaction.order_status === 'completed'}
+          disabled={transaction.order_status === 'completed' || transaction.order_status === 'cancelled'}
           onChange={updateInventoryUsage}
         />
 
