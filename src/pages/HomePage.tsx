@@ -2,11 +2,13 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import BentoCard from '../components/BentoCard'
 import CustomerItemsPendingCard from '../components/CustomerItemsPendingCard'
+import OnHoldHomeCard from '../components/OnHoldHomeCard'
 import PaymentBadge from '../components/PaymentBadge'
 import UiIcon, { type IconName } from '../components/UiIcon'
 import { ButtonSpinner, InlineAlert, LoadingPanel } from '../components/UiFeedback'
 import { useShopDate } from '../hooks/useShopDate'
 import { useTransactions } from '../hooks/useTransactions'
+import { useOnHoldTransactions } from '../hooks/useOnHoldTransactions'
 import { useAuth } from '../lib/auth-context'
 import { supabase } from '../lib/supabase'
 import { useShopSettings } from '../lib/shop-settings-context'
@@ -48,6 +50,13 @@ export default function HomePage() {
     orderStatuses: PENDING_CUSTOMER_ITEM_STATUSES,
     includeCustomerItemCoverage: true,
   })
+  const {
+    rows: onHoldRows,
+    loading: onHoldLoading,
+    error: onHoldError,
+    realtimeState: onHoldRealtimeState,
+    reload: reloadOnHold,
+  } = useOnHoldTransactions()
 
   const pendingRows = useMemo(
     () => pendingCoverageRows.filter(isCustomerItemsPending),
@@ -58,7 +67,8 @@ export default function HomePage() {
     void reloadActivity()
     void reloadOutstanding()
     void reloadPending()
-  }, [reloadActivity, reloadOutstanding, reloadPending])
+    void reloadOnHold()
+  }, [reloadActivity, reloadOnHold, reloadOutstanding, reloadPending])
 
   const stats = useMemo(() => {
     const periodMetrics = calculateSalesMetrics(rows, today, monthStart)
@@ -77,10 +87,10 @@ export default function HomePage() {
     }
   }, [monthStart, outstandingRows, rows, today])
 
-  const combinedError = error || outstandingError || pendingError
-  const realtimeOffline = [realtimeState, outstandingRealtimeState, pendingRealtimeState].some((state) => state === 'disconnected' || state === 'error')
+  const combinedError = error || outstandingError || pendingError || onHoldError
+  const realtimeOffline = [realtimeState, outstandingRealtimeState, pendingRealtimeState, onHoldRealtimeState].some((state) => state === 'disconnected' || state === 'error')
 
-  if ((loading || outstandingLoading || pendingLoading) && rows.length === 0 && outstandingRows.length === 0 && pendingCoverageRows.length === 0) {
+  if ((loading || outstandingLoading || pendingLoading || onHoldLoading) && rows.length === 0 && outstandingRows.length === 0 && pendingCoverageRows.length === 0 && onHoldRows.length === 0) {
     return <LoadingPanel label="Opening today's shop view…" slowLabel="Still loading today's laundry activity…" />
   }
 
@@ -137,6 +147,13 @@ export default function HomePage() {
         error={pendingError}
         canEdit={canEditCustomerItems(profile?.role, settings.staff_can_edit_transactions)}
         onRefresh={() => void reloadPending()}
+      />
+
+      <OnHoldHomeCard
+        rows={onHoldRows}
+        loading={onHoldLoading}
+        error={onHoldError}
+        onRefresh={() => void reloadOnHold()}
       />
 
       {isOwner && <LowStockInventory />}
@@ -278,6 +295,10 @@ function LowStockInventory() {
     const normalized = Number(value)
     return Number.isInteger(normalized) ? String(normalized) : normalized.toFixed(3).replace(/\.?0+$/, '')
   }
+
+  // Do not add an empty warning block to Owners Home. Keep the block visible
+  // only when there are low-stock items or when the inventory check failed.
+  if (items.length === 0 && !error) return null
 
   return (
     <>

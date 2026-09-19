@@ -34,6 +34,10 @@ export function inventoryUsageIsComplete(usage: InventoryUsageDraft) {
     sideIsComplete(usage.fabric_conditioner_item_id, usage.fabric_conditioner_quantity, usage.fabric_conditioner_other_reason)
 }
 
+export function inventoryUsageHasAnyValue(usage: InventoryUsageDraft) {
+  return Object.values(usage).some((value) => value.trim() !== '')
+}
+
 export function useInventoryConsumables() {
   const [items, setItems] = useState<InventoryItem[]>([])
   const [categoryNames, setCategoryNames] = useState<Map<string, string>>(new Map())

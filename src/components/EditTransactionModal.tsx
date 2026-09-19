@@ -11,6 +11,7 @@ import {
   emptyInventoryUsageDraft,
   OTHER_INVENTORY_SOURCE,
   inventoryUsageIsComplete,
+  inventoryUsageHasAnyValue,
   useInventoryConsumables,
   type InventoryUsageDraft,
 } from '../hooks/useInventoryConsumables'
@@ -20,6 +21,7 @@ const peso = (n: number) =>
 
 const unitLabel = (unit: string, quantity = 1) => {
   if (unit === 'flat') return 'flat'
+  if (unit === 'ml') return 'ml'
   return quantity === 1 ? unit : `${unit}s`
 }
 
@@ -71,6 +73,40 @@ function addOnsFromItems(items: TransactionAddOnItem[] | null | undefined): Reco
   return map
 }
 
+function inventoryUsageFromTransaction(t: TransactionWithService): InventoryUsageDraft {
+  return {
+    ...emptyInventoryUsageDraft(),
+    detergent_item_id: t.detergent_source === 'customer_supplied' ? OTHER_INVENTORY_SOURCE : t.detergent_item_id ?? '',
+    detergent_quantity: t.detergent_quantity != null ? String(t.detergent_quantity) : '',
+    detergent_other_reason: t.detergent_other_reason ?? '',
+    fabric_conditioner_item_id: t.fabric_conditioner_source === 'customer_supplied' ? OTHER_INVENTORY_SOURCE : t.fabric_conditioner_item_id ?? '',
+    fabric_conditioner_quantity: t.fabric_conditioner_quantity != null ? String(t.fabric_conditioner_quantity) : '',
+    fabric_conditioner_other_reason: t.fabric_conditioner_other_reason ?? '',
+  }
+}
+
+function inventoryUsageEquals(left: InventoryUsageDraft, right: InventoryUsageDraft) {
+  return Object.keys(left).every((key) => {
+    const field = key as keyof InventoryUsageDraft
+    return left[field] === right[field]
+  })
+}
+
+function addOnItemsSignature(items: TransactionAddOnItem[] | null | undefined) {
+  return JSON.stringify(
+    [...(items ?? [])]
+      .map((item) => ({
+        add_on_id: item.add_on_id,
+        name: item.name,
+        unit_type: item.unit_type,
+        unit_price: item.unit_price,
+        quantity: item.quantity,
+        line_total: item.line_total,
+      }))
+      .sort((left, right) => left.add_on_id.localeCompare(right.add_on_id)),
+  )
+}
+
 export default function EditTransactionModal({ transaction, onClose }: { transaction: TransactionWithService; onClose: () => void }) {
   const { services } = useServices()
   const { addOns, loading: addOnsLoading } = useAddOns({ includeInactive: true })
@@ -78,15 +114,8 @@ export default function EditTransactionModal({ transaction, onClose }: { transac
   const { detergentItems, fabricConditionerItems, loading: inventoryLoading, error: inventoryError } = useInventoryConsumables()
   const [form, setForm] = useState<FormState>(() => formToState(transaction))
   const [selectedAddOns, setSelectedAddOns] = useState<Record<string, number>>(() => addOnsFromItems(transaction.add_on_items))
-  const [inventoryUsage, setInventoryUsage] = useState<InventoryUsageDraft>(() => ({
-    ...emptyInventoryUsageDraft(),
-    detergent_item_id: transaction.detergent_source === 'customer_supplied' ? OTHER_INVENTORY_SOURCE : transaction.detergent_item_id ?? '',
-    detergent_quantity: transaction.detergent_quantity != null ? String(transaction.detergent_quantity) : '',
-    detergent_other_reason: transaction.detergent_other_reason ?? '',
-    fabric_conditioner_item_id: transaction.fabric_conditioner_source === 'customer_supplied' ? OTHER_INVENTORY_SOURCE : transaction.fabric_conditioner_item_id ?? '',
-    fabric_conditioner_quantity: transaction.fabric_conditioner_quantity != null ? String(transaction.fabric_conditioner_quantity) : '',
-    fabric_conditioner_other_reason: transaction.fabric_conditioner_other_reason ?? '',
-  }))
+  const initialInventoryUsage = useMemo(() => inventoryUsageFromTransaction(transaction), [transaction])
+  const [inventoryUsage, setInventoryUsage] = useState<InventoryUsageDraft>(() => inventoryUsageFromTransaction(transaction))
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const saveLockRef = useRef(false)
@@ -227,6 +256,17 @@ export default function EditTransactionModal({ transaction, onClose }: { transac
     e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>
   ) => setForm((f) => ({ ...f, [field]: e.target.value }))
 
+  const handlePaymentMethodChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const paymentMethod = e.target.value as PaymentMethod
+    setForm((current) => ({
+      ...current,
+      payment_method: paymentMethod,
+      cash_amount: paymentMethod === 'paid' ? current.cash_amount : '',
+      gcash_amount: paymentMethod === 'gcash' ? current.gcash_amount : '',
+      gcash_reference: paymentMethod === 'gcash' ? current.gcash_reference : '',
+    }))
+  }
+
   const updateInventoryUsage = (field: keyof InventoryUsageDraft, value: string) => {
     setInventoryUsage((current) => ({ ...current, [field]: value }))
   }
@@ -259,7 +299,15 @@ export default function EditTransactionModal({ transaction, onClose }: { transac
         setError('Inventory items could not be loaded. Refresh the page before saving the transaction.')
         return
       }
-      if (transaction.order_status !== 'completed' && !inventoryUsageIsComplete(inventoryUsage)) {
+      // Legacy orders may legitimately have no inventory fields. Do not make
+      // an unrelated edit impossible just because this newer feature was not
+      // present when the order was created. If the user starts editing the
+      // inventory section, the two sides must still be complete together.
+      if (
+        transaction.order_status !== 'completed' &&
+        inventoryUsageHasAnyValue(inventoryUsage) &&
+        !inventoryUsageIsComplete(inventoryUsage)
+      ) {
         setError('Complete both inventory usage details. If the customer supplied a product, select Other and enter the reason.')
         return
       }
@@ -302,6 +350,10 @@ export default function EditTransactionModal({ transaction, onClose }: { transac
 
       const detergentCustomerSupplied = inventoryUsage.detergent_item_id === OTHER_INVENTORY_SOURCE
       const conditionerCustomerSupplied = inventoryUsage.fabric_conditioner_item_id === OTHER_INVENTORY_SOURCE
+      const shouldPersistInventoryUsage =
+        inventoryUsageHasAnyValue(initialInventoryUsage) ||
+        !inventoryUsageEquals(inventoryUsage, initialInventoryUsage)
+      const shouldPersistAddOnItems = addOnItemsSignature(selectedAddOnItems) !== addOnItemsSignature(transaction.add_on_items)
 
       const { data: updatedRows, error: updateError } = await supabase
         .from('transactions')
@@ -310,19 +362,10 @@ export default function EditTransactionModal({ transaction, onClose }: { transac
           phone_number: form.phone_number.trim() || null,
           transaction_date: form.transaction_date,
           service_id: form.service_id,
-          detergent_source: detergentCustomerSupplied ? 'customer_supplied' : 'inventory',
-          detergent_item_id: detergentCustomerSupplied ? null : inventoryUsage.detergent_item_id || null,
-          detergent_quantity: detergentCustomerSupplied ? null : inventoryUsage.detergent_quantity ? Number(inventoryUsage.detergent_quantity) : null,
-          detergent_other_reason: detergentCustomerSupplied ? inventoryUsage.detergent_other_reason.trim() : null,
-          fabric_conditioner_source: conditionerCustomerSupplied ? 'customer_supplied' : 'inventory',
-          fabric_conditioner_item_id: conditionerCustomerSupplied ? null : inventoryUsage.fabric_conditioner_item_id || null,
-          fabric_conditioner_quantity: conditionerCustomerSupplied ? null : inventoryUsage.fabric_conditioner_quantity ? Number(inventoryUsage.fabric_conditioner_quantity) : null,
-          fabric_conditioner_other_reason: conditionerCustomerSupplied ? inventoryUsage.fabric_conditioner_other_reason.trim() : null,
           kg: form.kg ? Number(form.kg) : null,
           no_of_loads: form.no_of_loads ? Number(form.no_of_loads) : null,
           base_amount: form.base_amount ? Number(form.base_amount) : 0,
           add_ons: addOnsTotal,
-          add_on_items: selectedAddOnItems,
           total_amount: form.total_amount ? Number(form.total_amount) : 0,
           cash_amount: form.cash_amount ? Number(form.cash_amount) : 0,
           gcash_amount: form.gcash_amount ? Number(form.gcash_amount) : 0,
@@ -331,6 +374,17 @@ export default function EditTransactionModal({ transaction, onClose }: { transac
           pickup_date: form.pickup_date || null,
           pickup_time: form.pickup_date && form.pickup_time ? form.pickup_time : null,
           notes: form.notes.trim() || null,
+          ...(shouldPersistInventoryUsage ? {
+            detergent_source: detergentCustomerSupplied ? 'customer_supplied' : 'inventory',
+            detergent_item_id: detergentCustomerSupplied ? null : inventoryUsage.detergent_item_id || null,
+            detergent_quantity: detergentCustomerSupplied ? null : inventoryUsage.detergent_quantity ? Number(inventoryUsage.detergent_quantity) : null,
+            detergent_other_reason: detergentCustomerSupplied ? inventoryUsage.detergent_other_reason.trim() : null,
+            fabric_conditioner_source: conditionerCustomerSupplied ? 'customer_supplied' : 'inventory',
+            fabric_conditioner_item_id: conditionerCustomerSupplied ? null : inventoryUsage.fabric_conditioner_item_id || null,
+            fabric_conditioner_quantity: conditionerCustomerSupplied ? null : inventoryUsage.fabric_conditioner_quantity ? Number(inventoryUsage.fabric_conditioner_quantity) : null,
+            fabric_conditioner_other_reason: conditionerCustomerSupplied ? inventoryUsage.fabric_conditioner_other_reason.trim() : null,
+          } : {}),
+          ...(shouldPersistAddOnItems ? { add_on_items: selectedAddOnItems } : {}),
         })
         .eq('id', transaction.id)
         .eq('updated_at', transaction.updated_at)
@@ -425,7 +479,7 @@ export default function EditTransactionModal({ transaction, onClose }: { transac
           detergentItems={detergentItems}
           fabricConditionerItems={fabricConditionerItems}
           loading={inventoryLoading}
-          disabled={transaction.order_status === 'completed'}
+          disabled={transaction.order_status === 'completed' || transaction.order_status === 'cancelled'}
           onChange={updateInventoryUsage}
         />
 
@@ -491,7 +545,7 @@ export default function EditTransactionModal({ transaction, onClose }: { transac
           </div>
           <div>
             <label className={labelClass}>Payment Method *</label>
-            <select required value={form.payment_method} onChange={update('payment_method')} className={inputClass}>
+            <select required value={form.payment_method} onChange={handlePaymentMethodChange} className={inputClass}>
               <option value="paid">Cash</option><option value="gcash">GCash</option><option value="pay_later">Pay Later</option>
             </select>
           </div>
