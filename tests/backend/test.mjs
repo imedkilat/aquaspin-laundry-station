@@ -213,6 +213,28 @@ try {
       returning *`, [inventoryEdit.id]);
     assert.equal(inventoryUpdated.detergent_source, 'customer_supplied');
     assert.equal(inventoryUpdated.fabric_conditioner_source, 'customer_supplied');
+
+    let completedInventory = await transaction({ customer_name: 'Completed inventory guard', phone_number: null });
+    completedInventory = await status(completedInventory, 'washing');
+    completedInventory = await status(completedInventory, 'drying');
+    completedInventory = await status(completedInventory, 'ready_for_pickup');
+    completedInventory = await status(completedInventory, 'completed');
+
+    await asUser(owner);
+    await assert.rejects(
+      q("update public.transactions set detergent_source='inventory', detergent_quantity=500 where id=$1", [completedInventory.id]),
+      e => e.code === '42501' && e.message.includes('completed or cancelled'),
+    );
+
+    await setting('staff_can_edit_transactions', true);
+    await asUser(staff);
+    await assert.rejects(
+      q("update public.transactions set fabric_conditioner_other_reason='Changed after completion' where id=$1", [completedInventory.id]),
+      e => e.code === '42501' && e.message.includes('completed or cancelled'),
+    );
+    assert.equal((await fresh(completedInventory.id)).detergent_quantity, null);
+    assert.equal((await fresh(completedInventory.id)).fabric_conditioner_other_reason, 'Customer-provided fabric conditioner');
+    await asUser(owner);
   });
   await test('customer item workflow enforces validation, permissions, completion, and history', async () => {
     const wdfServiceId = await serviceId('WDF');
