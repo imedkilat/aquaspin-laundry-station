@@ -73,6 +73,40 @@ function addOnsFromItems(items: TransactionAddOnItem[] | null | undefined): Reco
   return map
 }
 
+function inventoryUsageFromTransaction(t: TransactionWithService): InventoryUsageDraft {
+  return {
+    ...emptyInventoryUsageDraft(),
+    detergent_item_id: t.detergent_source === 'customer_supplied' ? OTHER_INVENTORY_SOURCE : t.detergent_item_id ?? '',
+    detergent_quantity: t.detergent_quantity != null ? String(t.detergent_quantity) : '',
+    detergent_other_reason: t.detergent_other_reason ?? '',
+    fabric_conditioner_item_id: t.fabric_conditioner_source === 'customer_supplied' ? OTHER_INVENTORY_SOURCE : t.fabric_conditioner_item_id ?? '',
+    fabric_conditioner_quantity: t.fabric_conditioner_quantity != null ? String(t.fabric_conditioner_quantity) : '',
+    fabric_conditioner_other_reason: t.fabric_conditioner_other_reason ?? '',
+  }
+}
+
+function inventoryUsageEquals(left: InventoryUsageDraft, right: InventoryUsageDraft) {
+  return Object.keys(left).every((key) => {
+    const field = key as keyof InventoryUsageDraft
+    return left[field] === right[field]
+  })
+}
+
+function addOnItemsSignature(items: TransactionAddOnItem[] | null | undefined) {
+  return JSON.stringify(
+    [...(items ?? [])]
+      .map((item) => ({
+        add_on_id: item.add_on_id,
+        name: item.name,
+        unit_type: item.unit_type,
+        unit_price: item.unit_price,
+        quantity: item.quantity,
+        line_total: item.line_total,
+      }))
+      .sort((left, right) => left.add_on_id.localeCompare(right.add_on_id)),
+  )
+}
+
 export default function EditTransactionModal({ transaction, onClose }: { transaction: TransactionWithService; onClose: () => void }) {
   const { services } = useServices()
   const { addOns, loading: addOnsLoading } = useAddOns({ includeInactive: true })
@@ -80,15 +114,8 @@ export default function EditTransactionModal({ transaction, onClose }: { transac
   const { detergentItems, fabricConditionerItems, loading: inventoryLoading, error: inventoryError } = useInventoryConsumables()
   const [form, setForm] = useState<FormState>(() => formToState(transaction))
   const [selectedAddOns, setSelectedAddOns] = useState<Record<string, number>>(() => addOnsFromItems(transaction.add_on_items))
-  const [inventoryUsage, setInventoryUsage] = useState<InventoryUsageDraft>(() => ({
-    ...emptyInventoryUsageDraft(),
-    detergent_item_id: transaction.detergent_source === 'customer_supplied' ? OTHER_INVENTORY_SOURCE : transaction.detergent_item_id ?? '',
-    detergent_quantity: transaction.detergent_quantity != null ? String(transaction.detergent_quantity) : '',
-    detergent_other_reason: transaction.detergent_other_reason ?? '',
-    fabric_conditioner_item_id: transaction.fabric_conditioner_source === 'customer_supplied' ? OTHER_INVENTORY_SOURCE : transaction.fabric_conditioner_item_id ?? '',
-    fabric_conditioner_quantity: transaction.fabric_conditioner_quantity != null ? String(transaction.fabric_conditioner_quantity) : '',
-    fabric_conditioner_other_reason: transaction.fabric_conditioner_other_reason ?? '',
-  }))
+  const initialInventoryUsage = useMemo(() => inventoryUsageFromTransaction(transaction), [transaction])
+  const [inventoryUsage, setInventoryUsage] = useState<InventoryUsageDraft>(() => inventoryUsageFromTransaction(transaction))
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const saveLockRef = useRef(false)
@@ -323,6 +350,10 @@ export default function EditTransactionModal({ transaction, onClose }: { transac
 
       const detergentCustomerSupplied = inventoryUsage.detergent_item_id === OTHER_INVENTORY_SOURCE
       const conditionerCustomerSupplied = inventoryUsage.fabric_conditioner_item_id === OTHER_INVENTORY_SOURCE
+      const shouldPersistInventoryUsage =
+        inventoryUsageHasAnyValue(initialInventoryUsage) ||
+        !inventoryUsageEquals(inventoryUsage, initialInventoryUsage)
+      const shouldPersistAddOnItems = addOnItemsSignature(selectedAddOnItems) !== addOnItemsSignature(transaction.add_on_items)
 
       const { data: updatedRows, error: updateError } = await supabase
         .from('transactions')
@@ -331,19 +362,10 @@ export default function EditTransactionModal({ transaction, onClose }: { transac
           phone_number: form.phone_number.trim() || null,
           transaction_date: form.transaction_date,
           service_id: form.service_id,
-          detergent_source: detergentCustomerSupplied ? 'customer_supplied' : 'inventory',
-          detergent_item_id: detergentCustomerSupplied ? null : inventoryUsage.detergent_item_id || null,
-          detergent_quantity: detergentCustomerSupplied ? null : inventoryUsage.detergent_quantity ? Number(inventoryUsage.detergent_quantity) : null,
-          detergent_other_reason: detergentCustomerSupplied ? inventoryUsage.detergent_other_reason.trim() : null,
-          fabric_conditioner_source: conditionerCustomerSupplied ? 'customer_supplied' : 'inventory',
-          fabric_conditioner_item_id: conditionerCustomerSupplied ? null : inventoryUsage.fabric_conditioner_item_id || null,
-          fabric_conditioner_quantity: conditionerCustomerSupplied ? null : inventoryUsage.fabric_conditioner_quantity ? Number(inventoryUsage.fabric_conditioner_quantity) : null,
-          fabric_conditioner_other_reason: conditionerCustomerSupplied ? inventoryUsage.fabric_conditioner_other_reason.trim() : null,
           kg: form.kg ? Number(form.kg) : null,
           no_of_loads: form.no_of_loads ? Number(form.no_of_loads) : null,
           base_amount: form.base_amount ? Number(form.base_amount) : 0,
           add_ons: addOnsTotal,
-          add_on_items: selectedAddOnItems,
           total_amount: form.total_amount ? Number(form.total_amount) : 0,
           cash_amount: form.cash_amount ? Number(form.cash_amount) : 0,
           gcash_amount: form.gcash_amount ? Number(form.gcash_amount) : 0,
@@ -352,6 +374,17 @@ export default function EditTransactionModal({ transaction, onClose }: { transac
           pickup_date: form.pickup_date || null,
           pickup_time: form.pickup_date && form.pickup_time ? form.pickup_time : null,
           notes: form.notes.trim() || null,
+          ...(shouldPersistInventoryUsage ? {
+            detergent_source: detergentCustomerSupplied ? 'customer_supplied' : 'inventory',
+            detergent_item_id: detergentCustomerSupplied ? null : inventoryUsage.detergent_item_id || null,
+            detergent_quantity: detergentCustomerSupplied ? null : inventoryUsage.detergent_quantity ? Number(inventoryUsage.detergent_quantity) : null,
+            detergent_other_reason: detergentCustomerSupplied ? inventoryUsage.detergent_other_reason.trim() : null,
+            fabric_conditioner_source: conditionerCustomerSupplied ? 'customer_supplied' : 'inventory',
+            fabric_conditioner_item_id: conditionerCustomerSupplied ? null : inventoryUsage.fabric_conditioner_item_id || null,
+            fabric_conditioner_quantity: conditionerCustomerSupplied ? null : inventoryUsage.fabric_conditioner_quantity ? Number(inventoryUsage.fabric_conditioner_quantity) : null,
+            fabric_conditioner_other_reason: conditionerCustomerSupplied ? inventoryUsage.fabric_conditioner_other_reason.trim() : null,
+          } : {}),
+          ...(shouldPersistAddOnItems ? { add_on_items: selectedAddOnItems } : {}),
         })
         .eq('id', transaction.id)
         .eq('updated_at', transaction.updated_at)
