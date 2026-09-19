@@ -19,13 +19,34 @@ export function useStaffAccounts() {
     })
 
     if (functionError) {
-      setError(await edgeFunctionErrorMessage(functionError, 'Could not load account access. Check the connection and try again.'))
+      // Keep Account Access available if the optional Auth email lookup is
+      // unavailable. The Owner-authorized profiles query still gives the UI
+      // the complete role list; email is shown when the Edge Function works.
+      const { data: profiles, error: profilesError } = await supabase
+        .from('profiles')
+        .select('*')
+        .order('created_at')
+      if (profilesError) {
+        setError(await edgeFunctionErrorMessage(functionError, 'Could not load account access. Check the connection and try again.'))
+        setLoading(false)
+        return
+      }
+      setAccounts((profiles ?? []).map((profile) => ({ ...profile, email: '' })) as StaffAccount[])
       setLoading(false)
       return
     }
 
     if (data?.error) {
-      setError(String(data.error))
+      const { data: profiles, error: profilesError } = await supabase
+        .from('profiles')
+        .select('*')
+        .order('created_at')
+      if (profilesError) {
+        setError(String(data.error))
+        setLoading(false)
+        return
+      }
+      setAccounts((profiles ?? []).map((profile) => ({ ...profile, email: '' })) as StaffAccount[])
       setLoading(false)
       return
     }
