@@ -16,7 +16,7 @@ export type Role = 'owner' | 'staff'
 export type PaymentMethod = 'paid' | 'gcash' | 'pay_later'
 export type InventoryUsageSource = 'inventory' | 'customer_supplied'
 export type PricingType = 'per_load_by_weight' | 'per_load_manual' | 'per_item'
-export type AddOnUnit = 'piece' | 'load' | 'sachet' | 'dose' | 'cycle' | 'kg' | 'flat'
+export type AddOnUnit = 'piece' | 'load' | 'sachet' | 'dose' | 'cycle' | 'kg' | 'ml' | 'flat'
 export type DiscountPromoKind = 'discount' | 'promo'
 export type DiscountType = 'percentage' | 'fixed'
 export type DiscountAppliesTo = 'all' | 'service' | 'add_on'
@@ -236,7 +236,7 @@ export type TransactionAddOnItem = {
   line_total: number
 }
 
-export type CustomerItemType = 'shorts' | 't_shirts' | 'pants' | 'underwear' | 'dresses' | 'towels' | 'bedsheets' | 'jackets' | 'other'
+export type CustomerItemType = 'shorts' | 't_shirts' | 'pants' | 'underwear' | 'dresses' | 'towels' | 'bedsheets' | 'jackets' | 'other' | 'custom'
 
 export type TransactionCustomerItem = {
   id: string
@@ -787,4 +787,3 @@ export type Database = {
     CompositeTypes: { [_ in never]: never }
   }
 }
-
