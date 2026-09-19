@@ -236,6 +236,72 @@ try {
     assert.equal((await fresh(completedInventory.id)).fabric_conditioner_other_reason, 'Customer-provided fabric conditioner');
     await asUser(owner);
   });
+  await test('consumed inventory usage stays immutable after owner reopens an order', async () => {
+    await admin();
+    const detergentCategory = await one(`insert into public.inventory_categories
+      (name, created_by, updated_by) values ('Liquid Detergent', $1, $1) returning id`, [owner]);
+    const conditionerCategory = await one(`insert into public.inventory_categories
+      (name, created_by, updated_by) values ('Fabric Conditioner', $1, $1) returning id`, [owner]);
+    const detergentItem = await one(`insert into public.inventory_items
+      (item_name, category_id, unit_label, average_cost, created_by, updated_by)
+      values ('Reopen Guard Detergent', $1, 'ml', 2, $2, $2) returning id`, [detergentCategory.id, owner]);
+    const conditionerItem = await one(`insert into public.inventory_items
+      (item_name, category_id, unit_label, average_cost, created_by, updated_by)
+      values ('Reopen Guard Conditioner', $1, 'ml', 2, $2, $2) returning id`, [conditionerCategory.id, owner]);
+    await q(`insert into public.inventory_stock_movements
+      (item_id, movement_type, quantity_delta, unit_cost, reason, created_by)
+      values ($1, 'stock_in', 1000, 2, 'Reopen guard fixture', $3),
+             ($2, 'stock_in', 1000, 2, 'Reopen guard fixture', $3)`, [detergentItem.id, conditionerItem.id, owner]);
+
+    await asUser(owner);
+    let consumed = await transaction({
+      customer_name: 'Consumed inventory reopen guard',
+      phone_number: null,
+      detergent_source: 'inventory',
+      detergent_item_id: detergentItem.id,
+      detergent_quantity: 50,
+      detergent_other_reason: null,
+      fabric_conditioner_source: 'inventory',
+      fabric_conditioner_item_id: conditionerItem.id,
+      fabric_conditioner_quantity: 25,
+      fabric_conditioner_other_reason: null,
+    });
+    consumed = await status(consumed, 'washing');
+    consumed = await status(consumed, 'drying');
+    consumed = await status(consumed, 'ready_for_pickup');
+    consumed = await status(consumed, 'completed');
+
+    const before = await one(`select t.detergent_item_id, t.detergent_quantity,
+      t.fabric_conditioner_item_id, t.fabric_conditioner_quantity,
+      (select count(*)::int from public.inventory_stock_movements m where m.item_id in ($1, $2)) movement_count,
+      (select count(*)::int from public.transaction_inventory_consumption c where c.transaction_id = $3) consumption_count
+      from public.transactions t where t.id = $3`, [detergentItem.id, conditionerItem.id, consumed.id]);
+    consumed = await status(consumed, 'ready_for_pickup', 'Reopen approved for correction', true);
+
+    await assert.rejects(
+      q(`update public.transactions set
+        detergent_item_id=$1, detergent_quantity=500
+        where id=$2`, [conditionerItem.id, consumed.id]),
+      e => e.code === '42501' && e.message.includes('stock consumption'),
+    );
+    const after = await one(`select t.detergent_item_id, t.detergent_quantity,
+      t.fabric_conditioner_item_id, t.fabric_conditioner_quantity,
+      (select count(*)::int from public.inventory_stock_movements m where m.item_id in ($1, $2)) movement_count,
+      (select count(*)::int from public.transaction_inventory_consumption c where c.transaction_id = $3) consumption_count
+      from public.transactions t where t.id = $3`, [detergentItem.id, conditionerItem.id, consumed.id]);
+    assert.equal(after.detergent_item_id, before.detergent_item_id);
+    assert.equal(Number(after.detergent_quantity), Number(before.detergent_quantity));
+    assert.equal(after.fabric_conditioner_item_id, before.fabric_conditioner_item_id);
+    assert.equal(Number(after.fabric_conditioner_quantity), Number(before.fabric_conditioner_quantity));
+    assert.equal(after.movement_count, before.movement_count);
+    assert.equal(after.consumption_count, before.consumption_count);
+
+    consumed = await status(await fresh(consumed.id), 'cancelled', 'Customer cancelled after reopen', true);
+    await assert.rejects(
+      q("update public.transactions set fabric_conditioner_quantity=75 where id=$1", [consumed.id]),
+      e => e.code === '42501' && e.message.includes('completed or cancelled'),
+    );
+  });
   await test('customer item workflow enforces validation, permissions, completion, and history', async () => {
     const wdfServiceId = await serviceId('WDF');
     const grants = await one("select has_function_privilege('authenticated','public.save_transaction_customer_items(uuid,jsonb)','execute') auth_ok, has_function_privilege('anon','public.save_transaction_customer_items(uuid,jsonb)','execute') anon_ok");
