@@ -18,8 +18,13 @@ export default function CustomerItemsPendingCard({
   canEdit: boolean
   onRefresh: () => void
 }) {
+  // Keep the Owners Home focused on actionable work. A healthy zero-pending
+  // result should not occupy space, while an error still needs to remain
+  // visible so the owner knows the status could not be verified.
+  if (rows.length === 0 && !error) return null
+
   const description = rows.length === 0
-    ? 'All active orders have customer item lists.'
+    ? 'Customer item status could not be verified.'
     : `${rows.length} order${rows.length === 1 ? '' : 's'} still need customer item lists`
 
   return (
@@ -47,11 +52,7 @@ export default function CustomerItemsPendingCard({
 
       {loading && rows.length === 0 ? (
         <LoadingPanel compact label="Checking customer item lists…" slowLabel="Still checking customer item lists…" />
-      ) : rows.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-amber-300 px-4 py-6 text-center text-sm text-amber-800 dark:border-amber-800 dark:text-amber-200">
-          All active orders have customer item lists.
-        </div>
-      ) : (
+      ) : rows.length > 0 ? (
         <div className="space-y-2">
           {rows.map((row) => (
             <div key={row.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50/60 px-4 py-3 dark:border-amber-900/70 dark:bg-amber-950/20">
@@ -72,7 +73,7 @@ export default function CustomerItemsPendingCard({
             </div>
           ))}
         </div>
-      )}
+      ) : null}
     </BentoCard>
   )
 }

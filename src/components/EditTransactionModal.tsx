@@ -11,6 +11,7 @@ import {
   emptyInventoryUsageDraft,
   OTHER_INVENTORY_SOURCE,
   inventoryUsageIsComplete,
+  inventoryUsageHasAnyValue,
   useInventoryConsumables,
   type InventoryUsageDraft,
 } from '../hooks/useInventoryConsumables'
@@ -20,6 +21,7 @@ const peso = (n: number) =>
 
 const unitLabel = (unit: string, quantity = 1) => {
   if (unit === 'flat') return 'flat'
+  if (unit === 'ml') return 'ml'
   return quantity === 1 ? unit : `${unit}s`
 }
 
@@ -227,6 +229,17 @@ export default function EditTransactionModal({ transaction, onClose }: { transac
     e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>
   ) => setForm((f) => ({ ...f, [field]: e.target.value }))
 
+  const handlePaymentMethodChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const paymentMethod = e.target.value as PaymentMethod
+    setForm((current) => ({
+      ...current,
+      payment_method: paymentMethod,
+      cash_amount: paymentMethod === 'paid' ? current.cash_amount : '',
+      gcash_amount: paymentMethod === 'gcash' ? current.gcash_amount : '',
+      gcash_reference: paymentMethod === 'gcash' ? current.gcash_reference : '',
+    }))
+  }
+
   const updateInventoryUsage = (field: keyof InventoryUsageDraft, value: string) => {
     setInventoryUsage((current) => ({ ...current, [field]: value }))
   }
@@ -259,7 +272,15 @@ export default function EditTransactionModal({ transaction, onClose }: { transac
         setError('Inventory items could not be loaded. Refresh the page before saving the transaction.')
         return
       }
-      if (transaction.order_status !== 'completed' && !inventoryUsageIsComplete(inventoryUsage)) {
+      // Legacy orders may legitimately have no inventory fields. Do not make
+      // an unrelated edit impossible just because this newer feature was not
+      // present when the order was created. If the user starts editing the
+      // inventory section, the two sides must still be complete together.
+      if (
+        transaction.order_status !== 'completed' &&
+        inventoryUsageHasAnyValue(inventoryUsage) &&
+        !inventoryUsageIsComplete(inventoryUsage)
+      ) {
         setError('Complete both inventory usage details. If the customer supplied a product, select Other and enter the reason.')
         return
       }
@@ -491,7 +512,7 @@ export default function EditTransactionModal({ transaction, onClose }: { transac
           </div>
           <div>
             <label className={labelClass}>Payment Method *</label>
-            <select required value={form.payment_method} onChange={update('payment_method')} className={inputClass}>
+            <select required value={form.payment_method} onChange={handlePaymentMethodChange} className={inputClass}>
               <option value="paid">Cash</option><option value="gcash">GCash</option><option value="pay_later">Pay Later</option>
             </select>
           </div>

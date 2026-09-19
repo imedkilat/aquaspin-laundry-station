@@ -12,6 +12,7 @@ const UNIT_OPTIONS: Array<{ value: AddOnUnit; label: string; example: string }> 
   { value: 'dose', label: 'Per dose', example: 'liquid conditioner or detergent dose' },
   { value: 'cycle', label: 'Per cycle', example: 'extra dry cycle' },
   { value: 'kg', label: 'Per kg', example: 'weight-based special treatment' },
+  { value: 'ml', label: 'Per ml', example: 'liquid detergent or conditioner' },
   { value: 'flat', label: 'Flat fee', example: 'stain treatment or rush handling' },
 ]
 
@@ -61,7 +62,7 @@ export default function AddOnsManager() {
           <div><label className="block text-xs font-medium text-slate-600 mb-1 dark:text-slate-400">Charge Unit</label><select value={unitType} onChange={(e) => setUnitType(e.target.value as AddOnUnit)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100">{UNIT_OPTIONS.map((unit) => <option key={unit.value} value={unit.value}>{unit.label}</option>)}</select></div>
         </div>
 
-        <p className="text-xs text-slate-500">Example: Downy ₱20 / sachet, Hanger ₱10 / piece, Extra Rinse ₱30 / load, Extra Dry ₱40 / cycle, Stain Treatment ₱50 flat.</p>
+        <p className="text-xs text-slate-500">Example: Downy ₱20 / sachet, Liquid detergent ₱2 / ml, Hanger ₱10 / piece, Extra Rinse ₱30 / load, Extra Dry ₱40 / cycle, Stain Treatment ₱50 flat.</p>
         {notice && <InlineAlert variant={notice.type}>{notice.text}</InlineAlert>}
         <button type="submit" disabled={saving} className="inline-flex items-center gap-2 bg-sky-600 hover:bg-sky-700 disabled:opacity-60 text-white font-medium rounded-lg px-4 py-2 text-sm transition">{saving && <ButtonSpinner />}{saving ? 'Adding…' : 'Add to Catalog'}</button>
       </form>

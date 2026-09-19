@@ -13,10 +13,15 @@ const ITEM_OPTIONS: Array<{ value: CustomerItemType; label: string }> = [
   { value: 'bedsheets', label: 'Bedsheets' },
   { value: 'jackets', label: 'Jackets' },
   { value: 'other', label: 'Other' },
+  { value: 'custom', label: 'Custom item' },
 ]
 
 const itemLabel = (item: Pick<TransactionCustomerItem, 'item_type' | 'custom_item_name'>) =>
-  item.item_type === 'other' ? item.custom_item_name || 'Other' : ITEM_OPTIONS.find((option) => option.value === item.item_type)?.label || item.item_type
+  (item.item_type === 'other' || item.item_type === 'custom')
+    ? item.custom_item_name || 'Custom item'
+    : ITEM_OPTIONS.find((option) => option.value === item.item_type)?.label || item.item_type
+
+const isNamedItem = (itemType: CustomerItemType) => itemType === 'other' || itemType === 'custom'
 
 type DraftItem = TransactionCustomerItemInput & { key: string }
 
@@ -105,10 +110,12 @@ function CustomerItemsModal({
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const availableOptions = ITEM_OPTIONS.filter((option) => !draft.some((item) => item.item_type === option.value))
+  const availableOptions = ITEM_OPTIONS.filter((option) => option.value === 'custom' || !draft.some((item) => item.item_type === option.value))
 
-  const addItem = () => {
-    const option = availableOptions[0]
+  const addItem = (itemType?: CustomerItemType) => {
+    const option = itemType
+      ? ITEM_OPTIONS.find((candidate) => candidate.value === itemType)
+      : availableOptions.find((candidate) => candidate.value !== 'custom')
     if (!option) return
     setDraft((current) => [...current, { key: `${option.value}-${Date.now()}`, item_type: option.value, quantity: 1, custom_item_name: '' }])
   }
@@ -128,17 +135,28 @@ function CustomerItemsModal({
         setError('Each quantity must be a whole number greater than zero.')
         return
       }
-      if (item.item_type === 'other' && !item.custom_item_name?.trim()) {
-        setError('Please enter a custom item name for Other.')
+      if (isNamedItem(item.item_type) && !item.custom_item_name?.trim()) {
+        setError('Please enter a name for each custom item.')
         return
       }
+      if (isNamedItem(item.item_type) && item.custom_item_name!.trim().length > 120) {
+        setError('Custom item names must be 120 characters or fewer.')
+        return
+      }
+    }
+    const namedItems = draft
+      .filter((item) => isNamedItem(item.item_type))
+      .map((item) => item.custom_item_name!.trim().toLocaleLowerCase())
+    if (new Set(namedItems).size !== namedItems.length) {
+      setError('Custom item names must be unique within this order.')
+      return
     }
 
     setSaving(true)
     const payload: TransactionCustomerItemInput[] = draft.map(({ item_type, quantity, custom_item_name }) => ({
       item_type,
       quantity,
-      custom_item_name: item_type === 'other' ? custom_item_name?.trim() || null : null,
+      custom_item_name: isNamedItem(item_type) ? custom_item_name?.trim() || null : null,
     }))
     const { error: saveError } = await supabase.rpc('save_transaction_customer_items', {
       p_transaction_id: transactionId,
@@ -172,18 +190,21 @@ function CustomerItemsModal({
                 <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Item type</label>
                 <select
                   value={item.item_type}
-                  onChange={(event) => updateItem(item.key, { item_type: event.target.value as CustomerItemType, custom_item_name: event.target.value === 'other' ? '' : null })}
+                  onChange={(event) => {
+                    const nextType = event.target.value as CustomerItemType
+                    updateItem(item.key, { item_type: nextType, custom_item_name: isNamedItem(nextType) ? item.custom_item_name || '' : null })
+                  }}
                   className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950"
                 >
-                  {ITEM_OPTIONS.filter((option) => option.value === item.item_type || !draft.some((other) => other.key !== item.key && other.item_type === option.value)).map((option) => (
+                  {ITEM_OPTIONS.filter((option) => option.value === item.item_type || option.value === 'custom' || !draft.some((other) => other.key !== item.key && other.item_type === option.value)).map((option) => (
                     <option key={option.value} value={option.value}>{option.label}</option>
                   ))}
                 </select>
-                {item.item_type === 'other' && (
+                {isNamedItem(item.item_type) && (
                   <input
                     value={item.custom_item_name || ''}
                     onChange={(event) => updateItem(item.key, { custom_item_name: event.target.value })}
-                    placeholder="Custom item name"
+                    placeholder="Custom item name, e.g. curtain"
                     maxLength={120}
                     className="mt-2 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950"
                   />
@@ -205,7 +226,10 @@ function CustomerItemsModal({
           ))}
         </div>
 
-        <button type="button" onClick={addItem} disabled={!availableOptions.length} className="mt-3 rounded-lg border border-dashed border-sky-300 px-3 py-2 text-sm font-semibold text-sky-700 hover:bg-sky-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-sky-800 dark:text-sky-300 dark:hover:bg-sky-950/30">+ Add item type</button>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <button type="button" onClick={() => addItem()} disabled={!availableOptions.some((option) => option.value !== 'custom')} className="rounded-lg border border-dashed border-sky-300 px-3 py-2 text-sm font-semibold text-sky-700 hover:bg-sky-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-sky-800 dark:text-sky-300 dark:hover:bg-sky-950/30">+ Add dropdown item</button>
+          <button type="button" onClick={() => addItem('custom')} className="rounded-lg border border-dashed border-violet-300 px-3 py-2 text-sm font-semibold text-violet-700 hover:bg-violet-50 dark:border-violet-800 dark:text-violet-300 dark:hover:bg-violet-950/30">+ Add custom item</button>
+        </div>
 
         {error && <div className="mt-4"><InlineAlert variant="error" title="Customer items were not saved">{error}</InlineAlert></div>}
 

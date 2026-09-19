@@ -46,6 +46,7 @@ const peso = (n: number) =>
 
 const unitLabel = (unit: string, quantity = 1) => {
   if (unit === 'flat') return 'flat'
+  if (unit === 'ml') return 'ml'
   return quantity === 1 ? unit : `${unit}s`
 }
 
