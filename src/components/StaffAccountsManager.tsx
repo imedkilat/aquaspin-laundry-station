@@ -1,25 +1,27 @@
 import { useMemo, useRef, useState, type FormEvent } from 'react'
-import { useProfiles } from '../hooks/useProfiles'
+import { useStaffAccounts, type StaffAccount } from '../hooks/useStaffAccounts'
 import { useAuth } from '../lib/auth-context'
 import { supabase } from '../lib/supabase'
 import { edgeFunctionErrorMessage } from '../lib/edge-functions'
-import type { Profile, Role } from '../types/database'
+import type { Role } from '../types/database'
 import { ButtonSpinner, InlineAlert, LoadingPanel } from './UiFeedback'
+import EditStaffAccountModal from './EditStaffAccountModal'
 
 export default function StaffAccountsManager() {
-  const { profiles, loading, error: loadError, reload } = useProfiles()
+  const { accounts, loading, error: loadError, reload } = useStaffAccounts()
   const { profile: currentProfile } = useAuth()
   const [updatingId, setUpdatingId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
   const [creating, setCreating] = useState(false)
+  const [editingAccount, setEditingAccount] = useState<StaffAccount | null>(null)
   const [fullName, setFullName] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const creatingRef = useRef(false)
 
-  const ownerProfiles = useMemo(() => profiles.filter((profile) => profile.role === 'owner'), [profiles])
-  const staffProfiles = useMemo(() => profiles.filter((profile) => profile.role === 'staff'), [profiles])
+  const ownerProfiles = useMemo(() => accounts.filter((profile) => profile.role === 'owner'), [accounts])
+  const staffProfiles = useMemo(() => accounts.filter((profile) => profile.role === 'staff'), [accounts])
 
   const createStaff = async (event: FormEvent) => {
     event.preventDefault()
@@ -71,6 +73,31 @@ export default function StaffAccountsManager() {
     void reload()
   }
 
+  const deleteStaff = async (account: StaffAccount) => {
+    if (account.role !== 'staff') return
+    if (!window.confirm(`Delete the Staff account for ${account.full_name} (${account.email})? This removes the login permanently.`)) return
+
+    setUpdatingId(account.id)
+    setError(null)
+    setSuccess(null)
+    const { data, error: functionError } = await supabase.functions.invoke('manage-staff-user', {
+      body: { action: 'delete', user_id: account.id },
+    })
+    setUpdatingId(null)
+
+    if (functionError) {
+      setError(await edgeFunctionErrorMessage(functionError, 'Could not delete the staff account. Please try again.'))
+      return
+    }
+    if (data?.error) {
+      setError(String(data.error))
+      return
+    }
+
+    setSuccess(`Staff account deleted for ${account.email}.`)
+    void reload()
+  }
+
   return (
     <div className="space-y-5">
       <form onSubmit={createStaff} className="bg-white rounded-2xl border border-slate-200 p-5 space-y-4 dark:bg-slate-900 dark:border-slate-800">
@@ -98,21 +125,25 @@ export default function StaffAccountsManager() {
 
         {loading ? <LoadingPanel label="Loading account access…" slowLabel="Still loading accounts… the internet connection may be slow." /> : (
           <div className="space-y-5">
-            <AccessGroup title="Owner Access" profiles={ownerProfiles} currentProfileId={currentProfile?.id} updatingId={updatingId} onToggleRole={toggleRole} emptyText="No owner accounts found." />
-            <AccessGroup title="Staff Access" profiles={staffProfiles} currentProfileId={currentProfile?.id} updatingId={updatingId} onToggleRole={toggleRole} emptyText="No staff profiles found. Create a Staff account above." />
+            <AccessGroup title="Owner Access" profiles={ownerProfiles} currentProfileId={currentProfile?.id} updatingId={updatingId} onToggleRole={toggleRole} onEdit={() => undefined} onDelete={() => undefined} emptyText="No owner accounts found." />
+            <AccessGroup title="Staff Access" profiles={staffProfiles} currentProfileId={currentProfile?.id} updatingId={updatingId} onToggleRole={toggleRole} onEdit={setEditingAccount} onDelete={(account) => void deleteStaff(account)} emptyText="No staff profiles found. Create a Staff account above." />
           </div>
         )}
       </div>
+
+      {editingAccount && <EditStaffAccountModal account={editingAccount} onClose={() => setEditingAccount(null)} onSaved={(message) => { setEditingAccount(null); setSuccess(message); void reload() }} />}
     </div>
   )
 }
 
-function AccessGroup({ title, profiles, currentProfileId, updatingId, onToggleRole, emptyText }: {
+function AccessGroup({ title, profiles, currentProfileId, updatingId, onToggleRole, onEdit, onDelete, emptyText }: {
   title: string
-  profiles: Profile[]
+  profiles: StaffAccount[]
   currentProfileId?: string
   updatingId: string | null
   onToggleRole: (id: string, current: Role) => void
+  onEdit: (profile: StaffAccount) => void
+  onDelete: (profile: StaffAccount) => void
   emptyText: string
 }) {
   return (
@@ -122,12 +153,15 @@ function AccessGroup({ title, profiles, currentProfileId, updatingId, onToggleRo
       {profiles.length === 0 ? <p className="text-sm text-slate-400 py-2">{emptyText}</p> : (
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
-            <thead><tr className="text-left text-xs text-slate-500 border-b border-slate-200 dark:border-slate-700"><th className="py-2 pr-3 font-medium">Name</th><th className="py-2 pr-3 font-medium">Role</th><th className="py-2 pr-3 font-medium">Since</th><th className="py-2 pr-3 font-medium"></th></tr></thead>
+            <thead><tr className="text-left text-xs text-slate-500 border-b border-slate-200 dark:border-slate-700"><th className="py-2 pr-3 font-medium">Name</th><th className="py-2 pr-3 font-medium">Login Email</th><th className="py-2 pr-3 font-medium">Role</th><th className="py-2 pr-3 font-medium">Since</th><th className="py-2 pr-3 font-medium"></th></tr></thead>
             <tbody>
               {profiles.map((profile) => (
                 <tr key={profile.id} className="border-b border-slate-100 last:border-0 dark:border-slate-800">
-                  <td className="py-2 pr-3 font-medium text-slate-900 dark:text-slate-100">{profile.full_name}</td><td className="py-2 pr-3 capitalize">{profile.role}</td><td className="py-2 pr-3 text-slate-500">{new Date(profile.created_at).toLocaleDateString()}</td>
-                  <td className="py-2 pr-3"><button disabled={updatingId === profile.id || (profile.id === currentProfileId && profile.role === 'owner')} onClick={() => onToggleRole(profile.id, profile.role)} className="inline-flex items-center gap-1.5 text-sky-600 hover:text-sky-700 text-xs font-medium disabled:opacity-50">{updatingId === profile.id && <ButtonSpinner />}{profile.id === currentProfileId && profile.role === 'owner' ? 'Current Owner' : profile.role === 'owner' ? 'Demote to Staff' : 'Promote to Owner'}</button></td>
+                  <td className="py-2 pr-3 font-medium text-slate-900 dark:text-slate-100">{profile.full_name}</td><td className="py-2 pr-3 text-slate-500">{profile.email || '—'}</td><td className="py-2 pr-3 capitalize">{profile.role}</td><td className="py-2 pr-3 text-slate-500">{new Date(profile.created_at).toLocaleDateString()}</td>
+                  <td className="py-2 pr-3"><div className="flex flex-wrap items-center gap-3">
+                    <button disabled={updatingId === profile.id || (profile.id === currentProfileId && profile.role === 'owner')} onClick={() => onToggleRole(profile.id, profile.role)} className="inline-flex items-center gap-1.5 text-sky-600 hover:text-sky-700 text-xs font-medium disabled:opacity-50">{updatingId === profile.id && <ButtonSpinner />}{profile.id === currentProfileId && profile.role === 'owner' ? 'Current Owner' : profile.role === 'owner' ? 'Demote to Staff' : 'Promote to Owner'}</button>
+                    {profile.role === 'staff' && <><button type="button" disabled={updatingId === profile.id} onClick={() => onEdit(profile)} className="text-slate-600 hover:text-slate-900 text-xs font-medium disabled:opacity-50 dark:text-slate-300 dark:hover:text-slate-100">Edit</button><button type="button" disabled={updatingId === profile.id} onClick={() => onDelete(profile)} className="text-rose-600 hover:text-rose-700 text-xs font-medium disabled:opacity-50 dark:text-rose-300 dark:hover:text-rose-200">Delete</button></>}
+                  </div></td>
                 </tr>
               ))}
             </tbody>
