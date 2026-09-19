@@ -118,7 +118,10 @@ Deno.serve(async (req: Request) => {
         full_name: fullName,
         role: "staff",
       },
-      { onConflict: "id" },
+      // The auth.users trigger normally creates this row first. Ignore that
+      // conflict instead of issuing an UPDATE, because the protected profile
+      // update trigger correctly rejects service-role updates with no auth.uid.
+      { onConflict: "id", ignoreDuplicates: true },
     );
 
     if (staffProfileError) {
