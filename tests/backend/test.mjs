@@ -720,6 +720,20 @@ try {
     assert.ok((await one("select to_regprocedure('public.check_rate_limit(text,integer,integer)') is not null ok")).ok);
     assert.equal((await one("select has_function_privilege('service_role','public.check_rate_limit(text,integer,integer)','execute') ok")).ok, true);
   });
+  await test('staff account management keeps owner-only edit and delete controls', async () => {
+    const edgeFunction = await read('supabase/functions/manage-staff-user/index.ts');
+    const manager = await read('src/components/StaffAccountsManager.tsx');
+    const modal = await read('src/components/EditStaffAccountModal.tsx');
+    assert.match(edgeFunction, /ownerProfile\?\.role !== \"owner\"/);
+    assert.match(edgeFunction, /targetProfile\.role !== \"staff\"/);
+    assert.match(edgeFunction, /action === \"delete\"/);
+    assert.match(edgeFunction, /action !== \"update\"/);
+    assert.match(edgeFunction, /admin\.auth\.admin\.deleteUser\(targetId\)/);
+    assert.match(manager, /manage-staff-user/);
+    assert.match(manager, /onEdit=\{setEditingAccount\}/);
+    assert.match(manager, /onDelete=\{\(account\) => void deleteStaff\(account\)\}/);
+    assert.match(modal, /New Temporary Password \(optional\)/);
+  });
   await test('authenticated helper EXECUTE retained; anonymous RPC denied; realtime membership unique', async () => {
     const grants = await one("select has_function_privilege('authenticated','private.has_staff_permission(text)','execute') helper, has_function_privilege('anon','public.set_transaction_status(uuid,text,timestamptz,text,boolean)','execute') anon");
     assert.equal(grants.helper, true); assert.equal(grants.anon, false);
