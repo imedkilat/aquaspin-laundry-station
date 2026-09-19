@@ -35,7 +35,6 @@ Deno.serve(async (req: Request) => {
       return json({ error: "Server configuration is incomplete." }, 500, corsHeaders);
     }
 
-    const token = authHeader.replace("Bearer ", "");
     const authClient = createClient(supabaseUrl, anonKey, {
       auth: { persistSession: false, autoRefreshToken: false },
       global: { headers: { Authorization: authHeader } },
@@ -44,10 +43,12 @@ Deno.serve(async (req: Request) => {
       auth: { persistSession: false, autoRefreshToken: false },
     });
 
+    // Match the proven create-staff-user validation path. The same client
+    // retains the Owner JWT for the profile update below.
     const {
       data: { user },
       error: userError,
-    } = await authClient.auth.getUser(token);
+    } = await authClient.auth.getUser();
 
     if (userError || !user) {
       return json({ error: "Invalid session." }, 401, corsHeaders);
@@ -125,7 +126,7 @@ Deno.serve(async (req: Request) => {
       return json({ error: "Staff name is required and must be 120 characters or fewer." }, 400, corsHeaders);
     }
 
-    if (!/^\S+@\S+\.\S+$/.test(email)) {
+    if (email && !/^\S+@\S+\.\S+$/.test(email)) {
       return json({ error: "Enter a valid login email." }, 400, corsHeaders);
     }
 
@@ -144,7 +145,7 @@ Deno.serve(async (req: Request) => {
       user_metadata: { ...(currentUser.user_metadata ?? {}), full_name: fullName },
     };
 
-    if (email !== previousEmail.toLowerCase()) {
+    if (email && email !== previousEmail.toLowerCase()) {
       authUpdates.email = email;
       authUpdates.email_confirm = true;
     }
@@ -179,7 +180,7 @@ Deno.serve(async (req: Request) => {
 
     return json({
       updated: true,
-      user: { id: targetId, email, full_name: fullName, role: "staff" },
+      user: { id: targetId, email: email || previousEmail, full_name: fullName, role: "staff" },
     }, 200, corsHeaders);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unexpected error.";
