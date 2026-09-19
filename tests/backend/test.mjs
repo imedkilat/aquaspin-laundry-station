@@ -186,6 +186,17 @@ try {
     assert.equal((await customerItems(staffOrder, [{ item_type: 'shorts', quantity: 4 }, { item_type: 'towels', quantity: 3 }])).length, 2);
     assert.equal((await one("select quantity from transaction_customer_items where transaction_id=$1 and item_type='shorts'", [staffOrder.id])).quantity, 4);
     assert.equal((await q('select item_type from transaction_customer_items where transaction_id=$1', [staffOrder.id])).length, 2);
+    const customItems = await customerItems(staffOrder, [
+      { item_type: 'shorts', quantity: 4 },
+      { item_type: 'custom', quantity: 2, custom_item_name: 'Curtain' },
+      { item_type: 'custom', quantity: 1, custom_item_name: 'Baby Blanket' },
+    ]);
+    assert.equal(customItems.length, 3);
+    assert.equal((await q("select quantity from transaction_customer_items where transaction_id=$1 and item_type='custom' and custom_item_name='Curtain'", [staffOrder.id]))[0].quantity, 2);
+    await assert.rejects(customerItems(staffOrder, [
+      { item_type: 'custom', quantity: 1, custom_item_name: 'Curtain' },
+      { item_type: 'custom', quantity: 1, custom_item_name: 'curtain' },
+    ]), e => e.code === '22023');
     await assert.rejects(customerItems(staffOrder, [{ item_type: 'shorts', quantity: 0 }]), e => e.code === '22023');
     await assert.rejects(customerItems(staffOrder, [{ item_type: 'other', quantity: 1 }]), e => e.code === '22023');
     await assert.rejects(customerItems(staffOrder, [{ item_type: 'shorts', quantity: 1 }, { item_type: 'shorts', quantity: 2 }]), e => e.code === '22023');
@@ -528,6 +539,11 @@ try {
     await transaction({ payment_method: 'gcash', base_amount: 100, total_amount: 100, gcash_amount: 100, gcash_reference: 'QA-GCASH-1' });
     await assert.rejects(transaction({ payment_method: 'gcash', total_amount: 100, gcash_amount: 100 }), e => e.code === '23514');
     await assert.rejects(transaction({ payment_method: 'paid', total_amount: 100, cash_amount: 99 }), e => e.code === '23514');
+    const editableDebt = await transaction({ customer_id: customer.id, payment_method: 'pay_later', base_amount: 75, total_amount: 75, cash_amount: 0, gcash_amount: 0 });
+    let updated = await one("update transactions set payment_method='paid', cash_amount=75, gcash_amount=0, gcash_reference=null where id=$1 returning *", [editableDebt.id]);
+    assert.equal(updated.payment_method, 'paid'); assert.equal(Number(updated.cash_amount), 75);
+    updated = await one("update transactions set payment_method='pay_later', cash_amount=0, gcash_amount=0, gcash_reference=null where id=$1 returning *", [editableDebt.id]);
+    assert.equal(updated.payment_method, 'pay_later'); assert.equal(Number(updated.cash_amount), 0);
     assert.equal(debt.payment_method, 'pay_later');
   });
   await test('status does not require new intake fields or rewrite commercial snapshots', async () => {
@@ -544,6 +560,14 @@ try {
     t = await status(t, 'washing'); assert.equal(t.add_on_items[0].unit_price, 10);
     await q('update transactions set add_on_items=$1 where id=$2', [JSON.stringify([{add_on_id:addon.id,quantity:3}]),t.id]);
     assert.equal((await fresh(t.id)).add_on_items[0].unit_price, 10);
+    const ml = await one("insert into add_ons_catalog(name,price,unit_type) values ('Liquid Detergent',2,'ml') returning id");
+    const mlOrder = await transaction({ add_on_items: JSON.stringify([{add_on_id:ml.id,quantity:250}]), add_ons:500, total_amount:500 });
+    assert.equal(mlOrder.add_on_items[0].unit_type, 'ml');
+    const sachet = await one("insert into add_ons_catalog(name,price,unit_type) values ('Conditioner Sachet',3,'sachet') returning id");
+    await assert.rejects(
+      transaction({ add_on_items: JSON.stringify([{add_on_id:sachet.id,quantity:1.5}]), add_ons:4.5, total_amount:4.5 }),
+      e => e.code === '22023' && e.message.includes('whole numbers'),
+    );
   });
   await test('8 kg/load catalog and existing form calculation remain intact', async () => {
     assert.ok((await q('select * from services')).every(s => Number(s.max_kg_per_load) === 8));
@@ -559,6 +583,7 @@ try {
   await test('existing export columns and rate limiter dependency still available', async () => {
     await q('select transaction_no,transaction_code,transaction_date,customer_name,phone_number,kg,no_of_loads,base_amount,add_ons,add_on_items,total_amount,cash_amount,gcash_amount,gcash_reference,payment_method,pickup_date,pickup_time,notes,created_at from transactions where deleted_at is null');
     assert.ok((await one("select to_regprocedure('public.check_rate_limit(text,integer,integer)') is not null ok")).ok);
+    assert.equal((await one("select has_function_privilege('service_role','public.check_rate_limit(text,integer,integer)','execute') ok")).ok, true);
   });
   await test('authenticated helper EXECUTE retained; anonymous RPC denied; realtime membership unique', async () => {
     const grants = await one("select has_function_privilege('authenticated','private.has_staff_permission(text)','execute') helper, has_function_privilege('anon','public.set_transaction_status(uuid,text,timestamptz,text,boolean)','execute') anon");
