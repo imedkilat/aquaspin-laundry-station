@@ -1,4 +1,5 @@
 import { useMemo, useRef, useState, type FormEvent } from 'react'
+import { staffPasswordProblem, STAFF_PASSWORD_MAX_BYTES, STAFF_PASSWORD_MIN_LENGTH } from '../lib/staff-password'
 import { useStaffAccounts, type StaffAccount } from '../hooks/useStaffAccounts'
 import { useAuth } from '../lib/auth-context'
 import { supabase } from '../lib/supabase'
@@ -8,7 +9,7 @@ import { ButtonSpinner, InlineAlert, LoadingPanel } from './UiFeedback'
 import EditStaffAccountModal from './EditStaffAccountModal'
 
 export default function StaffAccountsManager() {
-  const { accounts, loading, error: loadError, reload } = useStaffAccounts()
+  const { accounts, loading, error: loadError, emailNotice, reload } = useStaffAccounts()
   const { profile: currentProfile } = useAuth()
   const [updatingId, setUpdatingId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -26,6 +27,12 @@ export default function StaffAccountsManager() {
   const createStaff = async (event: FormEvent) => {
     event.preventDefault()
     if (creatingRef.current) return
+    const passwordProblem = staffPasswordProblem(password)
+    if (passwordProblem) {
+      setSuccess(null)
+      setError(passwordProblem)
+      return
+    }
     creatingRef.current = true
 
     try {
@@ -73,28 +80,34 @@ export default function StaffAccountsManager() {
     void reload()
   }
 
-  const deleteStaff = async (account: StaffAccount) => {
+  // Accounts are disabled, never deleted: Staff are referenced by transaction,
+  // status-history, inventory and expense records that must stay intact.
+  const setAccountAccess = async (account: StaffAccount, action: 'disable' | 'enable') => {
     if (account.role !== 'staff') return
-    if (!window.confirm(`Delete the Staff account for ${account.full_name} (${account.email})? This removes the login permanently.`)) return
+    if (action === 'disable' && !window.confirm(`Disable the Staff account for ${account.full_name}${account.email ? ` (${account.email})` : ''}?\n\nThey will be signed out everywhere and cannot sign in or see any data until you enable the account again. Their transaction history is kept.`)) return
 
     setUpdatingId(account.id)
     setError(null)
     setSuccess(null)
     const { data, error: functionError } = await supabase.functions.invoke('manage-staff-user', {
-      body: { action: 'delete', user_id: account.id },
+      body: { action, user_id: account.id },
     })
     setUpdatingId(null)
 
     if (functionError) {
-      setError(await edgeFunctionErrorMessage(functionError, 'Could not delete the staff account. Please try again.'))
+      setError(await edgeFunctionErrorMessage(functionError, `Could not ${action} the staff account. Please try again.`))
+      void reload()
       return
     }
     if (data?.error) {
       setError(String(data.error))
+      void reload()
       return
     }
 
-    setSuccess(`Staff account deleted for ${account.email}.`)
+    setSuccess(action === 'disable'
+      ? `${account.full_name} was disabled and signed out. Their history is kept; use Enable to restore access.`
+      : `${account.full_name} was enabled. They can sign in again.`)
     void reload()
   }
 
@@ -106,7 +119,7 @@ export default function StaffAccountsManager() {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           <div><label className="block text-xs font-medium text-slate-600 mb-1 dark:text-slate-400">Staff Name</label><input required value={fullName} onChange={(e) => setFullName(e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100" placeholder="Juan Dela Cruz" /></div>
           <div><label className="block text-xs font-medium text-slate-600 mb-1 dark:text-slate-400">Login Email</label><input required type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100" placeholder="staff@aquaspin.ph" /></div>
-          <div><label className="block text-xs font-medium text-slate-600 mb-1 dark:text-slate-400">Temporary Password</label><input required minLength={8} type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100" placeholder="At least 8 characters" /></div>
+          <div><label className="block text-xs font-medium text-slate-600 mb-1 dark:text-slate-400">Temporary Password</label><input required minLength={STAFF_PASSWORD_MIN_LENGTH} maxLength={STAFF_PASSWORD_MAX_BYTES} type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100" placeholder={`${STAFF_PASSWORD_MIN_LENGTH}–${STAFF_PASSWORD_MAX_BYTES} characters`} /></div>
         </div>
 
         {error && <InlineAlert variant="error" title="Account action did not finish">{error}</InlineAlert>}
@@ -122,11 +135,12 @@ export default function StaffAccountsManager() {
         </div>
 
         {loadError && <InlineAlert variant="error" title="Account access could not be loaded" actionLabel="Try again" onAction={() => void reload()}>{loadError}</InlineAlert>}
+        {!loading && emailNotice && <InlineAlert variant="warning" title="Login emails are unavailable">{emailNotice}</InlineAlert>}
 
         {loading ? <LoadingPanel label="Loading account access…" slowLabel="Still loading accounts… the internet connection may be slow." /> : (
           <div className="space-y-5">
-            <AccessGroup title="Owner Access" profiles={ownerProfiles} currentProfileId={currentProfile?.id} updatingId={updatingId} onToggleRole={toggleRole} onEdit={() => undefined} onDelete={() => undefined} emptyText="No owner accounts found." />
-            <AccessGroup title="Staff Access" profiles={staffProfiles} currentProfileId={currentProfile?.id} updatingId={updatingId} onToggleRole={toggleRole} onEdit={setEditingAccount} onDelete={(account) => void deleteStaff(account)} emptyText="No staff profiles found. Create a Staff account above." />
+            <AccessGroup title="Owner Access" profiles={ownerProfiles} currentProfileId={currentProfile?.id} updatingId={updatingId} onToggleRole={toggleRole} onEdit={() => undefined} onSetAccess={() => undefined} emptyText="No owner accounts found." />
+            <AccessGroup title="Staff Access" profiles={staffProfiles} currentProfileId={currentProfile?.id} updatingId={updatingId} onToggleRole={toggleRole} onEdit={setEditingAccount} onSetAccess={(account, action) => void setAccountAccess(account, action)} emptyText="No staff profiles found. Create a Staff account above." />
           </div>
         )}
       </div>
@@ -136,14 +150,14 @@ export default function StaffAccountsManager() {
   )
 }
 
-function AccessGroup({ title, profiles, currentProfileId, updatingId, onToggleRole, onEdit, onDelete, emptyText }: {
+function AccessGroup({ title, profiles, currentProfileId, updatingId, onToggleRole, onEdit, onSetAccess, emptyText }: {
   title: string
   profiles: StaffAccount[]
   currentProfileId?: string
   updatingId: string | null
   onToggleRole: (id: string, current: Role) => void
   onEdit: (profile: StaffAccount) => void
-  onDelete: (profile: StaffAccount) => void
+  onSetAccess: (profile: StaffAccount, action: 'disable' | 'enable') => void
   emptyText: string
 }) {
   return (
@@ -153,14 +167,18 @@ function AccessGroup({ title, profiles, currentProfileId, updatingId, onToggleRo
       {profiles.length === 0 ? <p className="text-sm text-slate-400 py-2">{emptyText}</p> : (
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
-            <thead><tr className="text-left text-xs text-slate-500 border-b border-slate-200 dark:border-slate-700"><th className="py-2 pr-3 font-medium">Name</th><th className="py-2 pr-3 font-medium">Login Email</th><th className="py-2 pr-3 font-medium">Role</th><th className="py-2 pr-3 font-medium">Since</th><th className="py-2 pr-3 font-medium"></th></tr></thead>
+            <thead><tr className="text-left text-xs text-slate-500 border-b border-slate-200 dark:border-slate-700"><th className="py-2 pr-3 font-medium">Name</th><th className="py-2 pr-3 font-medium">Login Email</th><th className="py-2 pr-3 font-medium">Role</th><th className="py-2 pr-3 font-medium">Status</th><th className="py-2 pr-3 font-medium">Since</th><th className="py-2 pr-3 font-medium"></th></tr></thead>
             <tbody>
               {profiles.map((profile) => (
                 <tr key={profile.id} className="border-b border-slate-100 last:border-0 dark:border-slate-800">
-                  <td className="py-2 pr-3 font-medium text-slate-900 dark:text-slate-100">{profile.full_name}</td><td className="py-2 pr-3 text-slate-500">{profile.email || '—'}</td><td className="py-2 pr-3 capitalize">{profile.role}</td><td className="py-2 pr-3 text-slate-500">{new Date(profile.created_at).toLocaleDateString()}</td>
+                  <td className="py-2 pr-3 font-medium text-slate-900 dark:text-slate-100">{profile.full_name}</td><td className="py-2 pr-3 text-slate-500">{profile.email || '—'}</td><td className="py-2 pr-3 capitalize">{profile.role}</td><td className="py-2 pr-3"><AccessStatus profile={profile} /></td><td className="py-2 pr-3 text-slate-500">{new Date(profile.created_at).toLocaleDateString()}</td>
                   <td className="py-2 pr-3"><div className="flex flex-wrap items-center gap-3">
-                    <button disabled={updatingId === profile.id || (profile.id === currentProfileId && profile.role === 'owner')} onClick={() => onToggleRole(profile.id, profile.role)} className="inline-flex items-center gap-1.5 text-sky-600 hover:text-sky-700 text-xs font-medium disabled:opacity-50">{updatingId === profile.id && <ButtonSpinner />}{profile.id === currentProfileId && profile.role === 'owner' ? 'Current Owner' : profile.role === 'owner' ? 'Demote to Staff' : 'Promote to Owner'}</button>
-                    {profile.role === 'staff' && <><button type="button" disabled={updatingId === profile.id} onClick={() => onEdit(profile)} className="text-slate-600 hover:text-slate-900 text-xs font-medium disabled:opacity-50 dark:text-slate-300 dark:hover:text-slate-100">Edit</button><button type="button" disabled={updatingId === profile.id} onClick={() => onDelete(profile)} className="text-rose-600 hover:text-rose-700 text-xs font-medium disabled:opacity-50 dark:text-rose-300 dark:hover:text-rose-200">Delete</button></>}
+                    <button disabled={updatingId === profile.id || (profile.id === currentProfileId && profile.role === 'owner') || (profile.role === 'staff' && profile.is_active === false)} title={profile.role === 'staff' && profile.is_active === false ? 'Enable this account before promoting it.' : undefined} onClick={() => onToggleRole(profile.id, profile.role)} className="inline-flex items-center gap-1.5 text-sky-600 hover:text-sky-700 text-xs font-medium disabled:opacity-50">{updatingId === profile.id && <ButtonSpinner />}{profile.id === currentProfileId && profile.role === 'owner' ? 'Current Owner' : profile.role === 'owner' ? 'Demote to Staff' : 'Promote to Owner'}</button>
+                    {profile.role === 'staff' && <><button type="button" disabled={updatingId === profile.id} onClick={() => onEdit(profile)} className="text-slate-600 hover:text-slate-900 text-xs font-medium disabled:opacity-50 dark:text-slate-300 dark:hover:text-slate-100">Edit</button>
+                      {profile.is_active === false
+                        ? <><button type="button" disabled={updatingId === profile.id} onClick={() => onSetAccess(profile, 'enable')} className="text-emerald-600 hover:text-emerald-700 text-xs font-medium disabled:opacity-50 dark:text-emerald-300 dark:hover:text-emerald-200">Enable Account</button>{profile.sign_in_blocked === false && <button type="button" disabled={updatingId === profile.id} onClick={() => onSetAccess(profile, 'disable')} title="The account is disabled in the app but the Supabase Auth sign-in block was not confirmed." className="text-amber-600 hover:text-amber-700 text-xs font-medium disabled:opacity-50 dark:text-amber-300">Retry sign-in block</button>}</>
+                        : <button type="button" disabled={updatingId === profile.id} onClick={() => onSetAccess(profile, 'disable')} className="text-rose-600 hover:text-rose-700 text-xs font-medium disabled:opacity-50 dark:text-rose-300 dark:hover:text-rose-200">Disable Account</button>}</>}
+                    {profile.role === 'owner' && <span className="text-xs text-slate-400" title="Owner accounts cannot be disabled or edited here.">Protected</span>}
                   </div></td>
                 </tr>
               ))}
@@ -170,4 +188,17 @@ function AccessGroup({ title, profiles, currentProfileId, updatingId, onToggleRo
       )}
     </section>
   )
+}
+
+function AccessStatus({ profile }: { profile: StaffAccount }) {
+  if (profile.is_active === false) {
+    return (
+      <span className="inline-flex flex-col">
+        <span className="w-fit rounded-full bg-rose-100 px-2 py-0.5 text-xs font-medium text-rose-700 dark:bg-rose-950/40 dark:text-rose-300">Disabled</span>
+        {profile.disabled_at && <span className="mt-0.5 text-[11px] text-slate-400">since {new Date(profile.disabled_at).toLocaleDateString()}</span>}
+        {profile.sign_in_blocked === false && <span className="mt-0.5 text-[11px] text-amber-600 dark:text-amber-300">sign-in block not confirmed</span>}
+      </span>
+    )
+  }
+  return <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">Active</span>
 }

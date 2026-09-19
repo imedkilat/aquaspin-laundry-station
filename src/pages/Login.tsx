@@ -1,10 +1,12 @@
 import { useState, type FormEvent } from 'react'
 import { supabase, SHOP_NAME } from '../lib/supabase'
+import { useAuth } from '../lib/auth-context'
 import ThemeToggle from '../components/ThemeToggle'
 import { ButtonSpinner, InlineAlert } from '../components/UiFeedback'
 
 const friendlyLoginError = (message: string) => {
   const lower = message.toLowerCase()
+  if (lower.includes('banned')) return 'This account has been disabled by the Owner. Please contact the shop Owner if you need access.'
   if (lower.includes('invalid login credentials')) return 'Email or password is incorrect. Please check the credentials and try again.'
   if (lower.includes('fetch') || lower.includes('network')) return 'Aquaspin could not reach the server. Check the internet connection and try again.'
   return message
@@ -15,6 +17,7 @@ export default function Login() {
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  const { accessNotice } = useAuth()
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault()
@@ -48,6 +51,7 @@ export default function Login() {
             <input type="password" required value={password} onChange={(e) => setPassword(e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100" placeholder="••••••••" />
           </div>
 
+          {accessNotice && !error && <InlineAlert variant="warning" title="Account access">{accessNotice}</InlineAlert>}
           {error && <InlineAlert variant="error" title="Sign in did not finish">{error}</InlineAlert>}
 
           <button type="submit" disabled={submitting} className="inline-flex w-full items-center justify-center gap-2 bg-sky-600 hover:bg-sky-700 disabled:opacity-60 text-white font-medium rounded-lg px-3 py-2 text-sm transition">

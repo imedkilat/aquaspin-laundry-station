@@ -84,6 +84,9 @@ try {
     create role anon; create role authenticated; create role service_role bypassrls;
     create schema auth; create schema storage;
     create table auth.users (id uuid primary key, email text, raw_user_meta_data jsonb default '{}');
+    -- Shapes mirror GoTrue: deleting a session cascades to its refresh tokens.
+    create table auth.sessions (id uuid primary key default gen_random_uuid(), user_id uuid not null references auth.users(id) on delete cascade, created_at timestamptz not null default now());
+    create table auth.refresh_tokens (id bigserial primary key, user_id varchar, session_id uuid references auth.sessions(id) on delete cascade, revoked boolean not null default false);
     create function auth.uid() returns uuid language sql stable as
       $$ select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid $$;
     grant usage on schema auth, public to anon, authenticated, service_role;
@@ -720,18 +723,21 @@ try {
     assert.ok((await one("select to_regprocedure('public.check_rate_limit(text,integer,integer)') is not null ok")).ok);
     assert.equal((await one("select has_function_privilege('service_role','public.check_rate_limit(text,integer,integer)','execute') ok")).ok, true);
   });
-  await test('staff account management keeps owner-only edit and delete controls', async () => {
+  await test('staff account UI/function wiring (source contract; behaviour is covered by the database and Edge tests)', async () => {
     const edgeFunction = await read('supabase/functions/manage-staff-user/index.ts');
     const manager = await read('src/components/StaffAccountsManager.tsx');
     const modal = await read('src/components/EditStaffAccountModal.tsx');
-    assert.match(edgeFunction, /ownerProfile\?\.role !== \"owner\"/);
-    assert.match(edgeFunction, /targetProfile\.role !== \"staff\"/);
-    assert.match(edgeFunction, /action === \"delete\"/);
-    assert.match(edgeFunction, /action !== \"update\"/);
-    assert.match(edgeFunction, /admin\.auth\.admin\.deleteUser\(targetId\)/);
-    assert.match(manager, /manage-staff-user/);
-    assert.match(manager, /onEdit=\{setEditingAccount\}/);
-    assert.match(manager, /onDelete=\{\(account\) => void deleteStaff\(account\)\}/);
+    const hook = await read('src/hooks/useStaffAccounts.ts');
+    assert.match(edgeFunction, /ownerProfile\?\.role !== "owner"/);
+    assert.match(edgeFunction, /ownerProfile\?\.is_active !== true/);
+    assert.match(edgeFunction, /targetProfile\.role !== "staff"/);
+    assert.equal(/deleteUser/.test(edgeFunction), false, 'hard delete removed from manage-staff-user');
+    assert.equal(/onDelete|deleteStaff|>Delete</.test(manager), false, 'no Delete control remains in the UI');
+    assert.match(manager, /Disable Account/); assert.match(manager, /Enable Account/);
+    assert.match(manager, /action: 'disable'|'disable' \| 'enable'/);
+    assert.equal(/from\('profiles'\)\.update/.test(modal), false, 'name-only edits no longer bypass the Edge Function');
+    assert.match(modal, /invoke\('manage-staff-user'/);
+    assert.match(hook, /email_lookup/); assert.match(manager, /emailNotice/);
     assert.match(modal, /New Temporary Password \(optional\)/);
   });
   await test('authenticated helper EXECUTE retained; anonymous RPC denied; realtime membership unique', async () => {
@@ -783,5 +789,290 @@ try {
     const again = await db.exec(script.replace(/rollback;\s*$/, 'commit;'));
     assert.equal(again.find(r => r.rows?.[0]?.safely_linked_this_run !== undefined).rows[0].safely_linked_this_run, 0);
   });
+  // ── Staff account disable / enable (real database behaviour) ────────────────
+  const owner2 = '00000000-0000-4000-8000-000000000003';
+  const staff2 = '00000000-0000-4000-8000-000000000004';
+  const ghost = '00000000-0000-4000-8000-0000000000ff';
+  const errCode = async fn => { try { await fn(); return null; } catch (error) { return error.code ?? 'ERR:' + error.message; } };
+  async function setActive(actor, target, active) {
+    await asUser(null, 'service_role');
+    try { return (await one('select public.set_staff_account_active($1,$2,$3) as r', [actor, target, active])).r; }
+    finally { await admin(); }
+  }
+  const allStaffPermissions = ['create_transactions', 'access_dashboard', 'view_full_history', 'edit_transactions', 'delete_transactions', 'view_historical_pay_later', 'edit_own_profile', 'manage_customers'];
+  const helperResults = async () => {
+    const out = {};
+    for (const p of allStaffPermissions) out[p] = (await one('select private.has_staff_permission($1) as ok', [p])).ok;
+    return out;
+  };
+  await admin();
+  await db.exec(`insert into auth.users(id,email) values ('${owner2}','owner2@test.local'), ('${staff2}','staff2@test.local'), ('${ghost}','ghost@test.local')`);
+  await db.exec('alter table public.profiles disable trigger profiles_enforce_safe_self_update');
+  await q("update public.profiles set role='owner' where id=$1", [owner2]);
+  await db.exec('alter table public.profiles enable trigger profiles_enforce_safe_self_update');
+  await q('delete from public.profiles where id=$1', [ghost]); // valid login, NO profile row
+  for (const column of ['staff_can_create_transactions', 'staff_can_access_dashboard', 'staff_can_view_full_history', 'staff_can_edit_transactions', 'staff_can_delete_transactions', 'staff_can_view_historical_pay_later', 'staff_can_edit_own_profile', 'staff_can_manage_customers']) await setting(column, true);
+  await asUser(owner);
+  await q("insert into discounts_promos(name, discount_value, starts_at, ends_at) values ('Disable fixture promo', 10, now() - interval '1 day', now() + interval '30 days')");
+  const readableTables = ['transactions', 'transaction_status_history', 'customers', 'services', 'add_ons_catalog', 'shop_settings', 'inventory_items', 'inventory_categories', 'discounts_promos', 'transaction_customer_items', 'customer_summary'];
+  await asUser(staff);
+  const staffTx = await transaction({ created_by: staff, customer_name: 'Disable history fixture', phone_number: null });
+  await status(staffTx, 'washing');
+  await asUser(owner);
+  const historyOf = async () => ({
+    tx: (await q('select id from transactions where created_by=$1 order by id', [staff])).map(r => r.id),
+    hist: (await q('select id from transaction_status_history where changed_by=$1 order by id', [staff])).map(r => r.id),
+  });
+  const historyBefore = await historyOf();
+  assert.ok(historyBefore.tx.length >= 1 && historyBefore.hist.length >= 1, 'fixture: staff has real transaction and status history');
+
+  await test('active staff baseline: profile columns default active; every permission helper is true', async () => {
+    const p = await one('select is_active, disabled_at, disabled_by from profiles where id=$1', [staff]);
+    assert.deepEqual(p, { is_active: true, disabled_at: null, disabled_by: null });
+    await asUser(staff);
+    assert.ok(Object.values(await helperResults()).every(v => v === true));
+    assert.ok((await q("select id from transactions where id=$1", [staffTx.id])).length === 1);
+    // Non-vacuous fixture: an ACTIVE staff account really can read every table checked later.
+    for (const table of readableTables) assert.ok((await q(`select 1 from ${table} limit 1`)).length === 1, `${table} has rows visible to active staff`);
+    await asUser(owner);
+  });
+
+  await test('hard delete of a staff login with history is still blocked by foreign keys (why Disable replaces Delete)', async () => {
+    await admin();
+    assert.equal(await errCode(() => q('delete from auth.users where id=$1', [staff])), '23503');
+    assert.equal((await one('select count(*)::int c from profiles where id=$1', [staff])).c, 1);
+    await asUser(owner);
+  });
+
+  await test('Disable: sets state, revokes only the target sessions and refresh tokens, is idempotent', async () => {
+    await admin();
+    const s1 = (await one('insert into auth.sessions(user_id) values ($1) returning id', [staff])).id;
+    const s2 = (await one('insert into auth.sessions(user_id) values ($1) returning id', [staff])).id;
+    const o1 = (await one('insert into auth.sessions(user_id) values ($1) returning id', [owner])).id;
+    const other = (await one('insert into auth.sessions(user_id) values ($1) returning id', [staff2])).id;
+    for (const [uid, sid] of [[staff, s1], [staff, s2], [owner, o1], [staff2, other]]) await q('insert into auth.refresh_tokens(user_id, session_id) values ($1,$2)', [uid, sid]);
+    await q("insert into auth.refresh_tokens(user_id, session_id) values ($1, null)", [staff]); // orphan token
+    const result = await setActive(owner, staff, false);
+    assert.equal(result.is_active, false);
+    assert.ok(result.disabled_at);
+    assert.equal(result.sessions_revoked, 2);
+    const row = await one('select is_active, disabled_at, disabled_by from profiles where id=$1', [staff]);
+    assert.equal(row.is_active, false); assert.ok(row.disabled_at); assert.equal(row.disabled_by, owner);
+    assert.equal((await one('select count(*)::int c from auth.sessions where user_id=$1', [staff])).c, 0);
+    assert.equal((await one('select count(*)::int c from auth.refresh_tokens where user_id=$1', [staff])).c, 0);
+    assert.equal((await one('select count(*)::int c from auth.sessions where user_id=$1', [owner])).c, 1, 'Owner session untouched');
+    assert.equal((await one('select count(*)::int c from auth.sessions where user_id=$1', [staff2])).c, 1, 'Other staff session untouched');
+    assert.equal((await one('select count(*)::int c from auth.refresh_tokens where user_id=$1', [staff2])).c, 1);
+    const again = await setActive(owner, staff, false);
+    assert.equal(again.is_active, false); assert.equal(again.sessions_revoked, 0);
+    assert.equal((await one('select disabled_by from profiles where id=$1', [staff])).disabled_by, owner);
+  });
+
+  await test('disabled staff with an unexpired JWT is denied by every permission helper', async () => {
+    await asUser(staff);
+    assert.ok(Object.values(await helperResults()).every(v => v === false), JSON.stringify(await helperResults()));
+    assert.equal((await one("select private.is_owner() as v")).v, false);
+    assert.equal((await one("select private.is_active_user() as v")).v, false);
+    assert.equal((await one("select private.can_view_transaction(current_date, 'cash', null) as v")).v, false);
+    await asUser(owner);
+  });
+
+  await test('disabled staff can no longer read business data or write anything', async () => {
+    await asUser(staff);
+    for (const table of readableTables) {
+      assert.equal((await q(`select 1 from ${table} limit 1`)).length, 0, `${table} must be empty for a disabled account`);
+    }
+    assert.equal(await errCode(() => transaction({ created_by: staff, customer_name: 'Should be denied', phone_number: null })), '42501');
+    assert.equal((await q("update transactions set customer_name='tampered' where id=$1 returning id", [staffTx.id])).length, 0);
+    assert.equal(await errCode(() => status(staffTx, 'drying')), '42501');
+    assert.equal(await errCode(() => softDelete(staffTx, 'Duplicate entry')), '42501');
+    assert.equal(await errCode(() => customerItems(staffTx, [])), '42501');
+    assert.equal((await q("update profiles set full_name='Disabled Rename' where id=$1 returning id", [staff])).length, 0);
+    await asUser(owner);
+    assert.notEqual((await one('select full_name from profiles where id=$1', [staff])).full_name, 'Disabled Rename');
+  });
+
+  await test('disabled staff can still read only their own profile row (so the app can show the disabled notice) and cannot re-enable', async () => {
+    await asUser(staff);
+    const own = await q('select id, is_active from profiles');
+    assert.deepEqual(own.map(r => [r.id, r.is_active]), [[staff, false]]);
+    assert.equal(await errCode(() => q('update profiles set is_active=true, disabled_at=null where id=$1', [staff])), '42501');
+    await asUser(owner);
+    assert.equal((await one('select is_active from profiles where id=$1', [staff])).is_active, false);
+  });
+
+  await test('Owner keeps full access and sees the disabled account history untouched', async () => {
+    await asUser(owner);
+    assert.deepEqual(await historyOf(), historyBefore);
+    assert.equal((await q('select id from transactions where id=$1', [staffTx.id])).length, 1);
+    assert.ok((await q('select id from profiles')).length >= 4);
+  });
+
+  await test('clients (Owner browser session, Staff, anon) cannot change account state or call the service RPC', async () => {
+    await asUser(owner);
+    assert.equal(await errCode(() => q('update profiles set is_active=true, disabled_at=null where id=$1', [staff])), '42501');
+    assert.equal(await errCode(() => q('update profiles set disabled_by=null where id=$1', [staff])), '42501');
+    const p = await one("select has_column_privilege('authenticated','public.profiles','is_active','UPDATE') a, has_column_privilege('authenticated','public.profiles','disabled_at','UPDATE') b, has_column_privilege('authenticated','public.profiles','disabled_by','UPDATE') c, has_column_privilege('authenticated','public.profiles','full_name','UPDATE') d");
+    assert.deepEqual(p, { a: false, b: false, c: false, d: true });
+    for (const role of ['authenticated', 'anon']) {
+      await asUser(owner, role);
+      assert.equal(await errCode(() => q('select public.set_staff_account_active($1,$2,$3)', [owner, staff2, false])), '42501', role);
+    }
+    await admin();
+    assert.equal((await one("select has_function_privilege('service_role','public.set_staff_account_active(uuid,uuid,boolean)','execute') ok")).ok, true);
+    // A trusted role may only touch the account-state columns, never other profile fields.
+    await asUser(null, 'service_role');
+    assert.equal(await errCode(() => q("update profiles set full_name='x' where id=$1", [staff2])), '42501');
+    await asUser(owner);
+  });
+
+  await test('the account-state trigger blocks clients even if the column privilege were granted back', async () => {
+    await admin();
+    await db.exec('grant update (is_active, disabled_at, disabled_by) on public.profiles to authenticated');
+    try {
+      await asUser(owner);
+      const failure = await (async () => { try { await q('update profiles set is_active=true, disabled_at=null where id=$1', [staff]); return null; } catch (error) { return error; } })();
+      assert.equal(failure?.code, '42501');
+      assert.match(failure.message, /staff account service/);
+      assert.equal((await one('select is_active from profiles where id=$1', [staff])).is_active, false);
+    } finally {
+      await admin();
+      await db.exec('revoke update (is_active, disabled_at, disabled_by) on public.profiles from authenticated');
+      await asUser(owner);
+    }
+  });
+
+  await test('Owner protection: owners cannot be disabled (including the acting Owner), even at the constraint level', async () => {
+    assert.equal(await errCode(() => setActive(owner, owner2, false)), '42501');
+    assert.equal(await errCode(() => setActive(owner, owner, false)), '42501');
+    assert.equal(await errCode(() => setActive(owner2, owner, false)), '42501');
+    assert.equal((await one("select count(*)::int c from profiles where role='owner' and is_active")).c, 2);
+    await admin();
+    assert.equal(await errCode(() => q("update profiles set is_active=false, disabled_at=now() where id=$1", [owner2])), '23514');
+    await asUser(owner);
+  });
+
+  await test('defence in depth: even if the owner constraint were bypassed, an inactive Owner row has no Owner powers', async () => {
+    await admin();
+    const shell = '00000000-0000-4000-8000-000000000006';
+    await db.exec(`insert into auth.users(id,email) values ('${shell}','shell-owner@test.local')`);
+    await db.exec('alter table public.profiles disable trigger profiles_enforce_safe_self_update');
+    await q("update profiles set role='owner' where id=$1", [shell]);
+    await db.exec('alter table public.profiles enable trigger profiles_enforce_safe_self_update');
+    await db.exec('alter table public.profiles drop constraint profiles_owner_always_active');
+    await q("update profiles set is_active=false, disabled_at=now() where id=$1", [shell]);
+    await asUser(shell);
+    assert.equal((await one('select private.is_owner() v')).v, false);
+    assert.equal((await q('select id from profiles')).length, 1);
+    await admin();
+    await q("update profiles set is_active=true, disabled_at=null where id=$1", [shell]);
+    await db.exec("alter table public.profiles add constraint profiles_owner_always_active check (role <> 'owner' or is_active)");
+    await q("delete from profiles where id=$1", [shell]);
+    await asUser(owner);
+  });
+
+  await test('Staff (active or disabled) and unknown actors cannot authorize account changes', async () => {
+    assert.equal(await errCode(() => setActive(staff2, staff, true)), '42501');
+    assert.equal(await errCode(() => setActive(ghost, staff2, false)), '42501', 'actor without profile');
+    assert.equal(await errCode(() => setActive('00000000-0000-4000-8000-0000000000aa', staff2, false)), '42501');
+    assert.equal(await errCode(() => setActive(owner, '00000000-0000-4000-8000-0000000000aa', false)), 'P0002');
+    assert.equal(await errCode(() => setActive(owner, null, false)), '22023');
+    assert.equal(await errCode(() => setActive(owner, staff2, null)), '22023');
+    assert.equal((await one('select is_active from profiles where id=$1', [staff2])).is_active, true);
+  });
+
+  await test('a disabled Staff profile cannot be promoted to Owner (constraint) and a disabled actor cannot authorize changes', async () => {
+    await asUser(owner);
+    assert.equal(await errCode(() => q("update profiles set role='owner' where id=$1", [staff])), '23514');
+    assert.equal(await errCode(() => setActive(staff, staff2, false)), '42501', 'disabled staff as actor');
+    await asUser(owner);
+  });
+
+  await test('an active Staff account cannot change roles, other profiles, or read other accounts', async () => {
+    await asUser(staff2);
+    assert.equal(await errCode(() => q("update profiles set role='owner' where id=$1", [staff2])), '42501');
+    assert.equal((await q("update profiles set full_name='hacked' where id=$1 returning id", [owner])).length, 0);
+    assert.deepEqual((await q('select id from profiles')).map(r => r.id), [staff2]);
+    assert.equal((await one('select private.is_owner() v')).v, false);
+    await asUser(owner);
+  });
+
+  await test('Enable/reactivation restores access; history and ledger are unchanged', async () => {
+    const result = await setActive(owner, staff, true);
+    assert.equal(result.is_active, true); assert.equal(result.disabled_at, null);
+    assert.deepEqual(await one('select is_active, disabled_at, disabled_by from profiles where id=$1', [staff]), { is_active: true, disabled_at: null, disabled_by: null });
+    await asUser(staff);
+    assert.ok(Object.values(await helperResults()).every(v => v === true));
+    assert.equal((await q('select id from transactions where id=$1', [staffTx.id])).length, 1);
+    assert.ok((await q('select id from transaction_status_history where transaction_id=$1', [staffTx.id])).length >= 2);
+    const created = await transaction({ created_by: staff, customer_name: 'After re-enable', phone_number: null });
+    assert.equal(created.created_by, staff);
+    await asUser(owner);
+    const after = await historyOf();
+    assert.ok(historyBefore.hist.every(id => after.hist.includes(id)), 'status history preserved');
+    assert.ok(historyBefore.tx.every(id => after.tx.includes(id)), 'transactions preserved');
+    assert.equal((await setActive(owner, staff, true)).is_active, true, 'enable is idempotent');
+  });
+
+  await test('sessions revoked on disable stay revoked after Enable (the user must sign in again)', async () => {
+    await admin();
+    assert.equal((await one('select count(*)::int c from auth.sessions where user_id=$1', [staff])).c, 0);
+    assert.equal((await one('select count(*)::int c from auth.refresh_tokens where user_id=$1', [staff])).c, 0);
+    await asUser(owner);
+  });
+
+  await test('a valid login with NO profile row gets nothing, even with every Staff default enabled', async () => {
+    await asUser(ghost);
+    assert.ok(Object.values(await helperResults()).every(v => v === false), JSON.stringify(await helperResults()));
+    for (const table of readableTables) {
+      assert.equal((await q(`select 1 from ${table} limit 1`)).length, 0, `${table} must be empty without a profile`);
+    }
+    assert.equal(await errCode(() => transaction({ created_by: ghost, customer_name: 'ghost write', phone_number: null })), '42501');
+    assert.equal((await one("select private.can_view_transaction(current_date, 'cash', null) v")).v, false);
+    await asUser(owner);
+  });
+
+  await test('revoke_staff_sessions signs a Staff user out everywhere without changing access; Owners/Staff/anon cannot use it', async () => {
+    await admin();
+    const t1 = (await one('insert into auth.sessions(user_id) values ($1) returning id', [staff2])).id;
+    await q('insert into auth.refresh_tokens(user_id, session_id) values ($1,$2)', [staff2, t1]);
+    const keep = (await one('insert into auth.sessions(user_id) values ($1) returning id', [owner])).id;
+    const existing = (await one('select count(*)::int c from auth.sessions where user_id=$1', [staff2])).c;
+    assert.ok(existing >= 1);
+    await asUser(null, 'service_role');
+    const r = (await one('select public.revoke_staff_sessions($1,$2) as r', [owner, staff2])).r;
+    assert.equal(r.sessions_revoked, existing);
+    assert.equal(await errCode(() => q('select public.revoke_staff_sessions($1,$2)', [owner, owner2])), '42501', 'Owner sessions are never revoked here');
+    assert.equal(await errCode(() => q('select public.revoke_staff_sessions($1,$2)', [staff, staff2])), '42501', 'Staff cannot authorize');
+    assert.equal(await errCode(() => q('select public.revoke_staff_sessions($1,$2)', [owner, '00000000-0000-4000-8000-0000000000aa'])), 'P0002');
+    await admin();
+    assert.equal((await one('select count(*)::int c from auth.sessions where user_id=$1', [staff2])).c, 0);
+    assert.equal((await one('select count(*)::int c from auth.refresh_tokens where user_id=$1', [staff2])).c, 0);
+    assert.equal((await one('select count(*)::int c from auth.sessions where id=$1', [keep])).c, 1);
+    assert.equal((await one('select is_active from profiles where id=$1', [staff2])).is_active, true, 'access is unchanged');
+    for (const role of ['authenticated', 'anon']) {
+      await asUser(owner, role);
+      assert.equal(await errCode(() => q('select public.revoke_staff_sessions($1,$2)', [owner, staff2])), '42501', role);
+    }
+    await asUser(owner);
+  });
+
+  await test('the last Owner still cannot be demoted (lock added to the trigger does not change the rule)', async () => {
+    await asUser(owner);
+    await q("update profiles set role='staff' where id=$1", [owner2]);
+    assert.equal(await errCode(() => q("update profiles set role='staff' where id=$1", [owner])), 'P0001');
+    assert.equal((await one("select count(*)::int c from profiles where role='owner'")).c, 1);
+    await q("update profiles set role='owner' where id=$1", [owner2]);
+    assert.equal((await one("select count(*)::int c from profiles where role='owner'")).c, 2);
+  });
+
+  await test('new logins get an active Staff profile (no manual step needed)', async () => {
+    await admin();
+    const fresh3 = '00000000-0000-4000-8000-000000000005';
+    await db.exec(`insert into auth.users(id,email) values ('${fresh3}','new-staff@test.local')`);
+    assert.deepEqual(await one('select role, is_active from profiles where id=$1', [fresh3]), { role: 'staff', is_active: true });
+    await asUser(owner);
+  });
+
   console.log(`\n${passed} PASS; 0 FAIL. NOT RUN: multi-session contention, Supabase API/Realtime transport, external n8n export.`);
 } finally { await db.close(); }
