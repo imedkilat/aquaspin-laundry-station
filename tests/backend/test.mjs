@@ -114,6 +114,7 @@ try {
   await db.exec('alter table public.profiles enable trigger profiles_enforce_safe_self_update');
   await asUser(owner);
   const legacy = await transaction();
+  const legacyEditTarget = await transaction({ customer_name: 'Legacy edit target', phone_number: null });
   const legacyDeleted = await transaction({ customer_name: 'Deleted legacy' });
   await q("update public.transactions set deleted_at=now(), delete_reason='Duplicate entry' where id=$1", [legacyDeleted.id]);
   await admin();
@@ -168,6 +169,51 @@ try {
   }
   inventoryUsageEnabled = true;
   await asUser(owner);
+  await test('normal authenticated edit payload supports legacy and inventory-backed transactions', async () => {
+    const legacyEdit = await one(`update public.transactions set
+      customer_name='Legacy edit saved',
+      phone_number=null,
+      transaction_date=transaction_date,
+      service_id=null,
+      kg=null,
+      no_of_loads=null,
+      base_amount=0,
+      add_ons=0,
+      total_amount=0,
+      cash_amount=0,
+      gcash_amount=0,
+      gcash_reference=null,
+      payment_method='pay_later',
+      pickup_date=null,
+      notes='Legacy edit regression'
+      where id=$1
+      returning *`, [legacyEditTarget.id]);
+    assert.equal(legacyEdit.customer_name, 'Legacy edit saved');
+    assert.equal(legacyEdit.detergent_source, null);
+    assert.equal(legacyEdit.fabric_conditioner_source, null);
+
+    for (const column of [
+      'detergent_source', 'detergent_item_id', 'detergent_quantity', 'detergent_other_reason',
+      'fabric_conditioner_source', 'fabric_conditioner_item_id', 'fabric_conditioner_quantity', 'fabric_conditioner_other_reason',
+    ]) {
+      assert.equal((await one(`select has_column_privilege('authenticated','public.transactions',$1,'UPDATE') allowed`, [column])).allowed, true);
+    }
+
+    const inventoryEdit = await transaction({ customer_name: 'Inventory edit regression', phone_number: null });
+    const inventoryUpdated = await one(`update public.transactions set
+      detergent_source='customer_supplied',
+      detergent_item_id=null,
+      detergent_quantity=null,
+      detergent_other_reason='Customer provided detergent',
+      fabric_conditioner_source='customer_supplied',
+      fabric_conditioner_item_id=null,
+      fabric_conditioner_quantity=null,
+      fabric_conditioner_other_reason='Customer provided conditioner'
+      where id=$1
+      returning *`, [inventoryEdit.id]);
+    assert.equal(inventoryUpdated.detergent_source, 'customer_supplied');
+    assert.equal(inventoryUpdated.fabric_conditioner_source, 'customer_supplied');
+  });
   await test('customer item workflow enforces validation, permissions, completion, and history', async () => {
     const wdfServiceId = await serviceId('WDF');
     const grants = await one("select has_function_privilege('authenticated','public.save_transaction_customer_items(uuid,jsonb)','execute') auth_ok, has_function_privilege('anon','public.save_transaction_customer_items(uuid,jsonb)','execute') anon_ok");
@@ -535,6 +581,7 @@ try {
     await asUser(owner);
   });
   await test('Cash, GCash reference, missing reference rejection and Pay Later regression', async () => {
+    await asUser(owner);
     assert.equal(cash.payment_method, 'paid');
     await transaction({ payment_method: 'gcash', base_amount: 100, total_amount: 100, gcash_amount: 100, gcash_reference: 'QA-GCASH-1' });
     await assert.rejects(transaction({ payment_method: 'gcash', total_amount: 100, gcash_amount: 100 }), e => e.code === '23514');
