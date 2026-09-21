@@ -5,6 +5,11 @@ const ALLOWED_ORIGINS = new Set([
   "https://aquaspin-laundry-station.vercel.app",
 ]);
 
+// Keep in sync with manage-staff-user and the browser forms.
+const PASSWORD_MIN_LENGTH = 8;
+// bcrypt (Supabase Auth) only uses the first 72 bytes; longer values are rejected.
+const PASSWORD_MAX_BYTES = 72;
+
 function corsHeadersFor(req: Request): Record<string, string> {
   const origin = req.headers.get("Origin") ?? "";
   return {
@@ -56,11 +61,11 @@ Deno.serve(async (req: Request) => {
 
     const { data: profile, error: profileError } = await admin
       .from("profiles")
-      .select("role")
+      .select("role,is_active")
       .eq("id", user.id)
       .single();
 
-    if (profileError || profile?.role !== "owner") {
+    if (profileError || profile?.role !== "owner" || profile?.is_active !== true) {
       return json({ error: "Only an owner can create staff accounts." }, 403, corsHeaders);
     }
 
@@ -85,7 +90,7 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    const body = await req.json();
+    const body = await req.json().catch(() => ({}));
     const fullName = String(body.full_name ?? "").trim();
     const email = String(body.email ?? "").trim().toLowerCase();
     const password = String(body.password ?? "");
@@ -94,8 +99,12 @@ Deno.serve(async (req: Request) => {
       return json({ error: "Name, email, and password are required." }, 400, corsHeaders);
     }
 
-    if (password.length < 8) {
-      return json({ error: "Password must be at least 8 characters." }, 400, corsHeaders);
+    if (password.length < PASSWORD_MIN_LENGTH) {
+      return json({ error: `Password must be at least ${PASSWORD_MIN_LENGTH} characters.` }, 400, corsHeaders);
+    }
+
+    if (new TextEncoder().encode(password).length > PASSWORD_MAX_BYTES) {
+      return json({ error: `Password must be ${PASSWORD_MAX_BYTES} bytes or fewer (about ${PASSWORD_MAX_BYTES} characters).` }, 400, corsHeaders);
     }
 
     const { data, error } = await admin.auth.admin.createUser({

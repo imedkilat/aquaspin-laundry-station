@@ -28,6 +28,11 @@ export type Profile = {
   contact_phone: string | null
   avatar_path: string | null
   created_at: string
+  // Account access. Disabled accounts keep their row (and all history) but lose
+  // every permission. Changed only by the manage-staff-user Edge Function.
+  is_active: boolean
+  disabled_at: string | null
+  disabled_by: string | null
 }
 
 export type ShopSettings = {
@@ -340,6 +345,7 @@ export type Database = {
           avatar_path?: string | null
           created_at?: string
         }
+        // is_active / disabled_* are intentionally absent: clients cannot write them.
         Update: {
           id?: string
           full_name?: string

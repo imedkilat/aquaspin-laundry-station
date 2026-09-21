@@ -16,7 +16,7 @@ import GlobalErrorBoundary from './components/GlobalErrorBoundary'
 import { InlineAlert, LoadingPanel } from './components/UiFeedback'
 
 function Gate({ children, ownerOnly = false }: { children: React.ReactNode; ownerOnly?: boolean }) {
-  const { session, profile, loading } = useAuth()
+  const { session, profile, loading, accessNotice } = useAuth()
 
   if (loading) {
     return (
@@ -29,17 +29,19 @@ function Gate({ children, ownerOnly = false }: { children: React.ReactNode; owne
   }
 
   if (!session) return <Navigate to="/login" replace />
+  // Access was removed but the local sign-out could not finish (e.g. offline): never show the app shell.
+  if (!profile && accessNotice) return <Navigate to="/login" replace />
   if (ownerOnly && profile?.role !== 'owner') return <Navigate to="/" replace />
 
   return <Layout>{children}</Layout>
 }
 
 function AppRoutes() {
-  const { session, loading } = useAuth()
+  const { session, loading, accessNotice } = useAuth()
 
   return (
     <Routes>
-      <Route path="/login" element={!loading && session ? <Navigate to="/" replace /> : <Login />} />
+      <Route path="/login" element={!loading && session && !accessNotice ? <Navigate to="/" replace /> : <Login />} />
       <Route path="/" element={<Gate><HomePage /></Gate>} />
       <Route path="/new" element={<Gate><NewOrderPage /></Gate>} />
       <Route path="/orders" element={<Gate><OrdersPage /></Gate>} />

@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { edgeFunctionErrorMessage } from '../lib/edge-functions'
 import { supabase } from '../lib/supabase'
 import type { StaffAccount } from '../hooks/useStaffAccounts'
+import { staffPasswordProblem, STAFF_PASSWORD_MAX_BYTES, STAFF_PASSWORD_MIN_LENGTH } from '../lib/staff-password'
 import { ButtonSpinner, InlineAlert } from './UiFeedback'
 
 export default function EditStaffAccountModal({
@@ -30,32 +31,32 @@ export default function EditStaffAccountModal({
       setError('Staff name is required.')
       return
     }
-    const authChangeRequested = Boolean(password || (trimmedEmail && trimmedEmail !== account.email.toLowerCase()))
-    const directProfileUpdate = !authChangeRequested
-      ? await supabase.from('profiles').update({ full_name: trimmedName }).eq('id', account.id)
-      : null
-    const functionResult = authChangeRequested
-      ? await supabase.functions.invoke('manage-staff-user', {
-          body: { action: 'update', user_id: account.id, full_name: trimmedName, email: trimmedEmail, password },
-        })
-      : null
+    if (password) {
+      const passwordProblem = staffPasswordProblem(password)
+      if (passwordProblem) {
+        setSaving(false)
+        setError(passwordProblem)
+        return
+      }
+    }
+    // Every edit, including a name-only change, goes through the Edge Function
+    // so the server always re-checks the target's role and the caller's Owner status.
+    const functionResult = await supabase.functions.invoke('manage-staff-user', {
+      body: { action: 'update', user_id: account.id, full_name: trimmedName, email: trimmedEmail, password },
+    })
 
     setSaving(false)
 
-    if (directProfileUpdate?.error) {
-      setError(directProfileUpdate.error.message)
-      return
-    }
-    if (functionResult?.error) {
+    if (functionResult.error) {
       setError(await edgeFunctionErrorMessage(functionResult.error, 'Could not update the staff account. Please try again.'))
       return
     }
-    if (functionResult?.data?.error) {
+    if (functionResult.data?.error) {
       setError(String(functionResult.data.error))
       return
     }
 
-    onSaved(`Staff account updated for ${email.trim()}.`)
+    onSaved(`Staff account updated for ${trimmedName}.${functionResult.data?.session_revoke_failed ? ' Their existing sessions could not be signed out automatically.' : password ? ' They were signed out everywhere and must use the new password.' : ''}`)
   }
 
   return (
@@ -69,7 +70,7 @@ export default function EditStaffAccountModal({
       >
         <div>
           <h2 id="edit-staff-account-title" className="font-semibold text-slate-900 dark:text-slate-100">Edit Staff Account</h2>
-          <p className="mt-1 text-sm text-slate-500">Update the staff name or login details. Leave email and password blank to keep them unchanged.</p>
+          <p className="mt-1 text-sm text-slate-500">Update the staff name or login details. Leave email and password blank to keep them unchanged. Passwords must be 8–72 characters.</p>
         </div>
 
         <div className="grid gap-3 sm:grid-cols-2">
@@ -80,7 +81,7 @@ export default function EditStaffAccountModal({
             <input value={email} onChange={(event) => setEmail(event.target.value)} type="email" placeholder="Enter only when changing the email" className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100" />
           </label>
           <label className="text-xs font-medium text-slate-600 dark:text-slate-400 sm:col-span-2">New Temporary Password (optional)
-            <input value={password} onChange={(event) => setPassword(event.target.value)} minLength={8} type="password" placeholder="Leave blank to keep the current password" className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100" />
+            <input value={password} onChange={(event) => setPassword(event.target.value)} minLength={STAFF_PASSWORD_MIN_LENGTH} maxLength={STAFF_PASSWORD_MAX_BYTES} type="password" placeholder="Leave blank to keep the current password" className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100" />
           </label>
         </div>
 
