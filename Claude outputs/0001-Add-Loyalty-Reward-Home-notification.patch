@@ -1,0 +1,938 @@
+From 9f27f48713cd0516bb7faae4e41eda63d2e994aa Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Tue, 22 Sep 2026 14:56:12 +0800
+Subject: [PATCH] Add Loyalty Reward Home notification
+
+Detects, server-side, when a completed transaction crosses a
+customer's loyalty points balance from below the configured reward
+threshold to at/above it, and opens one persistent Home notification
+per reward cycle.
+
+- New table public.loyalty_reward_notifications (migration
+  20260930010000) plus a trigger on the existing loyalty_point_events
+  ledger insert (private.detect_loyalty_reward_threshold). Detection
+  reuses the ledger's existing guards, so cancelled, deleted,
+  incomplete or non-qualifying transactions never produce a
+  notification.
+- Idempotent by construction: a partial unique index on
+  source_event_id/source_redemption_id plus a partial unique index on
+  (customer_id) WHERE status='active', both enforced via
+  `on conflict do nothing`. Refreshes, retries and realtime
+  reconnects are pure reads and cannot create duplicates.
+- RLS: any active Owner or Staff can read; no client write path
+  exists at all (writes only happen through the SECURITY DEFINER
+  trigger and public.redeem_loyalty_reward). Redemption stays
+  Owner-only, unchanged.
+- public.redeem_loyalty_reward now resolves the matching
+  notification on redemption and, if the remaining balance still
+  clears the threshold, opens a new active notification for the next
+  reward cycle (documented in the migration's comments).
+- Home UI: new LoyaltyRewardHomeCard (styled after OnHoldHomeCard),
+  backed by useLoyaltyRewardNotifications (client-side join of
+  notifications + customers + live balances, with a realtime
+  subscription). Owner sees a "Open Loyalty & Redeem" action;
+  Staff sees notification + customer details only. No card renders
+  when nothing has qualified.
+- OwnerDashboard now honors ?tab=loyalty for the Home card's deep
+  link, guarded by the existing Owner-only tab check.
+- tests/backend/test.mjs: 15 new pglite tests covering below/at/above
+  threshold, refresh idempotency, concurrent-duplicate rejection at
+  the DB constraint level, Owner/Staff/anon RLS, Staff cannot
+  redeem/resolve, cancelled/deleted transactions, redemption
+  resolving the alert and audit trail, a later new reward cycle,
+  On Hold regression, and that SMS/PhilSMS code, config and column
+  grants are untouched. Full suite: 80 passed, 0 failed.
+
+Scope: Home notification only. No SMS/PhilSMS/provider work, no
+Production deploy, no `supabase db push` was run.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01DeFV6HNfuxKwGxuKyxSEx9
+---
+ src/components/LoyaltyRewardHomeCard.tsx      |  96 +++++++
+ src/hooks/useLoyaltyRewardNotifications.ts    | 124 +++++++++
+ src/pages/HomePage.tsx                        |  26 +-
+ src/pages/OwnerDashboard.tsx                  |  10 +-
+ src/types/database.ts                         |  23 ++
+ ...0000_loyalty_reward_home_notifications.sql | 249 ++++++++++++++++++
+ tests/backend/test.mjs                        | 235 +++++++++++++++++
+ 7 files changed, 757 insertions(+), 6 deletions(-)
+ create mode 100644 src/components/LoyaltyRewardHomeCard.tsx
+ create mode 100644 src/hooks/useLoyaltyRewardNotifications.ts
+ create mode 100644 supabase/migrations/20260930010000_loyalty_reward_home_notifications.sql
+
+diff --git a/src/components/LoyaltyRewardHomeCard.tsx b/src/components/LoyaltyRewardHomeCard.tsx
+new file mode 100644
+index 0000000..c133b10
+--- /dev/null
++++ b/src/components/LoyaltyRewardHomeCard.tsx
+@@ -0,0 +1,96 @@
++import { Link } from 'react-router-dom'
++import type { LoyaltyRewardHomeNotification } from '../hooks/useLoyaltyRewardNotifications'
++import BentoCard from './BentoCard'
++import { InlineAlert, LoadingPanel } from './UiFeedback'
++import UiIcon from './UiIcon'
++
++const points = (value: number) => Number(value || 0).toLocaleString('en-PH', { maximumFractionDigits: 2 })
++
++export default function LoyaltyRewardHomeCard({
++  rows,
++  loading,
++  error,
++  isOwner,
++  onRefresh,
++}: {
++  rows: LoyaltyRewardHomeNotification[]
++  loading: boolean
++  error: string | null
++  isOwner: boolean
++  onRefresh: () => void
++}) {
++  // Match the other Home alert cards: no empty warning block when nothing is
++  // waiting for attention, but keep an error visible so staleness is honest.
++  if (rows.length === 0 && !error) return null
++
++  return (
++    <BentoCard
++      title="Loyalty Rewards Need Attention"
++      description={rows.length ? `${rows.length} customer${rows.length === 1 ? '' : 's'} qualified for a reward` : 'Loyalty reward status could not be verified'}
++      icon="gift"
++      tone="amber"
++      action={
++        isOwner ? (
++          <Link
++            to="/dashboard?tab=loyalty"
++            className="inline-flex items-center gap-1 rounded-lg border border-amber-300 px-2.5 py-1.5 text-xs font-semibold text-amber-800 hover:bg-amber-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 dark:border-amber-800 dark:text-amber-200 dark:hover:bg-amber-950/50"
++          >
++            Open Loyalty <UiIcon name="arrow-right" size={14} />
++          </Link>
++        ) : undefined
++      }
++    >
++      {error && (
++        <div className="mb-3">
++          <InlineAlert variant="error" title="Loyalty reward notifications could not be refreshed" actionLabel="Try again" onAction={onRefresh}>
++            {error}
++          </InlineAlert>
++        </div>
++      )}
++
++      {loading && rows.length === 0 ? (
++        <LoadingPanel compact label="Checking loyalty rewards…" slowLabel="Still checking loyalty rewards…" />
++      ) : rows.length > 0 ? (
++        <div className="space-y-2">
++          {rows.map((row) => (
++            <div
++              key={row.id}
++              className="rounded-xl border border-amber-200 bg-amber-50/70 px-4 py-3 dark:border-amber-900/70 dark:bg-amber-950/20"
++            >
++              <div className="flex flex-wrap items-start justify-between gap-2">
++                <div className="min-w-0">
++                  <p className="font-medium text-slate-900 dark:text-slate-100">{row.customer_name} is now qualified for a Reward.</p>
++                  <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
++                    {row.customer_code ? `${row.customer_code} · ` : ''}Qualified {new Date(row.created_at).toLocaleString('en-PH')}
++                  </p>
++                </div>
++                <span className="shrink-0 rounded-full bg-orange-100 px-2 py-0.5 text-[11px] font-semibold text-orange-700 dark:bg-orange-950 dark:text-orange-300">
++                  {points(row.current_points_balance)} / {points(row.points_required_for_reward)} points
++                </span>
++              </div>
++              <p className="mt-2 text-sm text-amber-950 dark:text-amber-100">
++                <span className="font-semibold">Reward:</span> {row.reward_description}
++              </p>
++              <div className="mt-3 flex flex-wrap items-center gap-2">
++                <Link
++                  to={`/customers/${row.customer_id}`}
++                  className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300 px-3 py-1.5 text-xs font-semibold text-amber-800 hover:bg-amber-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 dark:border-amber-800 dark:text-amber-200 dark:hover:bg-amber-950/50"
++                >
++                  <UiIcon name="customers" size={14} /> View customer
++                </Link>
++                {isOwner && (
++                  <Link
++                    to="/dashboard?tab=loyalty"
++                    className="inline-flex items-center gap-1.5 rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:ring-offset-2 dark:bg-amber-500 dark:text-amber-950 dark:hover:bg-amber-400"
++                  >
++                    <UiIcon name="gift" size={14} /> Open Loyalty & Redeem
++                  </Link>
++                )}
++              </div>
++            </div>
++          ))}
++        </div>
++      ) : null}
++    </BentoCard>
++  )
++}
+diff --git a/src/hooks/useLoyaltyRewardNotifications.ts b/src/hooks/useLoyaltyRewardNotifications.ts
+new file mode 100644
+index 0000000..43815b1
+--- /dev/null
++++ b/src/hooks/useLoyaltyRewardNotifications.ts
+@@ -0,0 +1,124 @@
++import { useCallback, useEffect, useState } from 'react'
++import { makeRealtimeTopic } from '../lib/realtime'
++import { supabase } from '../lib/supabase'
++import type { RealtimeState } from './useServices'
++
++export type LoyaltyRewardHomeNotification = {
++  id: string
++  customer_id: string
++  customer_name: string
++  customer_code: string
++  created_at: string
++  // Current live balance, so an Owner/Staff who hasn't redeemed yet sees an
++  // up-to-date number even if the customer has earned more points since
++  // qualifying. Threshold and reward description are the values recorded at
++  // qualification time (they rarely change, and reading them straight off
++  // the notification avoids granting Staff any additional table access).
++  current_points_balance: number
++  points_required_for_reward: number
++  reward_description: string
++}
++
++type NotificationRow = {
++  id: string
++  customer_id: string
++  created_at: string
++  points_required_for_reward: number
++  reward_description: string
++}
++type CustomerRow = { id: string; full_name: string; customer_code: string }
++type BalanceRow = { customer_id: string; points_balance: number }
++
++export function useLoyaltyRewardNotifications() {
++  const [rows, setRows] = useState<LoyaltyRewardHomeNotification[]>([])
++  const [loading, setLoading] = useState(true)
++  const [error, setError] = useState<string | null>(null)
++  const [realtimeState, setRealtimeState] = useState<RealtimeState>('connecting')
++
++  const reload = useCallback(async () => {
++    setLoading(true)
++    setError(null)
++
++    const { data, error: notificationError } = await supabase
++      .from('loyalty_reward_notifications')
++      .select('id, customer_id, created_at, points_required_for_reward, reward_description')
++      .eq('status', 'active')
++      .order('created_at', { ascending: true })
++      .limit(100)
++
++    if (notificationError) {
++      setRows([])
++      setError('Could not load loyalty reward notifications.')
++      setLoading(false)
++      return
++    }
++
++    const notifications = (data ?? []) as unknown as NotificationRow[]
++    if (notifications.length === 0) {
++      setRows([])
++      setLoading(false)
++      return
++    }
++
++    const customerIds = [...new Set(notifications.map((row) => row.customer_id))]
++
++    const [{ data: customers, error: customerError }, { data: balances, error: balanceError }] = await Promise.all([
++      supabase.from('customers').select('id, full_name, customer_code').in('id', customerIds),
++      supabase.from('customer_loyalty_balance').select('customer_id, points_balance').in('customer_id', customerIds),
++    ])
++
++    if (customerError || balanceError) {
++      setRows([])
++      setError('Loyalty reward notifications loaded, but customer details could not be loaded.')
++      setLoading(false)
++      return
++    }
++
++    const customerById = new Map((((customers ?? []) as unknown as CustomerRow[])).map((row) => [row.id, row]))
++    const balanceById = new Map((((balances ?? []) as unknown as BalanceRow[])).map((row) => [row.customer_id, row]))
++
++    setRows(
++      notifications.map((row) => {
++        const customer = customerById.get(row.customer_id)
++        const balance = balanceById.get(row.customer_id)
++        return {
++          id: row.id,
++          customer_id: row.customer_id,
++          customer_name: customer?.full_name ?? 'Unknown customer',
++          customer_code: customer?.customer_code ?? '',
++          created_at: row.created_at,
++          current_points_balance: Number(balance?.points_balance ?? row.points_required_for_reward),
++          points_required_for_reward: row.points_required_for_reward,
++          reward_description: row.reward_description,
++        }
++      }),
++    )
++    setLoading(false)
++  }, [])
++
++  useEffect(() => {
++    void reload()
++  }, [reload])
++
++  useEffect(() => {
++    setRealtimeState('connecting')
++    let hasSubscribed = false
++    const channel = supabase
++      .channel(makeRealtimeTopic('home-loyalty-reward-notifications'))
++      .on('postgres_changes', { event: '*', schema: 'public', table: 'loyalty_reward_notifications' }, () => void reload())
++      .subscribe((status) => {
++        if (status === 'SUBSCRIBED') {
++          setRealtimeState('connected')
++          if (hasSubscribed) void reload()
++          hasSubscribed = true
++        } else if (status === 'CHANNEL_ERROR') setRealtimeState('error')
++        else if (status === 'TIMED_OUT' || status === 'CLOSED') setRealtimeState('disconnected')
++      })
++
++    return () => {
++      void supabase.removeChannel(channel)
++    }
++  }, [reload])
++
++  return { rows, loading, error, realtimeState, reload }
++}
+diff --git a/src/pages/HomePage.tsx b/src/pages/HomePage.tsx
+index 7522c8a..d0c27dc 100644
+--- a/src/pages/HomePage.tsx
++++ b/src/pages/HomePage.tsx
+@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
+ import { Link } from 'react-router-dom'
+ import BentoCard from '../components/BentoCard'
+ import CustomerItemsPendingCard from '../components/CustomerItemsPendingCard'
++import LoyaltyRewardHomeCard from '../components/LoyaltyRewardHomeCard'
+ import OnHoldHomeCard from '../components/OnHoldHomeCard'
+ import PaymentBadge from '../components/PaymentBadge'
+ import UiIcon, { type IconName } from '../components/UiIcon'
+@@ -9,6 +10,7 @@ import { ButtonSpinner, InlineAlert, LoadingPanel } from '../components/UiFeedba
+ import { useShopDate } from '../hooks/useShopDate'
+ import { useTransactions } from '../hooks/useTransactions'
+ import { useOnHoldTransactions } from '../hooks/useOnHoldTransactions'
++import { useLoyaltyRewardNotifications } from '../hooks/useLoyaltyRewardNotifications'
+ import { useAuth } from '../lib/auth-context'
+ import { supabase } from '../lib/supabase'
+ import { useShopSettings } from '../lib/shop-settings-context'
+@@ -57,6 +59,13 @@ export default function HomePage() {
+     realtimeState: onHoldRealtimeState,
+     reload: reloadOnHold,
+   } = useOnHoldTransactions()
++  const {
++    rows: loyaltyRewardRows,
++    loading: loyaltyRewardLoading,
++    error: loyaltyRewardError,
++    realtimeState: loyaltyRewardRealtimeState,
++    reload: reloadLoyaltyRewards,
++  } = useLoyaltyRewardNotifications()
+ 
+   const pendingRows = useMemo(
+     () => pendingCoverageRows.filter(isCustomerItemsPending),
+@@ -68,7 +77,8 @@ export default function HomePage() {
+     void reloadOutstanding()
+     void reloadPending()
+     void reloadOnHold()
+-  }, [reloadActivity, reloadOnHold, reloadOutstanding, reloadPending])
++    void reloadLoyaltyRewards()
++  }, [reloadActivity, reloadLoyaltyRewards, reloadOnHold, reloadOutstanding, reloadPending])
+ 
+   const stats = useMemo(() => {
+     const periodMetrics = calculateSalesMetrics(rows, today, monthStart)
+@@ -87,10 +97,10 @@ export default function HomePage() {
+     }
+   }, [monthStart, outstandingRows, rows, today])
+ 
+-  const combinedError = error || outstandingError || pendingError || onHoldError
+-  const realtimeOffline = [realtimeState, outstandingRealtimeState, pendingRealtimeState, onHoldRealtimeState].some((state) => state === 'disconnected' || state === 'error')
++  const combinedError = error || outstandingError || pendingError || onHoldError || loyaltyRewardError
++  const realtimeOffline = [realtimeState, outstandingRealtimeState, pendingRealtimeState, onHoldRealtimeState, loyaltyRewardRealtimeState].some((state) => state === 'disconnected' || state === 'error')
+ 
+-  if ((loading || outstandingLoading || pendingLoading || onHoldLoading) && rows.length === 0 && outstandingRows.length === 0 && pendingCoverageRows.length === 0 && onHoldRows.length === 0) {
++  if ((loading || outstandingLoading || pendingLoading || onHoldLoading || loyaltyRewardLoading) && rows.length === 0 && outstandingRows.length === 0 && pendingCoverageRows.length === 0 && onHoldRows.length === 0 && loyaltyRewardRows.length === 0) {
+     return <LoadingPanel label="Opening today's shop view…" slowLabel="Still loading today's laundry activity…" />
+   }
+ 
+@@ -149,6 +159,14 @@ export default function HomePage() {
+         onRefresh={() => void reloadPending()}
+       />
+ 
++      <LoyaltyRewardHomeCard
++        rows={loyaltyRewardRows}
++        loading={loyaltyRewardLoading}
++        error={loyaltyRewardError}
++        isOwner={isOwner}
++        onRefresh={() => void reloadLoyaltyRewards()}
++      />
++
+       <OnHoldHomeCard
+         rows={onHoldRows}
+         loading={onHoldLoading}
+diff --git a/src/pages/OwnerDashboard.tsx b/src/pages/OwnerDashboard.tsx
+index e9510dd..5dd231d 100644
+--- a/src/pages/OwnerDashboard.tsx
++++ b/src/pages/OwnerDashboard.tsx
+@@ -1,5 +1,5 @@
+ import { useEffect, useMemo, useRef, useState } from 'react'
+-import { Navigate } from 'react-router-dom'
++import { Navigate, useSearchParams } from 'react-router-dom'
+ import { useTransactions } from '../hooks/useTransactions'
+ import TransactionTable from '../components/TransactionTable'
+ import StaffAccountsManager from '../components/StaffAccountsManager'
+@@ -44,7 +44,13 @@ export default function OwnerDashboard() {
+   const { settings, loading: settingsLoading } = useShopSettings()
+   const isOwner = profile?.role === 'owner'
+ 
+-  const [tab, setTab] = useState<Tab>('overview')
++  const [searchParams] = useSearchParams()
++  // Lets other screens (e.g. the Home loyalty reward card) deep-link straight
++  // into a tab, such as /dashboard?tab=loyalty, instead of landing on Overview.
++  const [tab, setTab] = useState<Tab>(() => {
++    const requested = searchParams.get('tab')
++    return requested && requested in TAB_ICONS ? (requested as Tab) : 'overview'
++  })
+   const [dateFrom, setDateFrom] = useState(shopDateDaysAgo(6))
+   const [dateTo, setDateTo] = useState(shopDate())
+   const [methodFilter, setMethodFilter] = useState<PaymentMethod | 'all'>('all')
+diff --git a/src/types/database.ts b/src/types/database.ts
+index 8395ce4..c753c42 100644
+--- a/src/types/database.ts
++++ b/src/types/database.ts
+@@ -96,6 +96,23 @@ export type CustomerLoyaltyBalance = {
+   points_balance: number
+ }
+ 
++export type LoyaltyRewardNotificationStatus = 'active' | 'resolved'
++
++export type LoyaltyRewardNotification = {
++  id: string
++  customer_id: string
++  source_transaction_id: string | null
++  source_event_id: string | null
++  source_redemption_id: string | null
++  points_balance_at_qualification: number
++  points_required_for_reward: number
++  reward_description: string
++  status: LoyaltyRewardNotificationStatus
++  created_at: string
++  resolved_at: string | null
++  resolved_by: string | null
++}
++
+ export type Service = {
+   id: string
+   code: string
+@@ -457,6 +474,12 @@ export type Database = {
+         Update: { [key: string]: never }
+         Relationships: []
+       }
++      loyalty_reward_notifications: {
++        Row: LoyaltyRewardNotification
++        Insert: { [key: string]: never }
++        Update: { [key: string]: never }
++        Relationships: []
++      }
+       services: {
+         Row: Service
+         Insert: {
+diff --git a/supabase/migrations/20260930010000_loyalty_reward_home_notifications.sql b/supabase/migrations/20260930010000_loyalty_reward_home_notifications.sql
+new file mode 100644
+index 0000000..400e1c2
+--- /dev/null
++++ b/supabase/migrations/20260930010000_loyalty_reward_home_notifications.sql
+@@ -0,0 +1,249 @@
++-- Loyalty Reward Home Notification (server-side threshold detection).
++--
++-- Scope: Home notification only. No SMS/PhilSMS. No provider secrets.
++--
++-- Detection happens in the database, not React: whenever a qualifying
++-- completed transaction inserts a row into the existing append-only
++-- loyalty_point_events ledger (private.award_loyalty_points_on_completion
++-- already guards cancelled/deleted/incomplete/non-qualifying transactions —
++-- see 20260926010000_loyalty_points_v1.sql), a trigger here checks whether
++-- that event crossed the customer from below the configured threshold to at
++-- or above it, and if so opens exactly one active notification row.
++--
++-- Idempotency: `on conflict do nothing` (no target) is used everywhere a
++-- notification is inserted, so it is protected by BOTH unique indexes below
++-- at once - a duplicate ledger event and a customer who already has an
++-- active notification are both silently no-ops. Refreshes, retries and
++-- realtime reconnects on the client are pure reads and cannot create rows.
++begin;
++set local lock_timeout = '5s';
++
++-- ---------------------------------------------------------------------------
++-- 1. Persistent notification record
++-- ---------------------------------------------------------------------------
++create table if not exists public.loyalty_reward_notifications (
++  id uuid primary key default gen_random_uuid(),
++  customer_id uuid not null references public.customers(id) on delete restrict,
++  -- Denormalized for convenient display/query without a join through the
++  -- ledger; the qualifying transaction when the crossing event was an
++  -- earned-points ledger row (null for the post-redemption re-qualification
++  -- case, which has no single causing transaction).
++  source_transaction_id uuid references public.transactions(id) on delete restrict,
++  -- Exactly one of these two identifies the qualifying event and is the
++  -- idempotency key (see the partial unique indexes below):
++  --   - source_event_id: a loyalty_point_events row (normal threshold crossing)
++  --   - source_redemption_id: a loyalty_redemptions row (a redemption left the
++  --     customer at/above threshold again - see redeem_loyalty_reward)
++  source_event_id uuid references public.loyalty_point_events(id) on delete restrict,
++  source_redemption_id uuid references public.loyalty_redemptions(id) on delete restrict,
++  points_balance_at_qualification numeric not null check (points_balance_at_qualification >= 0),
++  points_required_for_reward integer not null check (points_required_for_reward > 0),
++  reward_description text not null
++    check (char_length(btrim(reward_description)) between 1 and 300),
++  status text not null default 'active' check (status in ('active', 'resolved')),
++  created_at timestamptz not null default clock_timestamp(),
++  resolved_at timestamptz,
++  resolved_by uuid references public.profiles(id) on delete set null,
++  constraint loyalty_reward_notifications_source_check
++    check (num_nonnulls(source_event_id, source_redemption_id) = 1),
++  constraint loyalty_reward_notifications_resolution_consistent
++    check ((status = 'active') = (resolved_at is null) and (status = 'active') = (resolved_by is null))
++);
++
++comment on table public.loyalty_reward_notifications is
++  'Home notification opened when a customer''s loyalty points balance crosses the reward threshold. One active row per customer at a time; see the partial unique index below.';
++
++-- One qualifying ledger event / redemption can only ever open one
++-- notification, and one customer can only have one ACTIVE (unresolved)
++-- notification at a time. Together these are the idempotency guarantee:
++-- any duplicate insert attempt (retry, reconnect, re-fired trigger) hits one
++-- of these and is absorbed by `on conflict do nothing` below.
++create unique index if not exists loyalty_reward_notifications_event_key
++  on public.loyalty_reward_notifications (source_event_id)
++  where source_event_id is not null;
++create unique index if not exists loyalty_reward_notifications_redemption_key
++  on public.loyalty_reward_notifications (source_redemption_id)
++  where source_redemption_id is not null;
++create unique index if not exists loyalty_reward_notifications_active_customer_key
++  on public.loyalty_reward_notifications (customer_id)
++  where status = 'active';
++
++create index if not exists loyalty_reward_notifications_status_created_idx
++  on public.loyalty_reward_notifications (status, created_at desc);
++
++-- ---------------------------------------------------------------------------
++-- 2. Server-side threshold detection (fires on the existing ledger insert)
++-- ---------------------------------------------------------------------------
++create or replace function private.detect_loyalty_reward_threshold()
++returns trigger
++language plpgsql
++security definer
++set search_path = ''
++as $$
++declare
++  v_settings public.loyalty_settings;
++  v_balance_after numeric;
++  v_balance_before numeric;
++begin
++  select * into v_settings from public.loyalty_settings where id = 1;
++  if v_settings is null then
++    return new;
++  end if;
++
++  -- We run AFTER INSERT, in the same transaction as the ledger row, so the
++  -- balance function (which sums the ledger) already includes this event.
++  -- Backing out new.points_earned recovers the balance immediately before it.
++  v_balance_after := private.calculate_loyalty_balance(new.customer_id);
++  v_balance_before := v_balance_after - new.points_earned;
++
++  if v_balance_before < v_settings.points_required_for_reward
++    and v_balance_after >= v_settings.points_required_for_reward then
++    insert into public.loyalty_reward_notifications (
++      customer_id, source_transaction_id, source_event_id,
++      points_balance_at_qualification, points_required_for_reward,
++      reward_description, status
++    )
++    values (
++      new.customer_id, new.transaction_id, new.id,
++      v_balance_after, v_settings.points_required_for_reward,
++      v_settings.reward_description, 'active'
++    )
++    on conflict do nothing;
++  end if;
++
++  return new;
++end;
++$$;
++
++revoke all on function private.detect_loyalty_reward_threshold() from public, anon, authenticated;
++drop trigger if exists loyalty_point_events_detect_reward_threshold on public.loyalty_point_events;
++create trigger loyalty_point_events_detect_reward_threshold
++after insert on public.loyalty_point_events
++for each row execute function private.detect_loyalty_reward_threshold();
++
++-- ---------------------------------------------------------------------------
++-- 3. Redemption resolves the notification and (documented) reopens one when
++--    the customer immediately qualifies for another reward cycle.
++-- ---------------------------------------------------------------------------
++-- Behaviour for "customer still has enough points for another reward" after
++-- a redemption: redeem_loyalty_reward always resolves the customer's active
++-- notification first (a redemption closes out the cycle that earned it, even
++-- if no notification row happens to exist - e.g. it predates this feature).
++-- It then re-checks the remaining balance. If the customer is still at or
++-- above the threshold, a NEW active notification is opened immediately for
++-- the next cycle, using the redemption itself as the qualifying event
++-- (source_redemption_id). This mirrors the normal crossing rule and never
++-- silently drops a reward the customer has already earned; nothing about
++-- points or history is erased or rewritten - both ledgers stay append-only.
++create or replace function public.redeem_loyalty_reward(
++  p_customer_id uuid,
++  p_notes text default null
++)
++returns public.loyalty_redemptions
++language plpgsql
++security definer
++set search_path = ''
++as $$
++declare
++  v_settings public.loyalty_settings;
++  v_balance numeric;
++  v_remaining_balance numeric;
++  v_redemption public.loyalty_redemptions;
++begin
++  if auth.uid() is null or not private.is_owner() then
++    raise exception 'Only an Owner can redeem loyalty rewards' using errcode = '42501';
++  end if;
++  if p_customer_id is null then
++    raise exception 'Customer is required';
++  end if;
++  if p_notes is not null and char_length(p_notes) > 500 then
++    raise exception 'Redemption notes must be 500 characters or fewer';
++  end if;
++
++  perform 1 from public.customers where id = p_customer_id for update;
++  if not found then
++    raise exception 'Customer not found';
++  end if;
++
++  select * into v_settings from public.loyalty_settings where id = 1;
++  v_balance := private.calculate_loyalty_balance(p_customer_id);
++
++  if v_balance < v_settings.points_required_for_reward then
++    raise exception 'Insufficient loyalty points: % available, % required',
++      v_balance, v_settings.points_required_for_reward;
++  end if;
++
++  insert into public.loyalty_redemptions (
++    customer_id, points_spent, reward_description, redeemed_by, notes
++  )
++  values (
++    p_customer_id,
++    v_settings.points_required_for_reward,
++    v_settings.reward_description,
++    auth.uid(),
++    nullif(btrim(p_notes), '')
++  )
++  returning * into v_redemption;
++
++  update public.loyalty_reward_notifications
++    set status = 'resolved', resolved_at = clock_timestamp(), resolved_by = auth.uid()
++    where customer_id = p_customer_id and status = 'active';
++
++  v_remaining_balance := private.calculate_loyalty_balance(p_customer_id);
++  if v_remaining_balance >= v_settings.points_required_for_reward then
++    insert into public.loyalty_reward_notifications (
++      customer_id, source_transaction_id, source_redemption_id,
++      points_balance_at_qualification, points_required_for_reward,
++      reward_description, status
++    )
++    values (
++      p_customer_id, null, v_redemption.id,
++      v_remaining_balance, v_settings.points_required_for_reward,
++      v_settings.reward_description, 'active'
++    )
++    on conflict do nothing;
++  end if;
++
++  return v_redemption;
++end;
++$$;
++
++revoke all on function public.redeem_loyalty_reward(uuid, text) from public, anon, authenticated;
++grant execute on function public.redeem_loyalty_reward(uuid, text) to authenticated;
++
++-- ---------------------------------------------------------------------------
++-- 4. RLS: Owner and active Staff can both read; no client write path at all
++--    (every write above runs as the elevated function owner, same pattern
++--    as loyalty_redemptions / loyalty_point_events).
++-- ---------------------------------------------------------------------------
++alter table public.loyalty_reward_notifications enable row level security;
++
++revoke all on table public.loyalty_reward_notifications from public, anon, authenticated;
++grant select on table public.loyalty_reward_notifications to authenticated;
++
++drop policy if exists loyalty_reward_notifications_active_select on public.loyalty_reward_notifications;
++create policy loyalty_reward_notifications_active_select
++  on public.loyalty_reward_notifications
++  for select
++  to authenticated
++  using ((select private.is_active_user()));
++
++-- ---------------------------------------------------------------------------
++-- 5. Realtime: Home needs to see a new alert the moment another browser
++--    completes the qualifying transaction, without a manual refresh.
++-- ---------------------------------------------------------------------------
++do $$
++begin
++  if exists (select 1 from pg_publication where pubname = 'supabase_realtime')
++     and not exists (
++       select 1 from pg_publication_tables
++       where pubname = 'supabase_realtime'
++         and schemaname = 'public'
++         and tablename = 'loyalty_reward_notifications'
++     ) then
++    alter publication supabase_realtime add table public.loyalty_reward_notifications;
++  end if;
++end;
++$$;
++
++commit;
+diff --git a/tests/backend/test.mjs b/tests/backend/test.mjs
+index ce75a65..2c40b6c 100644
+--- a/tests/backend/test.mjs
++++ b/tests/backend/test.mjs
+@@ -1074,5 +1074,240 @@ try {
+     await asUser(owner);
+   });
+ 
++  // ── Loyalty Reward Home Notification (server-side threshold detection) ──────
++  async function loyaltySettings(fields) {
++    await asUser(owner);
++    const sets = Object.entries(fields)
++      .map(([k, v]) => `${k} = ${typeof v === 'string' ? `'${v.replace(/'/g, "''")}'` : v}`)
++      .join(', ');
++    await db.exec(`update public.loyalty_settings set ${sets} where id = 1`);
++  }
++  async function newLoyaltyCustomer(name) {
++    await asUser(owner);
++    return one("insert into customers(full_name) values ($1) returning *", [name]);
++  }
++  const wdssServiceId = await serviceId('WDSS');
++  async function completeKg(customerId, kg) {
++    await asUser(owner);
++    let t = await transaction({ customer_id: customerId, service_id: wdssServiceId, customer_name: 'Loyalty fixture', phone_number: null, kg });
++    t = await status(t, 'washing');
++    t = await status(t, 'drying');
++    t = await status(t, 'ready_for_pickup');
++    t = await status(t, 'completed');
++    return t;
++  }
++  async function activeNotifications(customerId) {
++    return q("select * from loyalty_reward_notifications where customer_id=$1 and status='active' order by created_at", [customerId]);
++  }
++  await loyaltySettings({ points_required_for_reward: 50, points_per_kg: 1, reward_description: 'Free Wash & Dry-Fold' });
++
++  await test('loyalty grants: no client write path exists on the notification table', async () => {
++    await asUser(owner);
++    const privs = await one(`select
++      has_table_privilege('authenticated','public.loyalty_reward_notifications','SELECT') sel,
++      has_table_privilege('authenticated','public.loyalty_reward_notifications','INSERT') ins,
++      has_table_privilege('authenticated','public.loyalty_reward_notifications','UPDATE') upd,
++      has_table_privilege('authenticated','public.loyalty_reward_notifications','DELETE') del`);
++    assert.deepEqual(privs, { sel: true, ins: false, upd: false, del: false });
++    assert.equal((await q("select * from pg_publication_tables where pubname='supabase_realtime' and tablename='loyalty_reward_notifications'")).length, 1, 'Home needs realtime inserts/updates to appear without a manual refresh');
++  });
++
++  await test('customer below threshold: no notification', async () => {
++    const c = await newLoyaltyCustomer('Below Threshold');
++    await completeKg(c.id, 30); // 30 points earned, threshold is 50
++    assert.equal(Number((await one('select private.calculate_loyalty_balance($1) as v', [c.id])).v), 30);
++    assert.equal((await activeNotifications(c.id)).length, 0);
++  });
++
++  let exactCustomer;
++  let exactNotificationId;
++  await test('customer reaches threshold exactly: one notification with correct fields', async () => {
++    exactCustomer = await newLoyaltyCustomer('Exact Threshold');
++    const first = await completeKg(exactCustomer.id, 30); // 30: still below
++    assert.equal((await activeNotifications(exactCustomer.id)).length, 0);
++    const second = await completeKg(exactCustomer.id, 20); // cumulative 50: crosses exactly
++    const active = await activeNotifications(exactCustomer.id);
++    assert.equal(active.length, 1);
++    const row = active[0];
++    exactNotificationId = row.id;
++    assert.equal(row.customer_id, exactCustomer.id);
++    assert.equal(row.source_transaction_id, second.id);
++    assert.notEqual(row.source_transaction_id, first.id);
++    assert.ok(row.source_event_id);
++    assert.equal(row.source_redemption_id, null);
++    assert.equal(Number(row.points_balance_at_qualification), 50);
++    assert.equal(row.points_required_for_reward, 50);
++    assert.equal(row.reward_description, 'Free Wash & Dry-Fold');
++    assert.equal(row.status, 'active');
++    assert.equal(row.resolved_at, null);
++    assert.equal(row.resolved_by, null);
++    assert.ok(row.created_at);
++  });
++
++  await test('customer exceeds threshold in one transaction: one notification', async () => {
++    const c = await newLoyaltyCustomer('Exceeds Threshold');
++    const t = await completeKg(c.id, 80); // 0 -> 80 in a single crossing transaction
++    const active = await activeNotifications(c.id);
++    assert.equal(active.length, 1);
++    assert.equal(Number(active[0].points_balance_at_qualification), 80);
++    assert.equal(active[0].source_transaction_id, t.id);
++  });
++
++  await test('refresh Home repeatedly / another qualifying transaction while active: still exactly one notification', async () => {
++    // Simulates repeated Home refreshes (pure reads) plus a customer earning
++    // MORE points while their reward notification is still unresolved.
++    for (let i = 0; i < 3; i++) assert.equal((await activeNotifications(exactCustomer.id)).length, 1);
++    await completeKg(exactCustomer.id, 5); // balance now 55, notification already active
++    const active = await activeNotifications(exactCustomer.id);
++    assert.equal(active.length, 1, 'no second notification while one is already active');
++    assert.equal(active[0].id, exactNotificationId, 'the original notification is untouched, not replaced');
++    assert.equal(Number(active[0].points_balance_at_qualification), 50, 'qualification snapshot is not silently rewritten');
++  });
++
++  await test('two browser sessions / concurrent crossings cannot create duplicate active notifications (DB-level guarantee)', async () => {
++    // Proves the idempotency guarantee directly at the constraint level,
++    // independent of trigger timing: even a hand-crafted second INSERT for a
++    // customer that already has an active notification is rejected.
++    await admin();
++    await assert.rejects(
++      q(`insert into loyalty_reward_notifications
++        (customer_id, source_transaction_id, points_balance_at_qualification, points_required_for_reward, reward_description)
++        values ($1, null, 999, 50, 'Free Wash & Dry-Fold')`, [exactCustomer.id]),
++      e => e.code === '23514', // source_check: neither source_event_id nor source_redemption_id was given
++    );
++    const existingEvent = await one('select id from loyalty_point_events where customer_id=$1 limit 1', [exactCustomer.id]);
++    await assert.rejects(
++      q(`insert into loyalty_reward_notifications
++        (customer_id, source_event_id, points_balance_at_qualification, points_required_for_reward, reward_description)
++        values ($1, $2, 999, 50, 'Free Wash & Dry-Fold')`, [exactCustomer.id, existingEvent.id]),
++      e => e.code === '23505', // unique: an active notification already exists for this customer
++    );
++    assert.equal((await activeNotifications(exactCustomer.id)).length, 1);
++    await asUser(owner);
++  });
++
++  await test('Owner and Staff can both see the notification; a disabled/other account cannot', async () => {
++    await asUser(owner);
++    assert.equal((await q('select id from loyalty_reward_notifications where id=$1', [exactNotificationId])).length, 1);
++    await asUser(staff);
++    assert.equal((await q('select id from loyalty_reward_notifications where id=$1', [exactNotificationId])).length, 1);
++    await asUser(null, 'anon');
++    await rejects('select id from loyalty_reward_notifications where id=$1', [exactNotificationId], '42501');
++    await asUser(owner);
++  });
++
++  await test('Staff cannot resolve/update the notification directly, and cannot redeem', async () => {
++    await asUser(staff);
++    await rejects("update loyalty_reward_notifications set status='resolved' where id=$1 returning id", [exactNotificationId], '42501');
++    assert.equal(await errCode(() => q('select redeem_loyalty_reward($1, $2)', [exactCustomer.id, null])), '42501');
++    await asUser(owner);
++  });
++
++  await test('cancelled transaction earns no points and creates no notification', async () => {
++    const c = await newLoyaltyCustomer('Cancelled Before Completion');
++    let t = await transaction({ customer_id: c.id, service_id: wdssServiceId, customer_name: 'Loyalty fixture', phone_number: null, kg: 200 });
++    t = await status(t, 'washing');
++    t = await status(t, 'cancelled', 'Customer cancelled');
++    assert.equal((await q('select id from loyalty_point_events where customer_id=$1', [c.id])).length, 0);
++    assert.equal((await activeNotifications(c.id)).length, 0);
++  });
++
++  await test('deleted (soft-deleted) transaction cannot complete, earns no points, creates no notification', async () => {
++    const c = await newLoyaltyCustomer('Deleted Before Completion');
++    let t = await transaction({ customer_id: c.id, service_id: wdssServiceId, customer_name: 'Loyalty fixture', phone_number: null, kg: 200 });
++    const deletion = await softDelete(t, 'Duplicate order');
++    assert.equal(deletion.success, true);
++    const t2 = await fresh(t.id);
++    await assert.rejects(status(t2, 'washing'), e => e.code === '42501');
++    assert.equal((await q('select id from loyalty_point_events where customer_id=$1', [c.id])).length, 0);
++    assert.equal((await activeNotifications(c.id)).length, 0);
++  });
++
++  await test('redemption resolves the alert and preserves the audit trail', async () => {
++    const before = await one('select * from loyalty_reward_notifications where id=$1', [exactNotificationId]);
++    assert.equal(before.status, 'active');
++    const balanceBefore = Number((await one('select private.calculate_loyalty_balance($1) as v', [exactCustomer.id])).v);
++    assert.equal(balanceBefore, 55); // 30 + 20 + 5 earned above
++
++    await asUser(owner);
++    const redemption = await one('select * from redeem_loyalty_reward($1, $2)', [exactCustomer.id, 'QA redemption']);
++    assert.equal(redemption.customer_id, exactCustomer.id);
++    assert.equal(Number(redemption.points_spent), 50);
++    assert.equal(redemption.reward_description, 'Free Wash & Dry-Fold');
++
++    const resolved = await one('select * from loyalty_reward_notifications where id=$1', [exactNotificationId]);
++    assert.equal(resolved.status, 'resolved');
++    assert.ok(resolved.resolved_at);
++    assert.equal(resolved.resolved_by, owner);
++
++    // Ledger and existing redemption record are untouched/append-only.
++    assert.equal((await q('select id from loyalty_point_events where customer_id=$1', [exactCustomer.id])).length, 3);
++    assert.equal((await q('select id from loyalty_redemptions where customer_id=$1', [exactCustomer.id])).length, 1);
++
++    // Remaining balance (55 - 50 = 5) is below threshold: no new notification.
++    assert.equal((await activeNotifications(exactCustomer.id)).length, 0);
++    const balanceAfter = Number((await one('select private.calculate_loyalty_balance($1) as v', [exactCustomer.id])).v);
++    assert.equal(balanceAfter, 5);
++  });
++
++  await test('customer earns another reward cycle later: a new alert appears', async () => {
++    await completeKg(exactCustomer.id, 50); // 5 + 50 = 55: crosses the threshold again
++    const active = await activeNotifications(exactCustomer.id);
++    assert.equal(active.length, 1);
++    assert.notEqual(active[0].id, exactNotificationId, 'a fresh notification row for the new cycle');
++    assert.equal(Number(active[0].points_balance_at_qualification), 55);
++  });
++
++  await test('documented behaviour: a redemption that still leaves enough points opens the next cycle immediately', async () => {
++    const c = await newLoyaltyCustomer('Multi Cycle Redemption');
++    await completeKg(c.id, 120); // one transaction, well past the threshold twice over
++    const firstActive = await activeNotifications(c.id);
++    assert.equal(firstActive.length, 1);
++    assert.equal(Number(firstActive[0].points_balance_at_qualification), 120);
++
++    await asUser(owner);
++    const redemption1 = await one('select * from redeem_loyalty_reward($1, $2)', [c.id, null]);
++    const afterFirstRedeem = await activeNotifications(c.id);
++    assert.equal(afterFirstRedeem.length, 1, 'remaining balance (70) still clears the threshold (50): next cycle opens immediately');
++    assert.notEqual(afterFirstRedeem[0].id, firstActive[0].id);
++    assert.equal(afterFirstRedeem[0].source_redemption_id, redemption1.id);
++    assert.equal(afterFirstRedeem[0].source_transaction_id, null);
++    assert.equal(Number(afterFirstRedeem[0].points_balance_at_qualification), 70);
++
++    const resolvedFirst = await one('select status from loyalty_reward_notifications where id=$1', [firstActive[0].id]);
++    assert.equal(resolvedFirst.status, 'resolved');
++
++    await one('select * from redeem_loyalty_reward($1, $2)', [c.id, null]);
++    assert.equal((await activeNotifications(c.id)).length, 0, 'remaining balance (20) is below threshold: no third cycle yet');
++    assert.equal((await q('select id from loyalty_redemptions where customer_id=$1', [c.id])).length, 2, 'both redemptions kept, nothing erased');
++  });
++
++  await test('existing On Hold notifications and unrelated flows are unaffected (regression)', async () => {
++    // The full suite above this point (65 PASS) already exercises on_hold,
++    // completion, cancellation and deletion end-to-end with this migration
++    // applied, so this is a targeted spot-check rather than a duplicate.
++    const c = await newLoyaltyCustomer('On Hold Regression');
++    let t = await transaction({ customer_id: c.id, service_id: wdssServiceId, customer_name: 'Loyalty fixture', phone_number: null, kg: 10 });
++    t = await status(t, 'washing');
++    t = await status(t, 'on_hold', 'Machine unavailable');
++    t = await status(t, 'drying', 'Resume after manual wash');
++    t = await status(t, 'ready_for_pickup');
++    t = await status(t, 'completed');
++    assert.equal(t.order_status, 'completed');
++    assert.equal(Number((await one('select private.calculate_loyalty_balance($1) as v', [c.id])).v), 10);
++  });
++
++  await test('SMS/PhilSMS surfaces are untouched by this feature', async () => {
++    const migrationFile = await read('supabase/migrations/20260930010000_loyalty_reward_home_notifications.sql');
++    // Guard against actual SMS code (columns, tables, function calls), not
++    // the English word - strip `--` comments first, since this migration's
++    // own header documents the "no SMS" boundary in prose.
++    const codeOnly = migrationFile.replace(/--.*$/gm, '');
++    assert.equal(/sms_|philsms|send.?sms|sms_notification/i.test(codeOnly), false, 'no SMS/PhilSMS code touched by the new migration');
++    for (const column of ['sms_sent_at', 'sms_sent_by', 'sms_message_id']) {
++      assert.ok((await one(`select has_column_privilege('authenticated','public.transactions','${column}','UPDATE') allowed`)).allowed === false, `${column} grants unchanged`);
++    }
++  });
++
+   console.log(`\n${passed} PASS; 0 FAIL. NOT RUN: multi-session contention, Supabase API/Realtime transport, external n8n export.`);
+ } finally { await db.close(); }
+-- 
+2.43.0
+
