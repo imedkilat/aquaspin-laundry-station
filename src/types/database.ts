@@ -96,6 +96,23 @@ export type CustomerLoyaltyBalance = {
   points_balance: number
 }
 
+export type LoyaltyRewardNotificationStatus = 'active' | 'resolved'
+
+export type LoyaltyRewardNotification = {
+  id: string
+  customer_id: string
+  source_transaction_id: string | null
+  source_event_id: string | null
+  source_redemption_id: string | null
+  points_balance_at_qualification: number
+  points_required_for_reward: number
+  reward_description: string
+  status: LoyaltyRewardNotificationStatus
+  created_at: string
+  resolved_at: string | null
+  resolved_by: string | null
+}
+
 export type Service = {
   id: string
   code: string
@@ -453,6 +470,12 @@ export type Database = {
       }
       loyalty_redemptions: {
         Row: LoyaltyRedemption
+        Insert: { [key: string]: never }
+        Update: { [key: string]: never }
+        Relationships: []
+      }
+      loyalty_reward_notifications: {
+        Row: LoyaltyRewardNotification
         Insert: { [key: string]: never }
         Update: { [key: string]: never }
         Relationships: []

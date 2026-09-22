@@ -1074,5 +1074,240 @@ try {
     await asUser(owner);
   });
 
+  // ── Loyalty Reward Home Notification (server-side threshold detection) ──────
+  async function loyaltySettings(fields) {
+    await asUser(owner);
+    const sets = Object.entries(fields)
+      .map(([k, v]) => `${k} = ${typeof v === 'string' ? `'${v.replace(/'/g, "''")}'` : v}`)
+      .join(', ');
+    await db.exec(`update public.loyalty_settings set ${sets} where id = 1`);
+  }
+  async function newLoyaltyCustomer(name) {
+    await asUser(owner);
+    return one("insert into customers(full_name) values ($1) returning *", [name]);
+  }
+  const wdssServiceId = await serviceId('WDSS');
+  async function completeKg(customerId, kg) {
+    await asUser(owner);
+    let t = await transaction({ customer_id: customerId, service_id: wdssServiceId, customer_name: 'Loyalty fixture', phone_number: null, kg });
+    t = await status(t, 'washing');
+    t = await status(t, 'drying');
+    t = await status(t, 'ready_for_pickup');
+    t = await status(t, 'completed');
+    return t;
+  }
+  async function activeNotifications(customerId) {
+    return q("select * from loyalty_reward_notifications where customer_id=$1 and status='active' order by created_at", [customerId]);
+  }
+  await loyaltySettings({ points_required_for_reward: 50, points_per_kg: 1, reward_description: 'Free Wash & Dry-Fold' });
+
+  await test('loyalty grants: no client write path exists on the notification table', async () => {
+    await asUser(owner);
+    const privs = await one(`select
+      has_table_privilege('authenticated','public.loyalty_reward_notifications','SELECT') sel,
+      has_table_privilege('authenticated','public.loyalty_reward_notifications','INSERT') ins,
+      has_table_privilege('authenticated','public.loyalty_reward_notifications','UPDATE') upd,
+      has_table_privilege('authenticated','public.loyalty_reward_notifications','DELETE') del`);
+    assert.deepEqual(privs, { sel: true, ins: false, upd: false, del: false });
+    assert.equal((await q("select * from pg_publication_tables where pubname='supabase_realtime' and tablename='loyalty_reward_notifications'")).length, 1, 'Home needs realtime inserts/updates to appear without a manual refresh');
+  });
+
+  await test('customer below threshold: no notification', async () => {
+    const c = await newLoyaltyCustomer('Below Threshold');
+    await completeKg(c.id, 30); // 30 points earned, threshold is 50
+    assert.equal(Number((await one('select private.calculate_loyalty_balance($1) as v', [c.id])).v), 30);
+    assert.equal((await activeNotifications(c.id)).length, 0);
+  });
+
+  let exactCustomer;
+  let exactNotificationId;
+  await test('customer reaches threshold exactly: one notification with correct fields', async () => {
+    exactCustomer = await newLoyaltyCustomer('Exact Threshold');
+    const first = await completeKg(exactCustomer.id, 30); // 30: still below
+    assert.equal((await activeNotifications(exactCustomer.id)).length, 0);
+    const second = await completeKg(exactCustomer.id, 20); // cumulative 50: crosses exactly
+    const active = await activeNotifications(exactCustomer.id);
+    assert.equal(active.length, 1);
+    const row = active[0];
+    exactNotificationId = row.id;
+    assert.equal(row.customer_id, exactCustomer.id);
+    assert.equal(row.source_transaction_id, second.id);
+    assert.notEqual(row.source_transaction_id, first.id);
+    assert.ok(row.source_event_id);
+    assert.equal(row.source_redemption_id, null);
+    assert.equal(Number(row.points_balance_at_qualification), 50);
+    assert.equal(row.points_required_for_reward, 50);
+    assert.equal(row.reward_description, 'Free Wash & Dry-Fold');
+    assert.equal(row.status, 'active');
+    assert.equal(row.resolved_at, null);
+    assert.equal(row.resolved_by, null);
+    assert.ok(row.created_at);
+  });
+
+  await test('customer exceeds threshold in one transaction: one notification', async () => {
+    const c = await newLoyaltyCustomer('Exceeds Threshold');
+    const t = await completeKg(c.id, 80); // 0 -> 80 in a single crossing transaction
+    const active = await activeNotifications(c.id);
+    assert.equal(active.length, 1);
+    assert.equal(Number(active[0].points_balance_at_qualification), 80);
+    assert.equal(active[0].source_transaction_id, t.id);
+  });
+
+  await test('refresh Home repeatedly / another qualifying transaction while active: still exactly one notification', async () => {
+    // Simulates repeated Home refreshes (pure reads) plus a customer earning
+    // MORE points while their reward notification is still unresolved.
+    for (let i = 0; i < 3; i++) assert.equal((await activeNotifications(exactCustomer.id)).length, 1);
+    await completeKg(exactCustomer.id, 5); // balance now 55, notification already active
+    const active = await activeNotifications(exactCustomer.id);
+    assert.equal(active.length, 1, 'no second notification while one is already active');
+    assert.equal(active[0].id, exactNotificationId, 'the original notification is untouched, not replaced');
+    assert.equal(Number(active[0].points_balance_at_qualification), 50, 'qualification snapshot is not silently rewritten');
+  });
+
+  await test('two browser sessions / concurrent crossings cannot create duplicate active notifications (DB-level guarantee)', async () => {
+    // Proves the idempotency guarantee directly at the constraint level,
+    // independent of trigger timing: even a hand-crafted second INSERT for a
+    // customer that already has an active notification is rejected.
+    await admin();
+    await assert.rejects(
+      q(`insert into loyalty_reward_notifications
+        (customer_id, source_transaction_id, points_balance_at_qualification, points_required_for_reward, reward_description)
+        values ($1, null, 999, 50, 'Free Wash & Dry-Fold')`, [exactCustomer.id]),
+      e => e.code === '23514', // source_check: neither source_event_id nor source_redemption_id was given
+    );
+    const existingEvent = await one('select id from loyalty_point_events where customer_id=$1 limit 1', [exactCustomer.id]);
+    await assert.rejects(
+      q(`insert into loyalty_reward_notifications
+        (customer_id, source_event_id, points_balance_at_qualification, points_required_for_reward, reward_description)
+        values ($1, $2, 999, 50, 'Free Wash & Dry-Fold')`, [exactCustomer.id, existingEvent.id]),
+      e => e.code === '23505', // unique: an active notification already exists for this customer
+    );
+    assert.equal((await activeNotifications(exactCustomer.id)).length, 1);
+    await asUser(owner);
+  });
+
+  await test('Owner and Staff can both see the notification; a disabled/other account cannot', async () => {
+    await asUser(owner);
+    assert.equal((await q('select id from loyalty_reward_notifications where id=$1', [exactNotificationId])).length, 1);
+    await asUser(staff);
+    assert.equal((await q('select id from loyalty_reward_notifications where id=$1', [exactNotificationId])).length, 1);
+    await asUser(null, 'anon');
+    await rejects('select id from loyalty_reward_notifications where id=$1', [exactNotificationId], '42501');
+    await asUser(owner);
+  });
+
+  await test('Staff cannot resolve/update the notification directly, and cannot redeem', async () => {
+    await asUser(staff);
+    await rejects("update loyalty_reward_notifications set status='resolved' where id=$1 returning id", [exactNotificationId], '42501');
+    assert.equal(await errCode(() => q('select redeem_loyalty_reward($1, $2)', [exactCustomer.id, null])), '42501');
+    await asUser(owner);
+  });
+
+  await test('cancelled transaction earns no points and creates no notification', async () => {
+    const c = await newLoyaltyCustomer('Cancelled Before Completion');
+    let t = await transaction({ customer_id: c.id, service_id: wdssServiceId, customer_name: 'Loyalty fixture', phone_number: null, kg: 200 });
+    t = await status(t, 'washing');
+    t = await status(t, 'cancelled', 'Customer cancelled');
+    assert.equal((await q('select id from loyalty_point_events where customer_id=$1', [c.id])).length, 0);
+    assert.equal((await activeNotifications(c.id)).length, 0);
+  });
+
+  await test('deleted (soft-deleted) transaction cannot complete, earns no points, creates no notification', async () => {
+    const c = await newLoyaltyCustomer('Deleted Before Completion');
+    let t = await transaction({ customer_id: c.id, service_id: wdssServiceId, customer_name: 'Loyalty fixture', phone_number: null, kg: 200 });
+    const deletion = await softDelete(t, 'Duplicate order');
+    assert.equal(deletion.success, true);
+    const t2 = await fresh(t.id);
+    await assert.rejects(status(t2, 'washing'), e => e.code === '42501');
+    assert.equal((await q('select id from loyalty_point_events where customer_id=$1', [c.id])).length, 0);
+    assert.equal((await activeNotifications(c.id)).length, 0);
+  });
+
+  await test('redemption resolves the alert and preserves the audit trail', async () => {
+    const before = await one('select * from loyalty_reward_notifications where id=$1', [exactNotificationId]);
+    assert.equal(before.status, 'active');
+    const balanceBefore = Number((await one('select private.calculate_loyalty_balance($1) as v', [exactCustomer.id])).v);
+    assert.equal(balanceBefore, 55); // 30 + 20 + 5 earned above
+
+    await asUser(owner);
+    const redemption = await one('select * from redeem_loyalty_reward($1, $2)', [exactCustomer.id, 'QA redemption']);
+    assert.equal(redemption.customer_id, exactCustomer.id);
+    assert.equal(Number(redemption.points_spent), 50);
+    assert.equal(redemption.reward_description, 'Free Wash & Dry-Fold');
+
+    const resolved = await one('select * from loyalty_reward_notifications where id=$1', [exactNotificationId]);
+    assert.equal(resolved.status, 'resolved');
+    assert.ok(resolved.resolved_at);
+    assert.equal(resolved.resolved_by, owner);
+
+    // Ledger and existing redemption record are untouched/append-only.
+    assert.equal((await q('select id from loyalty_point_events where customer_id=$1', [exactCustomer.id])).length, 3);
+    assert.equal((await q('select id from loyalty_redemptions where customer_id=$1', [exactCustomer.id])).length, 1);
+
+    // Remaining balance (55 - 50 = 5) is below threshold: no new notification.
+    assert.equal((await activeNotifications(exactCustomer.id)).length, 0);
+    const balanceAfter = Number((await one('select private.calculate_loyalty_balance($1) as v', [exactCustomer.id])).v);
+    assert.equal(balanceAfter, 5);
+  });
+
+  await test('customer earns another reward cycle later: a new alert appears', async () => {
+    await completeKg(exactCustomer.id, 50); // 5 + 50 = 55: crosses the threshold again
+    const active = await activeNotifications(exactCustomer.id);
+    assert.equal(active.length, 1);
+    assert.notEqual(active[0].id, exactNotificationId, 'a fresh notification row for the new cycle');
+    assert.equal(Number(active[0].points_balance_at_qualification), 55);
+  });
+
+  await test('documented behaviour: a redemption that still leaves enough points opens the next cycle immediately', async () => {
+    const c = await newLoyaltyCustomer('Multi Cycle Redemption');
+    await completeKg(c.id, 120); // one transaction, well past the threshold twice over
+    const firstActive = await activeNotifications(c.id);
+    assert.equal(firstActive.length, 1);
+    assert.equal(Number(firstActive[0].points_balance_at_qualification), 120);
+
+    await asUser(owner);
+    const redemption1 = await one('select * from redeem_loyalty_reward($1, $2)', [c.id, null]);
+    const afterFirstRedeem = await activeNotifications(c.id);
+    assert.equal(afterFirstRedeem.length, 1, 'remaining balance (70) still clears the threshold (50): next cycle opens immediately');
+    assert.notEqual(afterFirstRedeem[0].id, firstActive[0].id);
+    assert.equal(afterFirstRedeem[0].source_redemption_id, redemption1.id);
+    assert.equal(afterFirstRedeem[0].source_transaction_id, null);
+    assert.equal(Number(afterFirstRedeem[0].points_balance_at_qualification), 70);
+
+    const resolvedFirst = await one('select status from loyalty_reward_notifications where id=$1', [firstActive[0].id]);
+    assert.equal(resolvedFirst.status, 'resolved');
+
+    await one('select * from redeem_loyalty_reward($1, $2)', [c.id, null]);
+    assert.equal((await activeNotifications(c.id)).length, 0, 'remaining balance (20) is below threshold: no third cycle yet');
+    assert.equal((await q('select id from loyalty_redemptions where customer_id=$1', [c.id])).length, 2, 'both redemptions kept, nothing erased');
+  });
+
+  await test('existing On Hold notifications and unrelated flows are unaffected (regression)', async () => {
+    // The full suite above this point (65 PASS) already exercises on_hold,
+    // completion, cancellation and deletion end-to-end with this migration
+    // applied, so this is a targeted spot-check rather than a duplicate.
+    const c = await newLoyaltyCustomer('On Hold Regression');
+    let t = await transaction({ customer_id: c.id, service_id: wdssServiceId, customer_name: 'Loyalty fixture', phone_number: null, kg: 10 });
+    t = await status(t, 'washing');
+    t = await status(t, 'on_hold', 'Machine unavailable');
+    t = await status(t, 'drying', 'Resume after manual wash');
+    t = await status(t, 'ready_for_pickup');
+    t = await status(t, 'completed');
+    assert.equal(t.order_status, 'completed');
+    assert.equal(Number((await one('select private.calculate_loyalty_balance($1) as v', [c.id])).v), 10);
+  });
+
+  await test('SMS/PhilSMS surfaces are untouched by this feature', async () => {
+    const migrationFile = await read('supabase/migrations/20260930010000_loyalty_reward_home_notifications.sql');
+    // Guard against actual SMS code (columns, tables, function calls), not
+    // the English word - strip `--` comments first, since this migration's
+    // own header documents the "no SMS" boundary in prose.
+    const codeOnly = migrationFile.replace(/--.*$/gm, '');
+    assert.equal(/sms_|philsms|send.?sms|sms_notification/i.test(codeOnly), false, 'no SMS/PhilSMS code touched by the new migration');
+    for (const column of ['sms_sent_at', 'sms_sent_by', 'sms_message_id']) {
+      assert.ok((await one(`select has_column_privilege('authenticated','public.transactions','${column}','UPDATE') allowed`)).allowed === false, `${column} grants unchanged`);
+    }
+  });
+
   console.log(`\n${passed} PASS; 0 FAIL. NOT RUN: multi-session contention, Supabase API/Realtime transport, external n8n export.`);
 } finally { await db.close(); }

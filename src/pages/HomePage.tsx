@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import BentoCard from '../components/BentoCard'
 import CustomerItemsPendingCard from '../components/CustomerItemsPendingCard'
+import LoyaltyRewardHomeCard from '../components/LoyaltyRewardHomeCard'
 import OnHoldHomeCard from '../components/OnHoldHomeCard'
 import PaymentBadge from '../components/PaymentBadge'
 import UiIcon, { type IconName } from '../components/UiIcon'
@@ -9,6 +10,7 @@ import { ButtonSpinner, InlineAlert, LoadingPanel } from '../components/UiFeedba
 import { useShopDate } from '../hooks/useShopDate'
 import { useTransactions } from '../hooks/useTransactions'
 import { useOnHoldTransactions } from '../hooks/useOnHoldTransactions'
+import { useLoyaltyRewardNotifications } from '../hooks/useLoyaltyRewardNotifications'
 import { useAuth } from '../lib/auth-context'
 import { supabase } from '../lib/supabase'
 import { useShopSettings } from '../lib/shop-settings-context'
@@ -57,6 +59,13 @@ export default function HomePage() {
     realtimeState: onHoldRealtimeState,
     reload: reloadOnHold,
   } = useOnHoldTransactions()
+  const {
+    rows: loyaltyRewardRows,
+    loading: loyaltyRewardLoading,
+    error: loyaltyRewardError,
+    realtimeState: loyaltyRewardRealtimeState,
+    reload: reloadLoyaltyRewards,
+  } = useLoyaltyRewardNotifications()
 
   const pendingRows = useMemo(
     () => pendingCoverageRows.filter(isCustomerItemsPending),
@@ -68,7 +77,8 @@ export default function HomePage() {
     void reloadOutstanding()
     void reloadPending()
     void reloadOnHold()
-  }, [reloadActivity, reloadOnHold, reloadOutstanding, reloadPending])
+    void reloadLoyaltyRewards()
+  }, [reloadActivity, reloadLoyaltyRewards, reloadOnHold, reloadOutstanding, reloadPending])
 
   const stats = useMemo(() => {
     const periodMetrics = calculateSalesMetrics(rows, today, monthStart)
@@ -87,10 +97,10 @@ export default function HomePage() {
     }
   }, [monthStart, outstandingRows, rows, today])
 
-  const combinedError = error || outstandingError || pendingError || onHoldError
-  const realtimeOffline = [realtimeState, outstandingRealtimeState, pendingRealtimeState, onHoldRealtimeState].some((state) => state === 'disconnected' || state === 'error')
+  const combinedError = error || outstandingError || pendingError || onHoldError || loyaltyRewardError
+  const realtimeOffline = [realtimeState, outstandingRealtimeState, pendingRealtimeState, onHoldRealtimeState, loyaltyRewardRealtimeState].some((state) => state === 'disconnected' || state === 'error')
 
-  if ((loading || outstandingLoading || pendingLoading || onHoldLoading) && rows.length === 0 && outstandingRows.length === 0 && pendingCoverageRows.length === 0 && onHoldRows.length === 0) {
+  if ((loading || outstandingLoading || pendingLoading || onHoldLoading || loyaltyRewardLoading) && rows.length === 0 && outstandingRows.length === 0 && pendingCoverageRows.length === 0 && onHoldRows.length === 0 && loyaltyRewardRows.length === 0) {
     return <LoadingPanel label="Opening today's shop view…" slowLabel="Still loading today's laundry activity…" />
   }
 
@@ -147,6 +157,14 @@ export default function HomePage() {
         error={pendingError}
         canEdit={canEditCustomerItems(profile?.role, settings.staff_can_edit_transactions)}
         onRefresh={() => void reloadPending()}
+      />
+
+      <LoyaltyRewardHomeCard
+        rows={loyaltyRewardRows}
+        loading={loyaltyRewardLoading}
+        error={loyaltyRewardError}
+        isOwner={isOwner}
+        onRefresh={() => void reloadLoyaltyRewards()}
       />
 
       <OnHoldHomeCard

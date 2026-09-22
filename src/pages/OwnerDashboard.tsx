@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Navigate } from 'react-router-dom'
+import { Navigate, useSearchParams } from 'react-router-dom'
 import { useTransactions } from '../hooks/useTransactions'
 import TransactionTable from '../components/TransactionTable'
 import StaffAccountsManager from '../components/StaffAccountsManager'
@@ -44,7 +44,13 @@ export default function OwnerDashboard() {
   const { settings, loading: settingsLoading } = useShopSettings()
   const isOwner = profile?.role === 'owner'
 
-  const [tab, setTab] = useState<Tab>('overview')
+  const [searchParams] = useSearchParams()
+  // Lets other screens (e.g. the Home loyalty reward card) deep-link straight
+  // into a tab, such as /dashboard?tab=loyalty, instead of landing on Overview.
+  const [tab, setTab] = useState<Tab>(() => {
+    const requested = searchParams.get('tab')
+    return requested && requested in TAB_ICONS ? (requested as Tab) : 'overview'
+  })
   const [dateFrom, setDateFrom] = useState(shopDateDaysAgo(6))
   const [dateTo, setDateTo] = useState(shopDate())
   const [methodFilter, setMethodFilter] = useState<PaymentMethod | 'all'>('all')
