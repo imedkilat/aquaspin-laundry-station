@@ -40,7 +40,9 @@ The follow-up migration `20260930050000_prevent_terminal_transaction_edits.sql` 
 
 The follow-up `20260930060000_pr29_advisor_hardening.sql` pins `private.is_drop_off_service` to an empty search path and adds an index to `transaction_service_items.created_by`. It is prepared in the PR worktree but has not been applied to Production or Staging. This optional hardening follow-up is not a substitute for migration-history reconciliation.
 
-A read-only Staging `migration list --project-ref wmubrkhgncrtwdlsusea` showed the two feature versions (`20260930030000` and `20260930040000`) matched, but many earlier local versions had no remote row and 18 remote-only versions had no local file. Do not run `migration up` against Staging with the full PR migration directory until this separate drift is reconciled; it could attempt to replay old SQL. No Staging database change was made during this follow-up.
+A read-only `npx supabase migration list --project-ref wmubrkhgncrtwdlsusea` on 2026-09-26 showed only the two feature versions (`20260930030000` and `20260930040000`) matched. The current PR worktree has 47 local-only versions and Staging has 41 remote-only versions; `20260930050000` and `20260930060000` are among the local-only versions. Do not run `migration up` against Staging with this migration directory: it would treat many historical local migrations as pending and could replay old SQL. Similar-looking migration names at different version IDs are not proof that the SQL/effects match. No Staging database change was made.
+
+A read-only `npx supabase migration list --project-ref yhckdhidchxsypfeyzxj` on 2026-09-26 showed all 48 previously applied PR-worktree versions matching Production, with 20 additional remote-only history rows; `20260930060000` is the only local pending version. Production history was not changed by these list commands.
 
 ## Latest Staging browser QA
 
