@@ -55,6 +55,11 @@ export default function ReportsManager() {
   const [dateFrom, setDateFrom] = useState(today.slice(0, 8) + '01')
   const [dateTo, setDateTo] = useState(today)
   const [transactions, setTransactions] = useState<Transaction[]>([])
+  // Additional service lines' weight, keyed by transaction id — kept
+  // separate from `transactions` because transactions.kg intentionally
+  // keeps its existing, primary-service-only meaning (see the
+  // transaction_service_items migration).
+  const [serviceItemsKgByTransaction, setServiceItemsKgByTransaction] = useState<Map<string, number>>(new Map())
   const [expenses, setExpenses] = useState<ActiveExpense[]>([])
   const [inventory, setInventory] = useState<InventoryItemSummary[]>([])
   const [movements, setMovements] = useState<InventoryStockMovement[]>([])
@@ -111,10 +116,33 @@ export default function ReportsManager() {
     if (firstError) {
       setError(firstError.message)
     } else {
-      setTransactions(transactionResult.data ?? [])
+      const transactionRows = transactionResult.data ?? []
+      setTransactions(transactionRows)
       setExpenses(expenseResult.data ?? [])
       setInventory(inventoryResult.data ?? [])
       setMovements(movementResult.data ?? [])
+
+      if (transactionRows.length === 0) {
+        setServiceItemsKgByTransaction(new Map())
+      } else {
+        const { data: serviceItemRows, error: serviceItemsError } = await fetchPaged<{ transaction_id: string; kg: number | null }>(
+          (from, to) => supabase
+            .from('transaction_service_items')
+            .select('transaction_id, kg')
+            .in('transaction_id', transactionRows.map((row) => row.id))
+            .range(from, to)
+        )
+        if (serviceItemsError) {
+          setServiceItemsKgByTransaction(new Map())
+        } else {
+          const kgByTransaction = new Map<string, number>()
+          for (const item of serviceItemRows ?? []) {
+            if (item.kg == null) continue
+            kgByTransaction.set(item.transaction_id, (kgByTransaction.get(item.transaction_id) ?? 0) + Number(item.kg))
+          }
+          setServiceItemsKgByTransaction(kgByTransaction)
+        }
+      }
     }
 
     setLoading(false)
@@ -138,7 +166,7 @@ export default function ReportsManager() {
       const service = row.service_label_snapshot || 'Unknown service'
       serviceTotals.set(service, (serviceTotals.get(service) ?? 0) + Number(row.base_amount || 0))
       addOnTotal += Number(row.add_ons || 0)
-      kgTotal += Number(row.kg || 0)
+      kgTotal += Number(row.kg || 0) + (serviceItemsKgByTransaction.get(row.id) ?? 0)
       paymentTotals.set(row.payment_method, (paymentTotals.get(row.payment_method) ?? 0) + Number(row.total_amount || 0))
     }
 
@@ -154,7 +182,7 @@ export default function ReportsManager() {
       paymentTotals,
       cancelledCount,
     }
-  }, [salesRows, cancelledCount])
+  }, [salesRows, cancelledCount, serviceItemsKgByTransaction])
 
   const expenseTotal = useMemo(() => expenses.reduce((sum, expense) => sum + Number(expense.amount || 0), 0), [expenses])
   const inventoryMap = useMemo(() => new Map(inventory.map((item) => [item.id, item])), [inventory])
