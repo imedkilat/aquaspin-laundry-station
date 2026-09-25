@@ -1,13 +1,13 @@
 # PR #29 Production Readiness
 
-**Status as of 2026-09-25: DO NOT PROMOTE THE APPLICATION YET.** The two PR #29 feature migrations have been applied to Production and verified. Browser QA still has blocked and inconclusive checks, the cancelled-order edit defect needs the follow-up migration in this PR, and older migration-history drift remains.
+**Status as of 2026-09-25: DO NOT PROMOTE THE APPLICATION YET.** The two PR #29 feature migrations have been applied to Production and verified. The cancelled-order edit defect has a code and database fix on the PR branch, but the fix has not been applied to either database and browser retesting is pending. Other browser checks and older migration-history drift remain open.
 
 ## Environment and deployment
 
 - Production Supabase ref: `yhckdhidchxsypfeyzxj`.
 - Staging Supabase ref: `wmubrkhgncrtwdlsusea`.
 - PR #29 branch: `feat/multi-service-transactions`.
-- Latest verified Vercel preview: commit `0e86beeb468e2ce07e9fce21ddd8a9428e9ef2f3`, READY. Its stable PR alias points to the same deployment.
+- Latest verified Vercel preview: commit `f3542e3f3e514a7daa8d995fec7eda6b004aead9`, READY. The stable PR alias points to this deployment. Its loaded app asset points to Staging and does not contain the Production project ref.
 - The preview bundle points to Staging. Production application deployment was not changed.
 
 ## Production database state
@@ -33,20 +33,20 @@ Read-only post-apply verification confirmed:
 
 The CLI initially refused `migration up` because 20 older remote history versions were absent from the PR branch's migration directory. To preserve those remote records, temporary no-op placeholders were added only to a disposable CLI workdir. They were not added to the repo and did not alter Production history. Those 20 legacy remote-only entries remain a repository/history reconciliation item. **Do not run `supabase db push` to work around this drift.**
 
-The follow-up migration `20260930050000_prevent_terminal_transaction_edits.sql` is a local PR change and has **not** been applied to Production. Apply it only after review and explicit approval.
+The follow-up migration `20260930050000_prevent_terminal_transaction_edits.sql` is a PR change and has **not** been applied to Staging or Production. Apply it to Production only after review and explicit approval.
 
 A read-only Staging `migration list --project-ref wmubrkhgncrtwdlsusea` showed the two feature versions (`20260930030000` and `20260930040000`) matched, but many earlier local versions had no remote row and 18 remote-only versions had no local file. Do not run `migration up` against Staging with the full PR migration directory until this separate drift is reconciled; it could attempt to replay old SQL. No Staging database change was made during this follow-up.
 
 ## Latest Staging browser QA
 
-At 2026-09-25 15:03 UTC, the stable PR alias was READY on commit `0e86beeb468e2ce07e9fce21ddd8a9428e9ef2f3` and its app asset pointed to Staging. Production was not accessed during this QA run.
+The latest supplied browser QA was run against stable alias commit `0e86beeb468e2ce07e9fce21ddd8a9428e9ef2f3`. Production was not accessed during that QA run. A later PR deployment (`f3542e3`) is READY, but cancelled-order behavior has not yet been retested on it.
 
 | Check | Result | Evidence |
 | --- | --- | --- |
 | Staff transaction permissions and Pay Later | Blocked | Owner session only; no authorized Staff session. |
 | Multi-service totals and Edit form | Pass | `AQ-4C9FB66C`: ₱195 primary + ₱220 additional = ₱415; GCash ₱415; Edit prefill matched. |
 | Stale-edit protection | Inconclusive | Controlled Tab B save left Tab A's newer note visible, but there was no explicit rejection or request-level evidence. |
-| Cancelled-order edit guard | Fail, fix in progress | `AQ-4002F39B` was Cancelled, but Edit opened with Save Changes enabled. The dialog was canceled without saving. |
+| Cancelled-order edit guard | Fail on tested build; fix awaiting retest | `AQ-4002F39B` was Cancelled, but Edit opened with Save Changes enabled. The dialog was canceled without saving. The PR follow-up now hides and guards Edit and adds a database guard; neither the database migration nor browser retest has occurred. |
 | Drop-Off completion guard | Pass | `AQ-19B13273` reached Ready for Pickup; missing customer item list warning displayed and completion was disabled. |
 | Receipt and print styling | Blocked | Print action calls `window.print()`; no safe print preview or print-media emulation. |
 | 320px and 375px layouts | Blocked | Browser did not expose viewport resizing. |
@@ -76,8 +76,8 @@ The migration preserves the more specific existing error for terminal inventory 
 
 ## Release gates still open
 
-1. Review the new terminal-order guard migration and apply it to Production through the approved migration workflow; verify the trigger and migration history afterward.
-2. Repeat cancelled-order browser QA against the updated preview and confirm Edit is unavailable. Verify stale-edit behavior with request-level evidence if available.
+1. Repeat cancelled-order browser QA against the updated preview and confirm Edit is unavailable. The new trigger migration remains unapplied; review and obtain explicit approval before applying it to Production through a reconciled migration workflow.
+2. Verify stale-edit behavior with request-level evidence if available.
 3. Obtain an authorized Staff session for Staff/Pay Later checks.
 4. Run mobile layout and receipt/print checks with browser capabilities that support viewport sizing and print preview.
 5. Configure approved disposable Staging inventory fixtures before stock UI tests; do not consume or alter real stock.
