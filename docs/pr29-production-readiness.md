@@ -7,7 +7,7 @@
 - Production Supabase ref: `yhckdhidchxsypfeyzxj`.
 - Staging Supabase ref: `wmubrkhgncrtwdlsusea`.
 - PR #29 branch: `feat/multi-service-transactions`.
-- Latest verified Vercel preview: commit `9bc3ec50aeb2b4a9caaef063a269afe6cbc79c5a`, READY. The stable PR alias points to this deployment. Its loaded app asset points to Staging and does not contain the Production project ref.
+- Latest verified app-code preview: commit `9bc3ec50aeb2b4a9caaef063a269afe6cbc79c5a`, READY. The stable PR alias is READY on the latest docs-only branch commit and serves the same app bundle. The loaded asset points to Staging and does not contain the Production project ref.
 - The preview bundle points to Staging. Production application deployment was not changed.
 
 ## Production database state
@@ -78,6 +78,8 @@ The two-tab result also exposed a client-side verification gap: the Edit modal b
 - `npx tsc -b`: exit 0.
 - `npm run build`: passed; Vite transformed 133 modules. The un-elevated sandbox attempt hit Windows `spawn EPERM`; the elevated local rerun passed.
 - Supabase Production advisors reported existing security/performance findings. The new `transaction_service_items.created_by` foreign key has no covering index; review whether to add one before release. Other advisor results include pre-existing project findings and unused fresh indexes.
+
+After applying `300500`, a fresh `supabase db advisors --type all --level warn` scan returned nine warnings: mutable search path on `private.is_drop_off_service`; authenticated execution of six existing `SECURITY DEFINER` RPCs (`record_expense`, `record_inventory_movement`, `redeem_loyalty_reward`, `set_transaction_status`, `soft_delete_transaction`, `void_expense`); leaked-password protection disabled; and multiple permissive policies on `discounts_promos` and `profiles`. None names the new terminal-edit trigger/function. These existing findings still need an explicit security review; this migration did not change their behavior.
 
 ## Release gates still open
 
