@@ -59,6 +59,8 @@ The latest supplied browser QA was run against the READY PR preview at commit `9
 
 The synthetic Staging orders remain: `AQ-4C9FB66C` (Received), `AQ-4002F39B` (Cancelled), and `AQ-19B13273` (Ready for Pickup). The stale-edit test changed only `AQ-4C9FB66C` Notes to the newer Tab A marker; Tab B's stale marker remained unsaved in its open form. No other order or field was changed. Original `/orders` and unfinished `/new` tabs were preserved. No app-origin request error was attributed.
 
+A later read-only attempt used the immutable preview deployment `dpl_S63PRmnwhvjriqkAco6EikfSAjTE` at commit `9bc3ec50aeb2b4a9caaef063a269afe6cbc79c5a`. Its JavaScript asset pointed to Staging and not Production, but the new tab redirected to `/login` and no authorized Owner session was available on that hostname. The attempt stopped there: `AQ-4002F39B` and `AQ-4C9FB66C` were not opened, no credentials were entered, no orders/data changed, and existing tabs plus the unfinished `/new` draft were untouched. This does not invalidate the earlier authenticated QA PASS on the stable alias; the immutable hostname attempt itself provides no order-level QA evidence. Use the stable alias with an already-authorized Owner session for any repeat checks.
+
 ## Fix for cancelled and completed order edits
 
 The QA failure exposed two gaps: the detail page offered Edit for terminal orders, and a direct authenticated update could change transaction fields after cancellation/completion. The PR follow-up:
