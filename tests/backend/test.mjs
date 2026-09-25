@@ -1289,5 +1289,47 @@ try {
     await asUser(owner);
   });
 
+  await test('award_loyalty_points_on_completion counts total kg across primary + additional service lines', async () => {
+    await asUser(owner);
+    await q('update loyalty_settings set points_per_kg = 1 where id = 1');
+    const loyaltyCustomer = await one(
+      "insert into customers(full_name, phone_number) values ('Loyalty Multi Service Customer', '09170001122') returning *",
+    );
+
+    // Baseline regression: an ordinary single-service order still earns points for its own kg alone.
+    let single = await transaction({
+      customer_id: loyaltyCustomer.id, customer_name: 'Loyalty Multi Service Customer', phone_number: null,
+      service_id: wdfId, base_amount: 195, total_amount: 195, kg: 5, no_of_loads: 1, payment_method: 'pay_later',
+    });
+    await customerItems(single, [{ item_type: 'towels', quantity: 1 }]);
+    single = await status(single, 'washing');
+    single = await status(single, 'drying');
+    single = await status(single, 'ready_for_pickup');
+    single = await status(single, 'completed');
+    const singleEvent = await one('select * from loyalty_point_events where transaction_id=$1', [single.id]);
+    assert.equal(Number(singleEvent.kg), 5);
+    assert.equal(Number(singleEvent.points_earned), 5);
+
+    // The fix under test: a multi-service order earns for primary kg PLUS every
+    // additional line's kg - not the primary alone, which is what the shop
+    // actually processed and what an equivalent pair of separate orders would earn.
+    let multi = await createWithServices(
+      multiServicePrimary({ customer_id: loyaltyCustomer.id, kg: 8, total_amount: 195 }),
+      [csdbLine({ kg: 8 })],
+    );
+    multi.token = multi.updated_at; // create_transaction_with_service_items returns public.transactions, not the token-aliased shape status() expects
+    await customerItems(multi, [{ item_type: 'towels', quantity: 1 }]);
+    multi = await status(multi, 'washing');
+    multi = await status(multi, 'drying');
+    multi = await status(multi, 'ready_for_pickup');
+    multi = await status(multi, 'completed');
+    const multiEvent = await one('select * from loyalty_point_events where transaction_id=$1', [multi.id]);
+    assert.equal(Number(multiEvent.kg), 16, 'total kg = 8 primary + 8 additional line, not 8 primary alone');
+    assert.equal(Number(multiEvent.points_earned), 16);
+
+    const balance = await one('select private.calculate_loyalty_balance($1) as balance', [loyaltyCustomer.id]);
+    assert.equal(Number(balance.balance), 21, '5 (single-service order) + 16 (multi-service order) on the ledger');
+  });
+
   console.log(`\n${passed} PASS; 0 FAIL. NOT RUN: multi-session contention, Supabase API/Realtime transport, external n8n export.`);
 } finally { await db.close(); }
