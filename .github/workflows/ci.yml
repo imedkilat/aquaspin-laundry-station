@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install application dependencies
+        run: npm ci
+
+      - name: Install backend test dependencies
+        run: npm ci --prefix tests/backend
+
+      - name: Run backend and Edge Function tests
+        run: npm test --prefix tests/backend
+
+      - name: Run customer item tests
+        run: npm run test:customer-items
+
+      - name: Run sales metrics tests
+        run: npm run test:sales-metrics
+
+      - name: Run staff account tests
+        run: npm run test:staff-accounts
+
+      - name: Lint
+        run: npx oxlint
+
+      - name: Typecheck
+        run: npx tsc -b
+
+      - name: Build
+        run: npm run build

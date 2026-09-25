@@ -1181,6 +1181,32 @@ try {
     assert.equal((await q('select id from transaction_service_items where transaction_id=$1', [plain.id])).length, 0);
   });
 
+  await test('Staff with transaction permissions can create and edit multi-service orders', async () => {
+    await setting('staff_can_create_transactions', true);
+    await setting('staff_can_edit_transactions', true);
+    await asUser(staff);
+
+    const created = await createWithServices(multiServicePrimary({ total_amount: 195 }), [csdbLine()]);
+    assert.equal(created.created_by, staff);
+    assert.equal(created.payment_method, 'pay_later');
+    assert.equal(Number(created.total_amount), 415);
+    assert.equal(Number(created.cash_amount), 0);
+    assert.equal(Number(created.gcash_amount), 0);
+    assert.equal((await q('select id from transaction_service_items where transaction_id=$1', [created.id])).length, 1);
+
+    const edited = await replaceServices(
+      created.id,
+      created.updated_at,
+      multiServicePrimary({ customer_name: 'Staff edited multi-service order', total_amount: 195 }),
+      [csdbLine({ base_amount: 230 })],
+    );
+    assert.equal(edited.customer_name, 'Staff edited multi-service order');
+    assert.equal(Number(edited.total_amount), 425);
+    assert.equal(Number((await one('select total_amount from transaction_service_items where transaction_id=$1', [created.id])).total_amount), 230);
+
+    await asUser(owner);
+  });
+
   await test('replace_transaction_service_items enforces concurrency, permissions, and blocks completed/cancelled orders', async () => {
     const t = await transaction({ customer_name: 'Concurrency guard', phone_number: null, service_id: wdfId, base_amount: 195, total_amount: 195, payment_method: 'pay_later' });
     await assert.rejects(
