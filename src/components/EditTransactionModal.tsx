@@ -586,11 +586,11 @@ export default function EditTransactionModal({ transaction, onClose }: { transac
   const labelClass = 'block text-xs font-medium text-slate-600 mb-1 dark:text-slate-400'
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+    <div role="dialog" aria-modal="true" aria-labelledby="edit-transaction-title" className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
       <div className="w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-2xl bg-white p-5 space-y-5 dark:bg-slate-900 border border-slate-200 dark:border-slate-800" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between gap-3">
           <div>
-            <h2 className="font-semibold text-slate-900 dark:text-slate-100">Edit Transaction — {transaction.transaction_code || `#${String(transaction.transaction_no).padStart(4, '0')}`}</h2>
+            <h2 id="edit-transaction-title" className="font-semibold text-slate-900 dark:text-slate-100">Edit Transaction — {transaction.transaction_code || `#${String(transaction.transaction_no).padStart(4, '0')}`}</h2>
             <p className="text-xs text-slate-500 mt-0.5">Changes apply immediately and are logged under Last Updated By.</p>
           </div>
           <button type="button" onClick={onClose} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 text-xl leading-none px-1">×</button>
