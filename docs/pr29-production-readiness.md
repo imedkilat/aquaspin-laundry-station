@@ -44,6 +44,24 @@ A read-only `npx supabase migration list --project-ref wmubrkhgncrtwdlsusea` on 
 
 A read-only `npx supabase migration list --project-ref yhckdhidchxsypfeyzxj` on 2026-09-26 showed all 48 previously applied PR-worktree versions matching Production, with 20 additional remote-only history rows; `20260930060000` is the only local pending version. Production history was not changed by these list commands.
 
+### Follow-up read-only ledger/source audit (2026-09-26)
+
+An exact project-scoped Supabase migration-list read returned 68 Production history rows and 43 Staging rows. Compared with the 49 local migration files:
+
+| Project | Exact version matches | Remote versions absent locally | Local versions absent remotely |
+| --- | ---: | ---: | ---: |
+| Production (`yhckdhidchxsypfeyzxj`) | 48 | 20 | `20260930060000` only |
+| Staging (`wmubrkhgncrtwdlsusea`) | 2 (`300300`, `300400`) | 41 | 47 |
+
+For Production, the 20 remote-only versions are not 20 unknown SQL bodies. I read only their recorded migration statements and compared them with the local migration files: 16 are byte-for-byte matches under a different version/name mapping, and two more have identical non-comment SQL with only comment/blank-line differences. The remaining two are historical variants, not safe aliases:
+
+- `20260918004506 loyalty_points_v1` differs from local `20260926010000_loyalty_points_v1.sql`: the remote historical statement lacks the later `GRANT EXECUTE` for `private.calculate_loyalty_balance(uuid)`.
+- `20260918183514 customer_items_drop_off_only` differs in its status-transition validation from local `20260927040000_customer_items_drop_off_only.sql`.
+
+Both canonical later migration versions are also recorded in Production. This audit does not establish that the two older variants can be discarded or repaired; it establishes the exact source differences and that names alone are insufficient. Production already records PR #29 migrations `300300`, `300400`, and `300500`; `300600` is the sole local migration version not recorded there and remains optional/unapplied. No migration, repair, or database write was run.
+
+Staging remains a separate reconciliation problem: only `300300` and `300400` match by exact version, and its 41 other remote rows plus 47 local-only versions mean this migration directory must not be used for a blind Staging `migration up` either. No single shared local migration list currently mirrors both remote ledgers. The next database step is a reviewed, project-specific deployment workflow; this source audit is not an approval to change either ledger.
+
 ## Latest Staging browser QA
 
 ### Follow-up supplied 2026-09-26 (preview commit `90a1d72e9b4f863687107a1a07c8026027f2c022`)
