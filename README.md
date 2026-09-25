@@ -19,19 +19,23 @@ account management, and a spreadsheet export.
 1. Go to [supabase.com](https://supabase.com) and create a **new project**
    (a dedicated Supabase account/project for this client).
 2. Open **SQL Editor** in the left sidebar.
-3. Run [`supabase/schema.sql`](./supabase/schema.sql) first, then every file
-   in [`supabase/migrations/`](./supabase/migrations/) **in filename order**
-   (they're dated, so sorting by name is chronological). Paste each file's
-   contents and click **Run**.
+3. For a **brand-new, empty project only**, run [`supabase/schema.sql`](./supabase/schema.sql) first, then every file
+   in [`supabase/migrations/`](./supabase/migrations/) in filename order.
+   If you apply SQL through the Dashboard SQL Editor, remember that this does
+   not automatically add rows to Supabase's CLI migration ledger. Choose one
+   setup path and verify its resulting schema and migration history before
+   treating the project as ready for future CLI migrations.
 
-   Every file here is written to be safe to re-run: `if not exists` /
-   `on conflict do nothing` / `not valid` guards throughout. If you're not
-   sure what's already been applied, running the full set again in order is
-   safe — nothing will be double-applied or overwritten. The one migration
-   that can legitimately stop with an error
-   (`20260916013000_transaction_codes_and_test_cleanup.sql`) does so on
-   purpose if a GCash transaction is missing its reference number — read the
-   error, fix that specific row, and re-run just that file.
+   **Do not run the full migration folder against an existing Staging or
+   Production project, and do not assume migrations are safe to replay just
+   because some statements use `if not exists` or `on conflict`.** Existing
+   Aquaspin environments have known migration-history drift and manual
+   changes. First compare the remote schema and migration ledger with the
+   repository, then follow a reviewed reconciliation and rollout plan. Do
+   not use `supabase db push` to work around that drift. `supabase migration
+   repair` only changes migration-history bookkeeping; it does not apply SQL,
+   so mark a version applied only after confirming its SQL is already present
+   on that exact project.
 
 ## 2. Create the first owner account
 
@@ -166,6 +170,12 @@ npm run build
 serves static files (Vercel, Netlify, Cloudflare Pages, etc.). Set the same
 three `VITE_*` environment variables in your host's dashboard before
 building/deploying there.
+
+Before promoting a release that includes database migrations, verify the
+target project and migration state and apply the reviewed database changes
+before deploying the frontend that depends on them. For existing Aquaspin
+Staging or Production projects, use a separate, project-specific rollout
+plan; do not run the fresh-project setup steps above or `supabase db push`.
 
 On Vercel, `VITE_*` values are compiled into the client bundle at build
 time. If an environment variable is added or its Production scope changes,
