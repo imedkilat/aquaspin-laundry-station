@@ -1,6 +1,6 @@
 # PR #29 Production Readiness
 
-**Status as of 2026-09-26: DO NOT PROMOTE THE APPLICATION YET.** Migrations `300300`, `300400`, and `300500` have been applied to Production and verified. A follow-up advisor-hardening migration (`300600`) is prepared locally but has not been applied to either database. The cancelled-order edit and stale multi-tab save fixes passed browser QA on preview commit `9bc3ec50aeb2b4a9caaef063a269afe6cbc79c5a`. Staff, mobile, rendered print, inventory behavior, and older migration-history reconciliation remain open. Leaked-password protection is explicitly excluded from release gates because the project is not on Supabase Pro and there is no plan to upgrade.
+**Status as of 2026-09-26: DO NOT PROMOTE THE APPLICATION YET.** Migrations `300300`, `300400`, and `300500` have been applied to Production and verified. A follow-up advisor-hardening migration (`300600`) is prepared locally but has not been applied to either database. The cancelled-order edit and stale multi-tab save fixes passed browser QA on preview commit `9bc3ec50aeb2b4a9caaef063a269afe6cbc79c5a`. Staff, mobile, inventory behavior, and older migration-history reconciliation remain open. Receipt/printer fit verification is parked until the production printer is selected; it is not a current release gate by project-owner decision. Leaked-password protection is explicitly excluded from release gates because the project is not on Supabase Pro and there is no plan to upgrade.
 
 ## Environment and deployment
 
@@ -55,7 +55,7 @@ The stable alias was READY at deployment `dpl_4rTE5UTVbU2xW4EdhfgzbKETk476`. The
 | Staff permissions and Pay Later | Blocked | Owner session only; no Staff account was created or simulated. |
 | Mobile 320px / 375px | Blocked | Browser capability list had no viewport/device emulation. |
 | Receipt order details | Pass | `AQ-4C9FB66C`: WDF 8kg/1 load ₱195, Comforter/Special Item 1kg/1 load ₱220, total ₱415, GCash ₱415, reference `QA-PR29-20260925T151016Z`. |
-| Rendered receipt / print | Blocked | Print action not clicked; bundle inspection is not a visual print pass. |
+| Rendered receipt / print | Parked | Defer rendered print and paper-fit verification until the production printer is selected. |
 | Inventory fixture setup | Pass | Created a generic category `QA-PR29-Consumables-20260926T0026PH`, a zero-stock item, and a second item with +2 pcs QA-only stock. No order was created and no stock was consumed. |
 | Inventory items in New Order | Retest required | The form filters detergent and conditioner items by category names `Liquid Detergent` and `Fabric Conditioner`; both QA items were placed under the generic `QA-PR29-Consumables…` category. This does not establish a product defect. Recreate fixtures under the two expected category names, then verify the correct item appears in each selector. |
 | Insufficient stock / successful consumption | Blocked | No eligible selector item appeared, so no order was created and no stock was consumed. |
@@ -114,8 +114,12 @@ After applying `300500`, a fresh `supabase db advisors --type all --level warn` 
 ## Release gates still open
 
 1. Obtain an authorized Staff session for Staff/Pay Later checks.
-2. Run mobile layout and receipt/print checks with browser capabilities that support viewport sizing and print preview.
+2. Run mobile layout checks at 320px and 375px with a browser that supports viewport sizing.
 3. Recreate the disposable Staging inventory fixtures under `Liquid Detergent` and `Fabric Conditioner` categories, confirm they appear in the intended selectors, then run insufficient-stock and successful-consumption completion tests without touching real stock.
 4. Reconcile the remaining remote-only migration-history entries with committed migration sources and a documented rollout procedure.
 5. Decide separately whether the optional `300600` advisor hardening is needed before release; do not apply it without a project-specific rollout plan and authorization.
 6. Promote only after the above gates pass, then smoke-test the exact production deployment.
+
+## Deferred verification
+
+- Receipt paper size, scaling, and rendered print layout are parked until the production printer is selected. Reopen this check after the printer model and paper size are known.
