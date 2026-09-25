@@ -50,16 +50,18 @@ The latest supplied browser QA was run against the READY PR preview at commit `9
 | --- | --- | --- |
 | Staff transaction permissions and Pay Later | Blocked | Owner session only; no authorized Staff session. |
 | Multi-service totals and Edit form | Pass | `AQ-4C9FB66C`: ₱195 primary + ₱220 additional = ₱415; GCash ₱415; Edit prefill matched. |
-| Stale-edit protection | Pass | On `AQ-4C9FB66C`, Tab A saved `QA-PR29-NEWER-TABA-20260925T1559Z` at `2026-09-25 15:58:59.442 UTC`. Tab B retained draft `QA-PR29-STALE-DRAFT-TABB-20260925T1558Z`; its one Save attempt at `15:59:15.680 UTC` showed the stale-version rejection. Tab B remained open with its draft; stored/displayed notes stayed at Tab A's newer marker. |
+| Stale-edit protection | Pass | Confirmed again on stable alias at READY commit `290988102a4b9199bd375aa00be30ce6639e8b2e`: Tab A saved `QA-PR29-NEWER-A-20260926T0021PH` at `2026-09-25 16:23:17.595 UTC`. Tab B retained `QA-PR29-STALE-DRAFT-B-20260926T0021PH`; its one Save attempt at `16:23:28.371 UTC` showed the stale-version rejection. Tab B retained its draft, while the order remained at Tab A's newer marker. No retry. |
 | Cancelled-order edit guard | Pass | `AQ-4002F39B` remained Cancelled and had no Edit button. No status or order fields were changed. |
 | Drop-Off completion guard | Pass | `AQ-19B13273` reached Ready for Pickup; missing customer item list warning displayed and completion was disabled. |
 | Receipt and print styling | Blocked | Print action calls `window.print()`; no safe print preview or print-media emulation. |
 | 320px and 375px layouts | Blocked | Browser did not expose viewport resizing. |
 | Inventory consumption and insufficient stock | Blocked | No active Staging inventory fixtures; no inventory was changed. |
 
-The synthetic Staging orders remain: `AQ-4C9FB66C` (Received), `AQ-4002F39B` (Cancelled), and `AQ-19B13273` (Ready for Pickup). The stale-edit test changed only `AQ-4C9FB66C` Notes to the newer Tab A marker; Tab B's stale marker remained unsaved in its open form. No other order or field was changed. Original `/orders` and unfinished `/new` tabs were preserved. No app-origin request error was attributed.
+The synthetic Staging orders remain: `AQ-4C9FB66C` (Received), `AQ-4002F39B` (Cancelled), and `AQ-19B13273` (Ready for Pickup). The latest stale-edit test changed only `AQ-4C9FB66C` Notes to `QA-PR29-NEWER-A-20260926T0021PH`; Tab B's stale marker remained unsaved in its open form. No other order or field was changed. Original `/orders` and unfinished `/new` tabs were preserved. No app-origin request error was attributed.
 
 A later read-only attempt used the immutable preview deployment `dpl_S63PRmnwhvjriqkAco6EikfSAjTE` at commit `9bc3ec50aeb2b4a9caaef063a269afe6cbc79c5a`. Its JavaScript asset pointed to Staging and not Production, but the new tab redirected to `/login` and no authorized Owner session was available on that hostname. The attempt stopped there: `AQ-4002F39B` and `AQ-4C9FB66C` were not opened, no credentials were entered, no orders/data changed, and existing tabs plus the unfinished `/new` draft were untouched. This does not invalidate the earlier authenticated QA PASS on the stable alias; the immutable hostname attempt itself provides no order-level QA evidence. Use the stable alias with an already-authorized Owner session for any repeat checks.
+
+The supplied follow-up QA on stable alias commit `290988102a4b9199bd375aa00be30ce6639e8b2e` restored the authenticated Owner session and reconfirmed both guards. `AQ-4002F39B` remained Cancelled without an Edit button. On `AQ-4C9FB66C`, Tab A's Notes marker `QA-PR29-NEWER-A-20260926T0021PH` saved at `2026-09-25 16:23:17.595 UTC`; Tab B's stale marker `QA-PR29-STALE-DRAFT-B-20260926T0021PH` remained visible after its single Save attempt at `16:23:28.371 UTC` was rejected with the stale-version message. No retry; no order creation/deletion; no other field changed. The original `/orders` and unfinished `/new` tabs remained untouched. Production was not accessed.
 
 ## Fix for cancelled and completed order edits
 
