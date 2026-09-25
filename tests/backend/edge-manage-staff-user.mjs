@@ -12,7 +12,6 @@
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
-import { pathToFileURL } from 'node:url';
 
 const O1 = 'aaaaaaaa-0000-4000-8000-000000000001', O2 = 'aaaaaaaa-0000-4000-8000-000000000002';
 const S1 = 'bbbbbbbb-0000-4000-8000-000000000001', S2 = 'bbbbbbbb-0000-4000-8000-000000000002', S3 = 'bbbbbbbb-0000-4000-8000-000000000003';
@@ -150,7 +149,7 @@ async function load(name) {
   const file = new URL(`./${name}.mts`, tmpDir);
   await writeFile(file, source);
   globalThis.Deno = { serve: handler => { handlers[name] = handler; }, env: { get: key => env[key] } };
-  await import(pathToFileURL(file.pathname).href);
+  await import(file.href);
   assert.equal(typeof handlers[name], 'function', `${name} registered a handler`);
 }
 

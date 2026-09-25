@@ -139,6 +139,27 @@ npm run build     # production build → dist/
 npm run preview   # preview the production build locally
 ```
 
+## Run the tests
+
+From the repository root, install the dependencies for the backend test package
+once, then run its PostgreSQL-in-memory and Edge Function tests:
+
+```bash
+npm ci --prefix tests/backend
+npm test --prefix tests/backend
+```
+
+The other focused suites and application checks run from the repository root:
+
+```bash
+npm run test:customer-items
+npm run test:sales-metrics
+npm run test:staff-accounts
+npx oxlint
+npx tsc -b
+npm run build
+```
+
 ## 6. Deploy
 
 `npm run build` outputs a static `dist/` folder — deploy it anywhere that

@@ -171,7 +171,7 @@ export default function EditTransactionModal({ transaction, onClose }: { transac
     return () => {
       cancelled = true
     }
-  }, [transaction.id])
+  }, [transaction.id, transaction.total_amount])
 
   const selectedService = useMemo(
     () => services.find((service) => service.id === form.service_id) ?? null,
