@@ -126,8 +126,10 @@ export default function EditTransactionModal({ transaction, onClose }: { transac
   const initialInventoryUsage = useMemo(() => inventoryUsageFromTransaction(transaction), [transaction])
   const [inventoryUsage, setInventoryUsage] = useState<InventoryUsageDraft>(() => inventoryUsageFromTransaction(transaction))
   const [serviceLines, setServiceLines] = useState<ServiceLineDraft[]>([])
-  const [serviceLinesLoading, setServiceLinesLoading] = useState(true)
+  const [serviceLinesLoadedForTransaction, setServiceLinesLoadedForTransaction] = useState<string | null>(null)
   const [serviceLinesError, setServiceLinesError] = useState<string | null>(null)
+  const serviceLinesLoading = serviceLinesLoadedForTransaction !== transaction.id
+  const activeServiceLinesError = serviceLinesLoadedForTransaction === transaction.id ? serviceLinesError : null
   // Whether this order had any additional service lines when it was opened —
   // used, alongside the current line count, to decide whether saving needs
   // the replace_transaction_service_items RPC (adding, editing, or removing
@@ -140,8 +142,6 @@ export default function EditTransactionModal({ transaction, onClose }: { transac
 
   useEffect(() => {
     let cancelled = false
-    setServiceLinesLoading(true)
-    setServiceLinesError(null)
     supabase
       .from('transaction_service_items')
       .select('*')
@@ -151,13 +151,14 @@ export default function EditTransactionModal({ transaction, onClose }: { transac
         if (cancelled) return
         if (fetchError) {
           setServiceLinesError('Additional services could not be loaded. Refresh before saving so existing lines are not lost.')
-          setServiceLinesLoading(false)
+          setServiceLinesLoadedForTransaction(transaction.id)
           return
         }
         const rows = (data ?? []) as TransactionServiceItem[]
         hadServiceLinesInitiallyRef.current = rows.length > 0
         setServiceLines(rows.map(serviceItemToDraft))
-        setServiceLinesLoading(false)
+        setServiceLinesError(null)
+        setServiceLinesLoadedForTransaction(transaction.id)
       })
     return () => {
       cancelled = true
@@ -692,7 +693,7 @@ export default function EditTransactionModal({ transaction, onClose }: { transac
           )}
         </section>
 
-        {serviceLinesError && <InlineAlert variant="error" title="Additional services">{serviceLinesError}</InlineAlert>}
+        {activeServiceLinesError && <InlineAlert variant="error" title="Additional services">{activeServiceLinesError}</InlineAlert>}
         {serviceLinesLoading ? (
           <LoadingPanel compact label="Loading additional services…" slowLabel="Still loading additional services…" />
         ) : (
