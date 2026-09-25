@@ -12,6 +12,7 @@
     "test:customer-items": "node --experimental-strip-types --test tests/customer-items-pending.test.mjs",
     "test:staff-accounts": "node --experimental-strip-types --test tests/staff-accounts.test.mjs",
     "test:receipt": "node --experimental-strip-types --test tests/receipt.test.mjs",
+    "test:transaction-edit": "node --experimental-strip-types --test tests/transaction-editable.test.mjs",
     "check:migrations": "node scripts/check-migrations.mjs",
     "preview": "vite preview"
   },

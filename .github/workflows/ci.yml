@@ -40,6 +40,9 @@ jobs:
       - name: Run receipt tests
         run: npm run test:receipt
 
+      - name: Run transaction edit tests
+        run: npm run test:transaction-edit
+
       - name: Lint
         run: npx oxlint
 

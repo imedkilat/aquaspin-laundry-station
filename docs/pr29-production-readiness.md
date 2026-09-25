@@ -1,6 +1,6 @@
 # PR #29 Production Readiness
 
-**Status as of 2026-09-26: DO NOT PROMOTE THE APPLICATION YET.** Migrations `300300`, `300400`, and `300500` have been applied to Production and verified. A follow-up advisor-hardening migration (`300600`) is prepared locally but has not been applied to either database. The cancelled-order edit and stale multi-tab save fixes passed browser QA on preview commit `9bc3ec50aeb2b4a9caaef063a269afe6cbc79c5a`. Staff, mobile, print, inventory, Auth configuration, and older migration-history reconciliation remain open.
+**Status as of 2026-09-26: DO NOT PROMOTE THE APPLICATION YET.** Migrations `300300`, `300400`, and `300500` have been applied to Production and verified. A follow-up advisor-hardening migration (`300600`) is prepared locally but has not been applied to either database. The cancelled-order edit and stale multi-tab save fixes passed browser QA on preview commit `9bc3ec50aeb2b4a9caaef063a269afe6cbc79c5a`. Staff, mobile, rendered print, inventory behavior, and older migration-history reconciliation remain open. Leaked-password protection is explicitly excluded from release gates because the project is not on Supabase Pro and there is no plan to upgrade.
 
 ## Environment and deployment
 
@@ -46,6 +46,25 @@ A read-only `npx supabase migration list --project-ref yhckdhidchxsypfeyzxj` on 
 
 ## Latest Staging browser QA
 
+### Follow-up supplied 2026-09-26 (preview commit `90a1d72e9b4f863687107a1a07c8026027f2c022`)
+
+The stable alias was READY at deployment `dpl_4rTE5UTVbU2xW4EdhfgzbKETk476`. The loaded asset pointed to Staging (`wmubrkhgncrtwdlsusea`) and did not contain the Production ref. An Owner session was available. Production, migrations, deployment promotion, and merge were not accessed or performed.
+
+| Check | Result | Evidence |
+| --- | --- | --- |
+| Staff permissions and Pay Later | Blocked | Owner session only; no Staff account was created or simulated. |
+| Mobile 320px / 375px | Blocked | Browser capability list had no viewport/device emulation. |
+| Receipt order details | Pass | `AQ-4C9FB66C`: WDF 8kg/1 load ₱195, Comforter/Special Item 1kg/1 load ₱220, total ₱415, GCash ₱415, reference `QA-PR29-20260925T151016Z`. |
+| Rendered receipt / print | Blocked | Print action not clicked; bundle inspection is not a visual print pass. |
+| Inventory fixture setup | Pass | Created a generic category `QA-PR29-Consumables-20260926T0026PH`, a zero-stock item, and a second item with +2 pcs QA-only stock. No order was created and no stock was consumed. |
+| Inventory items in New Order | Retest required | The form filters detergent and conditioner items by category names `Liquid Detergent` and `Fabric Conditioner`; both QA items were placed under the generic `QA-PR29-Consumables…` category. This does not establish a product defect. Recreate fixtures under the two expected category names, then verify the correct item appears in each selector. |
+| Insufficient stock / successful consumption | Blocked | No eligible selector item appeared, so no order was created and no stock was consumed. |
+| Cancelled guard in Dashboard table | UI gap found | `AQ-4002F39B` remained Cancelled. The Dashboard exposed Edit; the modal opened with Save Changes disabled and was canceled without saving. The detail page had previously hidden Edit. A client-side transaction-table guard is now added locally with regression coverage; the existing database trigger remains the authoritative safeguard. |
+
+No Production request, migration, deployment, or merge occurred. The original `/orders` and unfinished `/new` tabs were left untouched. No non-QA order or field changed. The QA-created category and two inventory items remain in Staging, with the consumption item at 2 pcs and the zero-stock item at 0 pcs.
+
+### Prior browser results
+
 The latest supplied browser QA was run against the READY PR preview at commit `9bc3ec50aeb2b4a9caaef063a269afe6cbc79c5a`. Its app asset pointed to Staging (`wmubrkhgncrtwdlsusea`) and not Production (`yhckdhidchxsypfeyzxj`). Production was not accessed during browser QA.
 
 | Check | Result | Evidence |
@@ -87,15 +106,16 @@ The two-tab result also exposed a client-side verification gap: the Edit modal b
 - `npx oxlint`: exit 0, 39 warnings (same baseline).
 - `npx tsc -b`: exit 0.
 - `npm run build`: passed; Vite transformed 133 modules. The un-elevated sandbox attempt hit Windows `spawn EPERM`; the elevated local rerun passed.
+- Follow-up local verification after the Dashboard terminal-edit guard: backend 74/74, receipt 5/5, customer-item 8/8, sales-metrics 12/12, staff-account 5/5, and transaction-edit 3/3 passed. `npx oxlint` passed with the existing 39-warning baseline; `npx tsc -b`, `npm run build` (134 modules), and `git diff --check` passed. On this Windows sandbox, Node's `--test` worker mode returned `spawn EPERM`; the same Node test files passed when invoked directly. Build passed with elevated process permission.
 - Supabase Production advisors reported existing security/performance findings. The new `transaction_service_items.created_by` foreign key has no covering index; review whether to add one before release. Other advisor results include pre-existing project findings and unused fresh indexes.
 
-After applying `300500`, a fresh `supabase db advisors --type all --level warn` scan returned ten warnings: mutable search path on `private.is_drop_off_service`; authenticated execution of six existing `SECURITY DEFINER` RPCs (`record_expense`, `record_inventory_movement`, `redeem_loyalty_reward`, `set_transaction_status`, `soft_delete_transaction`, `void_expense`); leaked-password protection disabled; and multiple permissive policies on `discounts_promos` and `profiles`. Source review found explicit Owner/Staff permission checks and `PUBLIC`/`anon` execute revocations for the six RPCs; they grant `authenticated` intentionally as guarded app endpoints. The policy overlaps provide Owner management plus active-user or safe-self access. The drop-off helper is `SECURITY INVOKER` and only calls built-in string functions, so its mutable-path warning is a hardening opportunity rather than an identified privilege bypass. The leaked-password setting is the remaining actionable Auth configuration finding. None names the new terminal-edit trigger/function.
+After applying `300500`, a fresh `supabase db advisors --type all --level warn` scan returned ten warnings: mutable search path on `private.is_drop_off_service`; authenticated execution of six existing `SECURITY DEFINER` RPCs (`record_expense`, `record_inventory_movement`, `redeem_loyalty_reward`, `set_transaction_status`, `soft_delete_transaction`, `void_expense`); leaked-password protection disabled; and multiple permissive policies on `discounts_promos` and `profiles`. Source review found explicit Owner/Staff permission checks and `PUBLIC`/`anon` execute revocations for the six RPCs; they grant `authenticated` intentionally as guarded app endpoints. The policy overlaps provide Owner management plus active-user or safe-self access. The drop-off helper is `SECURITY INVOKER` and only calls built-in string functions, so its mutable-path warning is a hardening opportunity rather than an identified privilege bypass. Per the project owner's decision, leaked-password protection is excluded from release gates because it requires Supabase Pro and there is no plan to upgrade. None of these findings names the new terminal-edit trigger/function.
 
 ## Release gates still open
 
 1. Obtain an authorized Staff session for Staff/Pay Later checks.
 2. Run mobile layout and receipt/print checks with browser capabilities that support viewport sizing and print preview.
-3. Configure approved disposable Staging inventory fixtures before stock UI tests; do not consume or alter real stock.
+3. Recreate the disposable Staging inventory fixtures under `Liquid Detergent` and `Fabric Conditioner` categories, confirm they appear in the intended selectors, then run insufficient-stock and successful-consumption completion tests without touching real stock.
 4. Reconcile the remaining remote-only migration-history entries with committed migration sources and a documented rollout procedure.
-5. Enable/review leaked-password protection in Production Auth settings. Review and apply migration `300600` through the same explicit, project-specific rollout process if the advisor cleanup is desired.
+5. Decide separately whether the optional `300600` advisor hardening is needed before release; do not apply it without a project-specific rollout plan and authorization.
 6. Promote only after the above gates pass, then smoke-test the exact production deployment.

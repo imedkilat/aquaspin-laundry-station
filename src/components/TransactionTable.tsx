@@ -12,6 +12,7 @@ import { writeReceiptDocument } from '../lib/receipt'
 import { getShopLogoUrl } from '../lib/storage-images'
 import { customerItemsHref, isCustomerItemsPending } from '../lib/customer-items-pending'
 import UiIcon from './UiIcon'
+import { canEditTransaction } from '../lib/transaction-edit'
 
 const peso = (n: number) =>
   `₱${n.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
@@ -82,7 +83,7 @@ export default function TransactionTable({ rows, loading, isOwner = false, onEdi
   }
 
   const openEdit = (transaction: TransactionWithService) => {
-    if (!canEdit) return
+    if (!canEdit || !canEditTransaction(transaction.order_status, Boolean(transaction.deleted_at))) return
     if (onEdit) return onEdit(transaction)
     setEditingTransaction(transaction)
   }
@@ -184,7 +185,7 @@ export default function TransactionTable({ rows, loading, isOwner = false, onEdi
                         <>
                           <button type="button" onClick={(event) => { event.preventDefault(); event.stopPropagation(); printReceipt(r) }} className="text-slate-600 hover:text-slate-800 text-xs font-medium dark:text-slate-300 dark:hover:text-slate-100">Print Receipt</button>
                           {canEdit && isCustomerItemsPending(r) && <Link to={customerItemsHref(r.id)} className="inline-flex items-center gap-1 text-amber-700 hover:text-amber-800 text-xs font-semibold dark:text-amber-300 dark:hover:text-amber-200"><UiIcon name="plus" size={14} />Add Items</Link>}
-                          {canEdit && <button type="button" onClick={(event) => { event.preventDefault(); event.stopPropagation(); openEdit(r) }} className="text-sky-600 hover:text-sky-700 text-xs font-medium">Edit</button>}
+                          {canEdit && canEditTransaction(r.order_status, isDeleted) && <button type="button" onClick={(event) => { event.preventDefault(); event.stopPropagation(); openEdit(r) }} className="text-sky-600 hover:text-sky-700 text-xs font-medium">Edit</button>}
                           {canDelete && <button type="button" onClick={(event) => { event.preventDefault(); event.stopPropagation(); openDelete(r) }} className="text-red-600 hover:text-red-700 text-xs font-medium">Delete</button>}
                         </>
                       )}
