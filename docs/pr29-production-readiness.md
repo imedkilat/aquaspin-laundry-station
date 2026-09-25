@@ -35,6 +35,8 @@ The CLI initially refused `migration up` because 20 older remote history version
 
 The follow-up migration `20260930050000_prevent_terminal_transaction_edits.sql` is a local PR change and has **not** been applied to Production. Apply it only after review and explicit approval.
 
+A read-only Staging `migration list --project-ref wmubrkhgncrtwdlsusea` showed the two feature versions (`20260930030000` and `20260930040000`) matched, but many earlier local versions had no remote row and 18 remote-only versions had no local file. Do not run `migration up` against Staging with the full PR migration directory until this separate drift is reconciled; it could attempt to replay old SQL. No Staging database change was made during this follow-up.
+
 ## Latest Staging browser QA
 
 At 2026-09-25 15:03 UTC, the stable PR alias was READY on commit `0e86beeb468e2ce07e9fce21ddd8a9428e9ef2f3` and its app asset pointed to Staging. Production was not accessed during this QA run.
