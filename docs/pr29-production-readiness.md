@@ -64,7 +64,27 @@ Staging remains a separate reconciliation problem: only `300300` and `300400` ma
 
 ## Latest Staging browser QA
 
-### Follow-up supplied 2026-09-26 (preview commit `90a1d72e9b4f863687107a1a07c8026027f2c022`)
+### Follow-up supplied 2026-09-26 (stable alias at `b6dcb9f487e20d7480eb8d222495e2438f9854e0`)
+
+The stable alias was READY at deployment `2026-09-25T17:16:02.152Z`. Its loaded asset returned HTTP 200, pointed to Staging (`wmubrkhgncrtwdlsusea`), and did not contain Production (`yhckdhidchxsypfeyzxj`). The app bundle matched the READY `e14d387` bundle; `dc7b5e9` and `b6dcb9f` were documentation-only commits. Production was not accessed.
+
+| Check | Result | Evidence |
+| --- | --- | --- |
+| Staff permissions / Pay Later | Blocked | Owner session only; no Staff account was created or simulated. |
+| Mobile 320px / 375px | Blocked | Browser did not expose viewport/device emulation. |
+| Cancelled / Completed Edit list guard | Pass | At `b6dcb9f`, `AQ-4002F39B` (Cancelled) and `AQ-FF83DC66` (Completed) had no Edit action in the Orders list. Earlier cancelled-order check also covered Dashboard. |
+| Inventory categories / selectors | Pass | On the READY `dc7b5e9` deployment, exact `Liquid Detergent` and `Fabric Conditioner` categories made the QA items appear in their expected selectors. |
+| Insufficient-stock completion | Pass, one attempt | `AQ-37C67A11` remained Ready for Pickup after a single completion attempt; UI showed available `0.000`, required `1.000` for `QA-PR29-LIQUID-ZERO-20260925T1707Z`. No retry. |
+| Successful consumption | Pass | `AQ-EF064936` reached Completed and consumed 1 ml from the QA conditioner fixture, leaving 999 ml from the recorded 1,000 ml stock-in. |
+| Receipt | Parked | Receipt fit/print styling remains deferred until the production printer and paper size are selected. |
+
+Screenshots supplied: `pr29-latest-cancelled-list-1790356681879.jpg`, `pr29-latest-completed-list-1790356688245.jpg`, `pr29-zero-stock-rejection-final-1790356710071.jpg`, `pr29-success-consumption-completed-1790356457943.jpg`, and `pr29-inventory-final-value-1790356867477.jpg`.
+
+QA-only Staging data remaining includes categories `Liquid Detergent`, `Fabric Conditioner`, and `QA-PR29-Consumables-20260926T0026PH`; items `QA-PR29-LIQUID-ZERO-20260925T1707Z` (0 ml), `QA-PR29-CONDITIONER-STOCK-20260925T1707Z` (999 ml), `QA-PR29-CONSUME-20260926T0026PH` (2 pcs), and `QA-PR29-ZERO-STOCK-20260926T0026PH` (0 pcs). Synthetic order `AQ-37C67A11` is Ready for Pickup after its rejected completion; `AQ-EF064936` is Completed. Both have QA customer-item entries. No cleanup was performed.
+
+A separate subsequent browser run on the same stable alias attempted two more synthetic order submissions but could not find a matching order or confirm stock movement. The attempts were not retried; request IDs/statuses were unavailable. This is an **inconclusive repeat-submission result**, separate from the screenshot-backed passes above, and should be resolved before calling inventory order submission fully repeat-verified. In that run only the two existing QA items' category assignments were changed; quantities remained 0 pcs and 2 pcs. No existing non-QA order changed. The original `/orders` and unfinished `/new` tabs were left untouched.
+
+### Earlier follow-up supplied 2026-09-26 (preview commit `90a1d72e9b4f863687107a1a07c8026027f2c022`)
 
 The stable alias was READY at deployment `dpl_4rTE5UTVbU2xW4EdhfgzbKETk476`. The loaded asset pointed to Staging (`wmubrkhgncrtwdlsusea`) and did not contain the Production ref. An Owner session was available. Production, migrations, deployment promotion, and merge were not accessed or performed.
 
@@ -133,7 +153,7 @@ After applying `300500`, a fresh `supabase db advisors --type all --level warn` 
 
 1. Obtain an authorized Staff session for Staff/Pay Later checks.
 2. Run mobile layout checks at 320px and 375px with a browser that supports viewport sizing.
-3. Recreate the disposable Staging inventory fixtures under `Liquid Detergent` and `Fabric Conditioner` categories, confirm they appear in the intended selectors, then run insufficient-stock and successful-consumption completion tests without touching real stock.
+3. Resolve the inconclusive repeat-submission attempt; the earlier selector, zero-stock rejection, and 1 ml successful-consumption checks passed with named QA records. Do not retry any unconfirmed submission unless the browser can first establish whether a prior write succeeded.
 4. Reconcile the remaining remote-only migration-history entries with committed migration sources and a documented rollout procedure.
 5. Decide separately whether the optional `300600` advisor hardening is needed before release; do not apply it without a project-specific rollout plan and authorization.
 6. Promote only after the above gates pass, then smoke-test the exact production deployment.
