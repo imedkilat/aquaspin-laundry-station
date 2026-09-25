@@ -338,6 +338,11 @@ export default function EditTransactionModal({ transaction, onClose }: { transac
     try {
       setError(null)
 
+      if (['completed', 'cancelled'].includes(transaction.order_status)) {
+        setError('Completed and cancelled orders cannot be edited.')
+        return
+      }
+
       if (serviceLinesLoading) {
         setError('Still loading this order\'s additional services. Wait a moment and try again.')
         return
@@ -771,7 +776,7 @@ export default function EditTransactionModal({ transaction, onClose }: { transac
 
         <div className="flex items-center justify-end gap-2">
           <button type="button" onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">Cancel</button>
-          <button type="button" onClick={() => void handleSave()} disabled={saving || inventoryLoading || serviceLinesLoading} className="inline-flex items-center gap-2 bg-sky-600 hover:bg-sky-700 disabled:opacity-60 text-white font-medium rounded-lg px-4 py-2 text-sm transition">
+          <button type="button" onClick={() => void handleSave()} disabled={saving || inventoryLoading || serviceLinesLoading || ['completed', 'cancelled'].includes(transaction.order_status)} className="inline-flex items-center gap-2 bg-sky-600 hover:bg-sky-700 disabled:opacity-60 text-white font-medium rounded-lg px-4 py-2 text-sm transition">
             {saving && <ButtonSpinner />}{saving ? 'Saving…' : 'Save Changes'}
           </button>
         </div>

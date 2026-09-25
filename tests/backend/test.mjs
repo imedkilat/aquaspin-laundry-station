@@ -528,7 +528,21 @@ try {
   await test('terminal status requires reasoned owner override/reopen', async () => {
     await assert.rejects(status(flow, 'received'), e => ['22023', '42501'].includes(e.code));
     await assert.rejects(status(flow, 'received', null, true), e => e.code === '42501');
+    await assert.rejects(
+      q("update transactions set notes='edit completed order' where id=$1", [flow.id]),
+      e => e.code === '42501' && e.message.includes('cannot be edited'),
+    );
     flow = await status(flow, 'received', 'Rewash approved', true);
+
+    let cancelled = await transaction({ customer_name: 'Cancelled edit guard', service_id: lifecycleDropOffServiceId });
+    cancelled = await status(cancelled, 'cancelled', 'Customer requested cancellation');
+    await assert.rejects(
+      q("update transactions set notes='edit cancelled order' where id=$1", [cancelled.id]),
+      e => e.code === '42501' && e.message.includes('cannot be edited'),
+    );
+    cancelled = await status(cancelled, 'received', 'Owner reopened for correction', true);
+    await q("update transactions set notes='edited after reopen' where id=$1", [cancelled.id]);
+    assert.equal((await fresh(cancelled.id)).notes, 'edited after reopen');
   });
   await test('hold/resume/cancel require reasons and preserve payment values', async () => {
     await assert.rejects(status(flow, 'on_hold'), e => e.code === '22023');
