@@ -1,6 +1,6 @@
 # PR #29 Production Readiness
 
-**Status as of 2026-09-26: DO NOT PROMOTE THE APPLICATION YET.** All three PR #29 migrations (`300300`, `300400`, `300500`) have been applied to Production and verified. The cancelled-order edit and stale multi-tab save fixes passed browser QA on preview commit `9bc3ec50aeb2b4a9caaef063a269afe6cbc79c5a`. Staff, mobile, print, inventory, advisor review, and older migration-history reconciliation remain open.
+**Status as of 2026-09-26: DO NOT PROMOTE THE APPLICATION YET.** Migrations `300300`, `300400`, and `300500` have been applied to Production and verified. A follow-up advisor-hardening migration (`300600`) is prepared locally but has not been applied to either database. The cancelled-order edit and stale multi-tab save fixes passed browser QA on preview commit `9bc3ec50aeb2b4a9caaef063a269afe6cbc79c5a`. Staff, mobile, print, inventory, Auth configuration, and older migration-history reconciliation remain open.
 
 ## Environment and deployment
 
@@ -38,6 +38,8 @@ The CLI initially refused `migration up` because 20 older remote history version
 
 The follow-up migration `20260930050000_prevent_terminal_transaction_edits.sql` has been applied to Production with explicit approval. It has **not** been applied to Staging. The Production CLI workdir included temporary empty placeholders for the 20 remote-only legacy migration records, allowing the preflight list to confirm that `300500` was the only pending migration. The placeholders and linked project configuration exist only in the disposable workdir under the system temp directory; they were not committed and did not alter the Production history beyond recording `300500`.
 
+The follow-up `20260930060000_pr29_advisor_hardening.sql` pins `private.is_drop_off_service` to an empty search path and adds an index to `transaction_service_items.created_by`. It is prepared in the PR worktree but has not been applied to Production or Staging. This optional hardening follow-up is not a substitute for migration-history reconciliation.
+
 A read-only Staging `migration list --project-ref wmubrkhgncrtwdlsusea` showed the two feature versions (`20260930030000` and `20260930040000`) matched, but many earlier local versions had no remote row and 18 remote-only versions had no local file. Do not run `migration up` against Staging with the full PR migration directory until this separate drift is reconciled; it could attempt to replay old SQL. No Staging database change was made during this follow-up.
 
 ## Latest Staging browser QA
@@ -73,7 +75,7 @@ The two-tab result also exposed a client-side verification gap: the Edit modal b
 ## Local verification on the follow-up PR source
 
 - `node tests/backend/test.mjs`: 74 PASS, 0 FAIL. The suite does not run multi-session contention, Supabase API/Realtime transport, or external n8n export.
-- `npm run check:migrations`: passed with 48 migration files.
+- `npm run check:migrations`: passed with 49 migration files after adding the unapplied advisor-hardening migration.
 - `npx oxlint`: exit 0, 39 warnings (same baseline).
 - `npx tsc -b`: exit 0.
 - `npm run build`: passed; Vite transformed 133 modules. The un-elevated sandbox attempt hit Windows `spawn EPERM`; the elevated local rerun passed.
@@ -87,5 +89,5 @@ After applying `300500`, a fresh `supabase db advisors --type all --level warn` 
 2. Run mobile layout and receipt/print checks with browser capabilities that support viewport sizing and print preview.
 3. Configure approved disposable Staging inventory fixtures before stock UI tests; do not consume or alter real stock.
 4. Reconcile the remaining remote-only migration-history entries with committed migration sources and a documented rollout procedure.
-5. Enable/review leaked-password protection in Production Auth settings; track the helper search-path and foreign-key index findings as hardening/performance follow-ups.
+5. Enable/review leaked-password protection in Production Auth settings. Review and apply migration `300600` through the same explicit, project-specific rollout process if the advisor cleanup is desired.
 6. Promote only after the above gates pass, then smoke-test the exact production deployment.
