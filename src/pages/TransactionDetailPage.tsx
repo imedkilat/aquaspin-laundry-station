@@ -361,7 +361,7 @@ export default function TransactionDetailPage() {
       </div>
 
       {editing && !transaction.deleted_at && !isTerminalOrder && (
-        <ActionErrorBoundary key={`detail-edit-${transaction.id}-${transaction.updated_at}`} onClose={() => setEditing(false)}>
+        <ActionErrorBoundary key={`detail-edit-${transaction.id}`} onClose={() => setEditing(false)}>
           <EditTransactionModal transaction={transaction} onClose={() => { setEditing(false); void reload() }} />
         </ActionErrorBoundary>
       )}

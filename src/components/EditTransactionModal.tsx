@@ -139,6 +139,8 @@ export default function EditTransactionModal({ transaction, onClose }: { transac
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const saveLockRef = useRef(false)
+  const openedTransactionRef = useRef(transaction)
+  const expectedUpdatedAtRef = useRef(transaction.updated_at)
 
   useEffect(() => {
     let cancelled = false
@@ -158,8 +160,8 @@ export default function EditTransactionModal({ transaction, onClose }: { transac
         hadServiceLinesInitiallyRef.current = rows.length > 0
         if (rows.length > 0) {
           const additionalServicesTotal = rows.reduce((sum, row) => sum + Number(row.total_amount), 0)
-          const originalTotal = String(transaction.total_amount)
-          const primaryTotal = (transaction.total_amount - additionalServicesTotal).toFixed(2)
+          const originalTotal = String(openedTransactionRef.current.total_amount)
+          const primaryTotal = (openedTransactionRef.current.total_amount - additionalServicesTotal).toFixed(2)
           setForm((current) => current.total_amount === originalTotal
             ? { ...current, total_amount: primaryTotal }
             : current)
@@ -171,7 +173,7 @@ export default function EditTransactionModal({ transaction, onClose }: { transac
     return () => {
       cancelled = true
     }
-  }, [transaction.id, transaction.total_amount])
+  }, [transaction.id])
 
   const selectedService = useMemo(
     () => services.find((service) => service.id === form.service_id) ?? null,
@@ -343,6 +345,11 @@ export default function EditTransactionModal({ transaction, onClose }: { transac
         return
       }
 
+      if (transaction.updated_at !== expectedUpdatedAtRef.current) {
+        setError('This transaction was updated by another user after you opened it. Close this editor, refresh/reopen the transaction, and review the latest version before saving.')
+        return
+      }
+
       if (serviceLinesLoading) {
         setError('Still loading this order\'s additional services. Wait a moment and try again.')
         return
@@ -494,7 +501,7 @@ export default function EditTransactionModal({ transaction, onClose }: { transac
 
         const { data: updatedTxn, error: rpcError } = await supabase.rpc('replace_transaction_service_items', {
           p_transaction_id: transaction.id,
-          p_expected_updated_at: transaction.updated_at,
+          p_expected_updated_at: expectedUpdatedAtRef.current,
           p_primary: primaryPayload,
           p_items: serviceLines.map((line) => draftToServiceItemInput(line, addOns)),
         })
@@ -556,7 +563,7 @@ export default function EditTransactionModal({ transaction, onClose }: { transac
           ...(shouldPersistAddOnItems ? { add_on_items: selectedAddOnItems } : {}),
         })
         .eq('id', transaction.id)
-        .eq('updated_at', transaction.updated_at)
+        .eq('updated_at', expectedUpdatedAtRef.current)
         .select('id, updated_at')
 
       setSaving(false)

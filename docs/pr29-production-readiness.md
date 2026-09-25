@@ -45,7 +45,7 @@ The latest supplied browser QA was run against stable alias commit `0e86beeb468e
 | --- | --- | --- |
 | Staff transaction permissions and Pay Later | Blocked | Owner session only; no authorized Staff session. |
 | Multi-service totals and Edit form | Pass | `AQ-4C9FB66C`: ₱195 primary + ₱220 additional = ₱415; GCash ₱415; Edit prefill matched. |
-| Stale-edit protection | Inconclusive | Controlled Tab B save left Tab A's newer note visible, but there was no explicit rejection or request-level evidence. |
+| Stale-edit protection | Inconclusive on tested build; fix awaiting retest | Controlled Tab B save left Tab A's newer note visible, but there was no explicit rejection or request-level evidence. The PR follow-up now preserves the editor's initial version token and does not remount the modal on realtime updates. |
 | Cancelled-order edit guard | Fail on tested build; fix awaiting retest | `AQ-4002F39B` was Cancelled, but Edit opened with Save Changes enabled. The dialog was canceled without saving. The PR follow-up now hides and guards Edit and adds a database guard; neither the database migration nor browser retest has occurred. |
 | Drop-Off completion guard | Pass | `AQ-19B13273` reached Ready for Pickup; missing customer item list warning displayed and completion was disabled. |
 | Receipt and print styling | Blocked | Print action calls `window.print()`; no safe print preview or print-media emulation. |
@@ -65,6 +65,8 @@ The QA failure exposed two gaps: the detail page offered Edit for terminal order
 
 The migration preserves the more specific existing error for terminal inventory edits by running after that guard. It must be applied to Production before promoting this application fix.
 
+The two-tab result also exposed a client-side verification gap: the Edit modal boundary key included `updated_at`, so a realtime update could remount the modal and discard an in-progress draft. The follow-up removes that version from the key, captures the opening `updated_at`, and refuses to save when the transaction prop has advanced. Both the plain update and multi-service RPC use that captured token. Browser retesting is still required to confirm the visible stale-save error.
+
 ## Local verification on the follow-up PR source
 
 - `node tests/backend/test.mjs`: 74 PASS, 0 FAIL. The suite does not run multi-session contention, Supabase API/Realtime transport, or external n8n export.
@@ -77,7 +79,7 @@ The migration preserves the more specific existing error for terminal inventory 
 ## Release gates still open
 
 1. Repeat cancelled-order browser QA against the updated preview and confirm Edit is unavailable. The new trigger migration remains unapplied; review and obtain explicit approval before applying it to Production through a reconciled migration workflow.
-2. Verify stale-edit behavior with request-level evidence if available.
+2. Repeat the controlled two-tab stale-edit test and confirm the older editor keeps its draft, rejects Save with the stale-version message, and cannot overwrite the newer note.
 3. Obtain an authorized Staff session for Staff/Pay Later checks.
 4. Run mobile layout and receipt/print checks with browser capabilities that support viewport sizing and print preview.
 5. Configure approved disposable Staging inventory fixtures before stock UI tests; do not consume or alter real stock.
