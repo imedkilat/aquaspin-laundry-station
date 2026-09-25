@@ -392,6 +392,12 @@ declare
   detergent_movement_id uuid;
   fabric_conditioner_movement_id uuid;
 begin
+  if old.order_status is not distinct from new.order_status
+     or new.order_status is distinct from 'completed'
+     or new.deleted_at is not null then
+    return new;
+  end if;
+
   for line in
     select *
     from public.transaction_service_items
@@ -622,6 +628,14 @@ end;
 $$;
 
 revoke all on function private.replace_transaction_service_items_rows(uuid, jsonb) from public, anon, authenticated;
+-- Not reachable via the REST/RPC surface (private schema functions aren't
+-- exposed by PostgREST), so granting execute here only allows it to be
+-- called from other server-side SQL - specifically the two security invoker
+-- RPCs below, which must have their calling role's own execute privilege on
+-- every function they invoke, security definer or not. Mirrors the existing
+-- pattern used for private.has_staff_permission / private.can_view_transaction,
+-- which are likewise granted directly to authenticated for the same reason.
+grant execute on function private.replace_transaction_service_items_rows(uuid, jsonb) to authenticated;
 
 -- ─────────────────────────────────────────────────────────────
 -- 8. create_transaction_with_service_items() — atomic creation for a new

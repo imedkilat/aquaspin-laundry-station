@@ -1,12 +1,21 @@
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { useServices } from '../hooks/useServices'
 import { useAddOns } from '../hooks/useAddOns'
 import { useShopSettings } from '../lib/shop-settings-context'
-import type { PaymentMethod, TransactionAddOnItem, TransactionWithService } from '../types/database'
+import type { PaymentMethod, TransactionAddOnItem, TransactionPrimaryUpdatePayload, TransactionServiceItem, TransactionWithService } from '../types/database'
 import { toTitleCaseName } from '../lib/text'
 import { ButtonSpinner, InlineAlert, LoadingPanel } from './UiFeedback'
 import InventoryUsageFields from './InventoryUsageFields'
+import ServiceLineItemsEditor from './ServiceLineItemsEditor'
+import {
+  draftToServiceItemInput,
+  lineTotal,
+  serviceItemToDraft,
+  serviceLineDraftHasInventoryGap,
+  serviceLineDraftIsComplete,
+  type ServiceLineDraft,
+} from '../lib/service-line-items'
 import {
   emptyInventoryUsageDraft,
   OTHER_INVENTORY_SOURCE,
@@ -116,9 +125,44 @@ export default function EditTransactionModal({ transaction, onClose }: { transac
   const [selectedAddOns, setSelectedAddOns] = useState<Record<string, number>>(() => addOnsFromItems(transaction.add_on_items))
   const initialInventoryUsage = useMemo(() => inventoryUsageFromTransaction(transaction), [transaction])
   const [inventoryUsage, setInventoryUsage] = useState<InventoryUsageDraft>(() => inventoryUsageFromTransaction(transaction))
+  const [serviceLines, setServiceLines] = useState<ServiceLineDraft[]>([])
+  const [serviceLinesLoading, setServiceLinesLoading] = useState(true)
+  const [serviceLinesError, setServiceLinesError] = useState<string | null>(null)
+  // Whether this order had any additional service lines when it was opened —
+  // used, alongside the current line count, to decide whether saving needs
+  // the replace_transaction_service_items RPC (adding, editing, or removing
+  // lines) or can keep using the plain single-service .update() (never had
+  // and still doesn't have any lines).
+  const hadServiceLinesInitiallyRef = useRef(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const saveLockRef = useRef(false)
+
+  useEffect(() => {
+    let cancelled = false
+    setServiceLinesLoading(true)
+    setServiceLinesError(null)
+    supabase
+      .from('transaction_service_items')
+      .select('*')
+      .eq('transaction_id', transaction.id)
+      .order('position', { ascending: true })
+      .then(({ data, error: fetchError }) => {
+        if (cancelled) return
+        if (fetchError) {
+          setServiceLinesError('Additional services could not be loaded. Refresh before saving so existing lines are not lost.')
+          setServiceLinesLoading(false)
+          return
+        }
+        const rows = (data ?? []) as TransactionServiceItem[]
+        hadServiceLinesInitiallyRef.current = rows.length > 0
+        setServiceLines(rows.map(serviceItemToDraft))
+        setServiceLinesLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [transaction.id])
 
   const selectedService = useMemo(
     () => services.find((service) => service.id === form.service_id) ?? null,
@@ -155,7 +199,14 @@ export default function EditTransactionModal({ transaction, onClose }: { transac
     selectedService.max_kg_per_load != null &&
     selectedService.max_kg_per_load > 0
 
-  const totalAmount = parseFloat(form.total_amount) || 0
+  const primaryTotalAmount = parseFloat(form.total_amount) || 0
+  const serviceLinesTotal = useMemo(
+    () => serviceLines.reduce((sum, line) => sum + lineTotal(line, addOns), 0),
+    [serviceLines, addOns]
+  )
+  // The grand total for the whole order (primary service + every additional
+  // service line). Every downstream payment check uses this.
+  const totalAmount = primaryTotalAmount + serviceLinesTotal
   const cashReceived = parseFloat(form.cash_amount) || 0
   const gcashReceived = parseFloat(form.gcash_amount) || 0
   const isCashPayment = form.payment_method === 'paid'
@@ -278,6 +329,11 @@ export default function EditTransactionModal({ transaction, onClose }: { transac
     try {
       setError(null)
 
+      if (serviceLinesLoading) {
+        setError('Still loading this order\'s additional services. Wait a moment and try again.')
+        return
+      }
+
       const normalizedCustomerName = toTitleCaseName(form.customer_name)
       if (!normalizedCustomerName) {
         setError('Customer name is required.')
@@ -309,6 +365,18 @@ export default function EditTransactionModal({ transaction, onClose }: { transac
         !inventoryUsageIsComplete(inventoryUsage)
       ) {
         setError('Complete both inventory usage details. If the customer supplied a product, select Other and enter the reason.')
+        return
+      }
+      if (serviceLinesError) {
+        setError('Additional services could not be loaded. Refresh before saving so existing lines are not lost.')
+        return
+      }
+      if (serviceLines.some((line) => !serviceLineDraftIsComplete(line))) {
+        setError('Select a service for each additional service line, and complete its inventory details if you started filling them in.')
+        return
+      }
+      if (serviceLines.some((line) => serviceLineDraftHasInventoryGap(line))) {
+        setError('Complete both inventory usage details for each additional service. If the customer supplied a product, select Other and enter the reason.')
         return
       }
       if (settings.require_pickup_date && !form.pickup_date) {
@@ -354,6 +422,93 @@ export default function EditTransactionModal({ transaction, onClose }: { transac
         inventoryUsageHasAnyValue(initialInventoryUsage) ||
         !inventoryUsageEquals(inventoryUsage, initialInventoryUsage)
       const shouldPersistAddOnItems = addOnItemsSignature(selectedAddOnItems) !== addOnItemsSignature(transaction.add_on_items)
+
+      // Additional service lines exist, or are being added/removed — route
+      // through the RPC that keeps the primary fields, the lines, and the
+      // recomputed grand total consistent in one statement. An order that
+      // never had lines and still doesn't keeps using the plain update below.
+      const usesServiceItemsRpc = serviceLines.length > 0 || hadServiceLinesInitiallyRef.current
+
+      if (usesServiceItemsRpc) {
+        // Unlike the plain .update() below, this RPC's UPDATE statement
+        // unconditionally overwrites detergent/fabric-conditioner columns
+        // with whatever p_primary carries (no partial-omit preservation for
+        // those two), so when the user hasn't touched inventory usage this
+        // resends the transaction's own current values rather than a blank
+        // draft — a no-op write instead of accidentally clearing them.
+        const inventoryUsageFields = shouldPersistInventoryUsage
+          ? {
+              detergent_source: detergentCustomerSupplied ? ('customer_supplied' as const) : ('inventory' as const),
+              detergent_item_id: detergentCustomerSupplied ? null : inventoryUsage.detergent_item_id || null,
+              detergent_quantity: detergentCustomerSupplied ? null : inventoryUsage.detergent_quantity ? Number(inventoryUsage.detergent_quantity) : null,
+              detergent_other_reason: detergentCustomerSupplied ? inventoryUsage.detergent_other_reason.trim() : null,
+              fabric_conditioner_source: conditionerCustomerSupplied ? ('customer_supplied' as const) : ('inventory' as const),
+              fabric_conditioner_item_id: conditionerCustomerSupplied ? null : inventoryUsage.fabric_conditioner_item_id || null,
+              fabric_conditioner_quantity: conditionerCustomerSupplied ? null : inventoryUsage.fabric_conditioner_quantity ? Number(inventoryUsage.fabric_conditioner_quantity) : null,
+              fabric_conditioner_other_reason: conditionerCustomerSupplied ? inventoryUsage.fabric_conditioner_other_reason.trim() : null,
+            }
+          : {
+              detergent_source: transaction.detergent_source,
+              detergent_item_id: transaction.detergent_item_id,
+              detergent_quantity: transaction.detergent_quantity,
+              detergent_other_reason: transaction.detergent_other_reason,
+              fabric_conditioner_source: transaction.fabric_conditioner_source,
+              fabric_conditioner_item_id: transaction.fabric_conditioner_item_id,
+              fabric_conditioner_quantity: transaction.fabric_conditioner_quantity,
+              fabric_conditioner_other_reason: transaction.fabric_conditioner_other_reason,
+            }
+
+        const primaryPayload: TransactionPrimaryUpdatePayload = {
+          customer_name: normalizedCustomerName,
+          phone_number: form.phone_number.trim() || null,
+          transaction_date: form.transaction_date,
+          service_id: form.service_id,
+          ...inventoryUsageFields,
+          kg: form.kg ? Number(form.kg) : null,
+          no_of_loads: form.no_of_loads ? Number(form.no_of_loads) : null,
+          base_amount: form.base_amount ? Number(form.base_amount) : 0,
+          ...(shouldPersistAddOnItems ? { add_ons: addOnsTotal, add_on_items: selectedAddOnItems } : {}),
+          total_amount: form.total_amount ? Number(form.total_amount) : 0,
+          cash_amount: form.cash_amount ? Number(form.cash_amount) : 0,
+          gcash_amount: form.gcash_amount ? Number(form.gcash_amount) : 0,
+          gcash_reference: form.payment_method === 'gcash' ? form.gcash_reference.trim() : null,
+          payment_method: form.payment_method,
+          pickup_date: form.pickup_date || null,
+          pickup_time: form.pickup_date && form.pickup_time ? form.pickup_time : null,
+          notes: form.notes.trim() || null,
+        }
+
+        const { data: updatedTxn, error: rpcError } = await supabase.rpc('replace_transaction_service_items', {
+          p_transaction_id: transaction.id,
+          p_expected_updated_at: transaction.updated_at,
+          p_primary: primaryPayload,
+          p_items: serviceLines.map((line) => draftToServiceItemInput(line, addOns)),
+        })
+
+        setSaving(false)
+
+        if (rpcError) {
+          const lower = rpcError.message.toLowerCase()
+          if (lower.includes('transactions_gcash_reference_unique_idx')) {
+            setError('That GCash Transaction # is already attached to another transaction.')
+          } else if (lower.includes('changed in another session')) {
+            setError('This transaction was updated by another user after you opened it. Close this editor, refresh/reopen the transaction, and review the latest version before saving.')
+          } else if (lower.includes('do not have permission') || lower.includes('staff transaction editing is disabled')) {
+            setError('Transaction editing is currently disabled for Staff by the Owner.')
+          } else {
+            setError(rpcError.message)
+          }
+          return
+        }
+
+        if (!updatedTxn) {
+          setError('This transaction could not be saved. Refresh and try again.')
+          return
+        }
+
+        onClose()
+        return
+      }
 
       const { data: updatedRows, error: updateError } = await supabase
         .from('transactions')
@@ -537,11 +692,31 @@ export default function EditTransactionModal({ transaction, onClose }: { transac
           )}
         </section>
 
+        {serviceLinesError && <InlineAlert variant="error" title="Additional services">{serviceLinesError}</InlineAlert>}
+        {serviceLinesLoading ? (
+          <LoadingPanel compact label="Loading additional services…" slowLabel="Still loading additional services…" />
+        ) : (
+          <ServiceLineItemsEditor
+            lines={serviceLines}
+            onChange={setServiceLines}
+            services={services}
+            addOns={addOns}
+            detergentItems={detergentItems}
+            fabricConditionerItems={fabricConditionerItems}
+            disabled={transaction.order_status === 'completed' || transaction.order_status === 'cancelled'}
+          />
+        )}
+
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
-            <label className={labelClass}>Total (₱){settings.allow_manual_total_override ? '' : ' · Auto'}</label>
+            <label className={labelClass}>{serviceLines.length > 0 ? 'Primary Service Total (₱)' : 'Total (₱)'}{settings.allow_manual_total_override ? '' : ' · Auto'}</label>
             <input type="number" step="0.01" min="0" value={form.total_amount} readOnly={!settings.allow_manual_total_override} onChange={settings.allow_manual_total_override ? update('total_amount') : undefined} className={settings.allow_manual_total_override ? inputClass : autoInputClass} />
             {!settings.allow_manual_total_override && <p className="mt-1 text-xs text-slate-500">Manual Total override is disabled by the Owner.</p>}
+            {serviceLines.length > 0 && (
+              <div className="mt-2 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-800 dark:border-sky-900/60 dark:bg-sky-950/40 dark:text-sky-300">
+                Order Grand Total ({serviceLines.length + 1} services): <strong>{peso(totalAmount)}</strong>
+              </div>
+            )}
           </div>
           <div>
             <label className={labelClass}>Payment Method *</label>
@@ -587,7 +762,7 @@ export default function EditTransactionModal({ transaction, onClose }: { transac
 
         <div className="flex items-center justify-end gap-2">
           <button type="button" onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">Cancel</button>
-          <button type="button" onClick={() => void handleSave()} disabled={saving || inventoryLoading} className="inline-flex items-center gap-2 bg-sky-600 hover:bg-sky-700 disabled:opacity-60 text-white font-medium rounded-lg px-4 py-2 text-sm transition">
+          <button type="button" onClick={() => void handleSave()} disabled={saving || inventoryLoading || serviceLinesLoading} className="inline-flex items-center gap-2 bg-sky-600 hover:bg-sky-700 disabled:opacity-60 text-white font-medium rounded-lg px-4 py-2 text-sm transition">
             {saving && <ButtonSpinner />}{saving ? 'Saving…' : 'Save Changes'}
           </button>
         </div>

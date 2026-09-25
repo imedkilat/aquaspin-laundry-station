@@ -316,6 +316,12 @@ export type TransactionWithService = Transaction & {
   updated_by_profile: Pick<Profile, 'full_name'> | null
   deleted_by_profile: Pick<Profile, 'full_name'> | null
   hasCustomerItems?: boolean
+  // Sum of kg across this order's additional service lines (see
+  // transaction_service_items) — attached client-side by useTransactions
+  // when includeServiceItemsWeight is set. transactions.kg intentionally
+  // keeps its primary-service-only meaning, so "total kg processed" figures
+  // need both.
+  serviceItemsKg?: number
 }
 
 // "Add New Service" — additional service lines on one order, beyond the

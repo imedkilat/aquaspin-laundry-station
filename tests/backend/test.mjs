@@ -743,7 +743,7 @@ try {
   await test('authenticated helper EXECUTE retained; anonymous RPC denied; realtime membership unique', async () => {
     const grants = await one("select has_function_privilege('authenticated','private.has_staff_permission(text)','execute') helper, has_function_privilege('anon','public.set_transaction_status(uuid,text,timestamptz,text,boolean)','execute') anon");
     assert.equal(grants.helper, true); assert.equal(grants.anon, false);
-    for (const table of ['transactions','customers','transaction_status_history','transaction_customer_items']) {
+    for (const table of ['transactions','customers','transaction_status_history','transaction_customer_items','transaction_service_items']) {
       assert.equal((await q("select * from pg_publication_tables where pubname='supabase_realtime' and tablename=$1", [table])).length, 1);
     }
   });
@@ -1071,6 +1071,221 @@ try {
     const fresh3 = '00000000-0000-4000-8000-000000000005';
     await db.exec(`insert into auth.users(id,email) values ('${fresh3}','new-staff@test.local')`);
     assert.deepEqual(await one('select role, is_active from profiles where id=$1', [fresh3]), { role: 'staff', is_active: true });
+    await asUser(owner);
+  });
+
+  await asUser(owner);
+  const wdfId = await serviceId('WDF');
+  const csdbId = await serviceId('CSDB');
+  async function createWithServices(primary, items) {
+    return one('select * from public.create_transaction_with_service_items($1::jsonb, $2::jsonb)', [JSON.stringify(primary), JSON.stringify(items)]);
+  }
+  async function replaceServices(id, expectedUpdatedAt, primary, items) {
+    return one('select * from public.replace_transaction_service_items($1,$2,$3::jsonb,$4::jsonb)', [id, expectedUpdatedAt, JSON.stringify(primary), JSON.stringify(items)]);
+  }
+  function multiServicePrimary(overrides = {}) {
+    return {
+      customer_name: 'Multi Service Customer',
+      phone_number: null,
+      transaction_date: '2026-09-25',
+      service_id: wdfId,
+      detergent_source: 'customer_supplied',
+      detergent_other_reason: 'Customer-provided detergent',
+      fabric_conditioner_source: 'customer_supplied',
+      fabric_conditioner_other_reason: 'Customer-provided fabric conditioner',
+      kg: 8, no_of_loads: 1, base_amount: 195, add_ons: 0, add_on_items: [],
+      total_amount: 195, cash_amount: 0, gcash_amount: 0, payment_method: 'pay_later',
+      ...overrides,
+    };
+  }
+  const csdbLine = (overrides = {}) => ({ service_id: csdbId, kg: 8, no_of_loads: 1, base_amount: 220, add_on_items: [], ...overrides });
+
+  await test('create_transaction_with_service_items: one order, one payment, grand total across services (cash)', async () => {
+    const created = await createWithServices(
+      multiServicePrimary({ payment_method: 'paid', cash_amount: 415, total_amount: 195 }),
+      [csdbLine()],
+    );
+    assert.equal(Number(created.total_amount), 415, 'grand total = primary (195) + additional service (220)');
+    assert.equal(Number(created.base_amount), 195, 'primary base_amount keeps its existing, primary-only meaning');
+    assert.equal(Number(created.cash_amount), 415);
+    const lines = await q('select * from transaction_service_items where transaction_id=$1 order by position', [created.id]);
+    assert.equal(lines.length, 1);
+    assert.equal(lines[0].service_id, csdbId);
+    assert.equal(lines[0].service_code_snapshot, 'CSDB');
+    assert.equal(lines[0].service_label_snapshot, 'Comforter / Special Item');
+    assert.equal(Number(lines[0].total_amount), 220);
+
+    // Cash sufficiency is a per-statement CHECK against the final total_amount
+    // (the whole order), not just the primary service's own subtotal.
+    await assert.rejects(
+      createWithServices(multiServicePrimary({ payment_method: 'paid', cash_amount: 195, total_amount: 195 }), [csdbLine()]),
+      e => e.code === '23514',
+    );
+  });
+
+  await test('create_transaction_with_service_items: GCash must equal the grand total, not just the primary', async () => {
+    const created = await createWithServices(
+      multiServicePrimary({ payment_method: 'gcash', gcash_amount: 415, gcash_reference: 'MULTI-GCASH-1', total_amount: 195 }),
+      [csdbLine()],
+    );
+    assert.equal(Number(created.total_amount), 415);
+    assert.equal(Number(created.gcash_amount), 415);
+
+    await assert.rejects(
+      createWithServices(
+        multiServicePrimary({ payment_method: 'gcash', gcash_amount: 195, gcash_reference: 'MULTI-GCASH-2', total_amount: 195 }),
+        [csdbLine()],
+      ),
+      e => e.code === '23514',
+    );
+  });
+
+  await test('enforce_transaction_shop_preferences folds line totals into the manual-override check (create and edit)', async () => {
+    await setting('allow_manual_total_override', false);
+
+    await assert.rejects(
+      createWithServices(multiServicePrimary({ total_amount: 999 }), [csdbLine()]),
+      e => e.code === 'P0001' && e.message.includes('Manual Total override is disabled'),
+    );
+
+    const created = await createWithServices(multiServicePrimary({ total_amount: 195 }), [csdbLine()]);
+    assert.equal(Number(created.total_amount), 415);
+
+    // This is the direct regression test for the sequencing fix: the child
+    // rows are replaced BEFORE replace_transaction_service_items' single
+    // UPDATE runs, so by the time that UPDATE is checked, the "Base +
+    // Add-ons + lines" subquery already reflects the NEW line total. A
+    // correct grand total must still be accepted (it was wrongly rejected
+    // before the two UPDATE statements were collapsed into one).
+    const edited = await replaceServices(created.id, created.updated_at, multiServicePrimary({ total_amount: 195 }), [csdbLine({ base_amount: 250 })]);
+    assert.equal(Number(edited.total_amount), 445, '195 primary + 250 updated line total');
+
+    await assert.rejects(
+      replaceServices(edited.id, edited.updated_at, multiServicePrimary({ total_amount: 999 }), [csdbLine({ base_amount: 250 })]),
+      e => e.code === 'P0001' && e.message.includes('Manual Total override is disabled'),
+    );
+
+    await setting('allow_manual_total_override', true);
+  });
+
+  await test('replace_transaction_service_items can add services to a plain single-service order, then remove them', async () => {
+    const plain = await transaction({ customer_name: 'Starts single service', phone_number: null, service_id: wdfId, base_amount: 195, total_amount: 195, payment_method: 'pay_later' });
+    assert.equal((await q('select id from transaction_service_items where transaction_id=$1', [plain.id])).length, 0);
+
+    const withLine = await replaceServices(plain.id, plain.token, multiServicePrimary({ total_amount: 195 }), [csdbLine()]);
+    assert.equal(Number(withLine.total_amount), 415);
+    assert.equal((await q('select id from transaction_service_items where transaction_id=$1', [plain.id])).length, 1);
+
+    const backToSingle = await replaceServices(withLine.id, withLine.updated_at, multiServicePrimary({ total_amount: 195 }), []);
+    assert.equal(Number(backToSingle.total_amount), 195, 'removing every additional line reverts to the primary-only total');
+    assert.equal((await q('select id from transaction_service_items where transaction_id=$1', [plain.id])).length, 0);
+  });
+
+  await test('replace_transaction_service_items enforces concurrency, permissions, and blocks completed/cancelled orders', async () => {
+    const t = await transaction({ customer_name: 'Concurrency guard', phone_number: null, service_id: wdfId, base_amount: 195, total_amount: 195, payment_method: 'pay_later' });
+    await assert.rejects(
+      replaceServices(t.id, '2000-01-01T00:00:00.000000Z', multiServicePrimary({ total_amount: 195 }), []),
+      e => e.code === '40001',
+    );
+
+    let completed = await transaction({ customer_name: 'Completed services guard', phone_number: null, service_id: wdfId, base_amount: 195, total_amount: 195 });
+    await customerItems(completed, [{ item_type: 'towels', quantity: 1 }]);
+    completed = await status(completed, 'washing');
+    completed = await status(completed, 'drying');
+    completed = await status(completed, 'ready_for_pickup');
+    completed = await status(completed, 'completed');
+    await assert.rejects(
+      replaceServices(completed.id, completed.updated_at, multiServicePrimary({ total_amount: 195 }), [csdbLine()]),
+      e => e.code === '42501' && e.message.includes('completed'),
+    );
+
+    await setting('staff_can_create_transactions', false);
+    await setting('staff_can_edit_transactions', false);
+    await asUser(staff);
+    const staffTarget = await fresh(t.id);
+    await assert.rejects(
+      replaceServices(staffTarget.id, staffTarget.token, multiServicePrimary({ total_amount: 195 }), [csdbLine()]),
+      e => e.code === '42501',
+    );
+    await assert.rejects(
+      createWithServices(multiServicePrimary({ total_amount: 195 }), [csdbLine()]),
+      e => e.code === '42501',
+    );
+    await asUser(owner);
+    await setting('staff_can_create_transactions', true);
+    await setting('staff_can_edit_transactions', true);
+  });
+
+  await test('per-line inventory consumption fires on completion, and insufficient stock blocks it', async () => {
+    await admin();
+    const ensureCategory = async (name) => {
+      const existing = await one('select id from inventory_categories where lower(name)=lower($1) limit 1', [name]);
+      if (existing) return existing.id;
+      return (await one('insert into inventory_categories (name, created_by, updated_by) values ($1,$2,$2) returning id', [name, owner])).id;
+    };
+    const detergentCategoryId = await ensureCategory('Liquid Detergent');
+    const detergentItem = await one(
+      `insert into public.inventory_items (item_name, category_id, unit_label, average_cost, created_by, updated_by)
+       values ('Service Line Detergent', $1, 'ml', 2, $2, $2) returning id`,
+      [detergentCategoryId, owner],
+    );
+    await q(
+      `insert into public.inventory_stock_movements (item_id, movement_type, quantity_delta, unit_cost, reason, created_by)
+       values ($1, 'stock_in', 1000, 2, 'Service line fixture', $2)`,
+      [detergentItem.id, owner],
+    );
+    await asUser(owner);
+
+    let order = await createWithServices(
+      multiServicePrimary({ total_amount: 195 }),
+      [csdbLine({ detergent_source: 'inventory', detergent_item_id: detergentItem.id, detergent_quantity: 40 })],
+    );
+    order.token = order.updated_at; // create_transaction_with_service_items returns public.transactions, not the token-aliased shape status() expects
+    await customerItems(order, [{ item_type: 'towels', quantity: 1 }]);
+    order = await status(order, 'washing');
+    order = await status(order, 'drying');
+    order = await status(order, 'ready_for_pickup');
+    order = await status(order, 'completed');
+
+    const line = await one('select * from transaction_service_items where transaction_id=$1', [order.id]);
+    const consumption = await one('select * from transaction_service_item_inventory_consumption where service_item_id=$1', [line.id]);
+    assert.ok(consumption.detergent_movement_id, 'a consumption movement was recorded for the additional service line');
+    const stock = await one('select coalesce(sum(quantity_delta),0)::numeric as total from inventory_stock_movements where item_id=$1', [detergentItem.id]);
+    assert.equal(Number(stock.total), 1000 - 40);
+
+    let shortOrder = await createWithServices(
+      multiServicePrimary({ total_amount: 195 }),
+      [csdbLine({ detergent_source: 'inventory', detergent_item_id: detergentItem.id, detergent_quantity: 100000 })],
+    );
+    shortOrder.token = shortOrder.updated_at;
+    await customerItems(shortOrder, [{ item_type: 'towels', quantity: 1 }]);
+    shortOrder = await status(shortOrder, 'washing');
+    shortOrder = await status(shortOrder, 'drying');
+    shortOrder = await status(shortOrder, 'ready_for_pickup');
+    await assert.rejects(status(shortOrder, 'completed'), e => e.code === '23514' && e.message.includes('Insufficient'));
+  });
+
+  await test('transaction_service_items RLS: anon denied, and direct inserts require the same permissions as the RPCs', async () => {
+    const t = await transaction({ customer_name: 'Direct insert guard', phone_number: null, service_id: wdfId, base_amount: 195, total_amount: 195, payment_method: 'pay_later' });
+    await setting('staff_can_create_transactions', false);
+    await setting('staff_can_edit_transactions', false);
+    await asUser(staff);
+    await rejects(
+      'insert into transaction_service_items (transaction_id, service_id, base_amount) values ($1,$2,$3)',
+      [t.id, csdbId, 220],
+      '42501',
+    );
+    await asUser(owner);
+    await setting('staff_can_create_transactions', true);
+    await setting('staff_can_edit_transactions', true);
+
+    await asUser(null, 'anon');
+    await rejects('select * from transaction_service_items', [], '42501');
+    await rejects(
+      'select * from public.create_transaction_with_service_items($1::jsonb, $2::jsonb)',
+      [JSON.stringify(multiServicePrimary({ total_amount: 195 })), JSON.stringify([csdbLine()])],
+      '42501',
+    );
     await asUser(owner);
   });
 

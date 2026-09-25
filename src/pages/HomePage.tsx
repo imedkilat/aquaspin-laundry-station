@@ -30,6 +30,7 @@ export default function HomePage() {
     dateTo: today,
     limit: 500,
     fetchAll: true,
+    includeServiceItemsWeight: true,
   })
   const { rows: outstandingRows, loading: outstandingLoading, error: outstandingError, realtimeState: outstandingRealtimeState, reload: reloadOutstanding } = useTransactions({
     dateTo: today,

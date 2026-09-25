@@ -14,7 +14,7 @@ import { useShopSettings } from '../lib/shop-settings-context'
 import { getShopLogoUrl } from '../lib/storage-images'
 import { isDropOffTransaction } from '../lib/service-classification'
 import { supabase } from '../lib/supabase'
-import type { TransactionCustomerItem, TransactionWithService } from '../types/database'
+import type { TransactionCustomerItem, TransactionServiceItem, TransactionWithService } from '../types/database'
 
 const SELECT = `*, services ( code, label ),
   created_by_profile:profiles!transactions_created_by_fkey ( full_name ),
@@ -51,6 +51,7 @@ export default function TransactionDetailPage() {
 
   const [transaction, setTransaction] = useState<TransactionWithService | null>(null)
   const [customerItems, setCustomerItems] = useState<TransactionCustomerItem[]>([])
+  const [serviceItems, setServiceItems] = useState<TransactionServiceItem[]>([])
   const [history, setHistory] = useState<TransactionStatusHistoryWithActor[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -63,10 +64,11 @@ export default function TransactionDetailPage() {
     setLoading(true)
     setError(null)
 
-    const [transactionResult, historyResult, customerItemsResult] = await Promise.all([
+    const [transactionResult, historyResult, customerItemsResult, serviceItemsResult] = await Promise.all([
       supabase.from('transactions').select(SELECT).eq('id', id).maybeSingle(),
       supabase.from('transaction_status_history').select(HISTORY_SELECT).eq('transaction_id', id).order('changed_at', { ascending: false }),
       supabase.from('transaction_customer_items').select('*').eq('transaction_id', id).order('item_type'),
+      supabase.from('transaction_service_items').select('*').eq('transaction_id', id).order('position'),
     ])
 
     if (transactionResult.error) {
@@ -77,6 +79,7 @@ export default function TransactionDetailPage() {
 
     setTransaction((transactionResult.data as unknown as TransactionWithService | null) ?? null)
     setCustomerItems(customerItemsResult.error ? [] : (customerItemsResult.data as unknown as TransactionCustomerItem[]) ?? [])
+    setServiceItems(serviceItemsResult.error ? [] : (serviceItemsResult.data as unknown as TransactionServiceItem[]) ?? [])
     if (historyResult.error) {
       setHistory([])
       setError('The order opened, but its status history could not be loaded. Refresh and try again.')
@@ -109,6 +112,11 @@ export default function TransactionDetailPage() {
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'transaction_customer_items', filter: `transaction_id=eq.${id}` },
+        () => void reload()
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'transaction_service_items', filter: `transaction_id=eq.${id}` },
         () => void reload()
       )
       .subscribe((status) => {
@@ -180,6 +188,7 @@ export default function TransactionDetailPage() {
     try {
       openTransactionReceipt({
         transaction,
+        serviceItems,
         shopName: settings.shop_display_name,
         address: settings.address,
         contactPhone: settings.contact_phone,
@@ -255,7 +264,7 @@ export default function TransactionDetailPage() {
             <DetailRow label="Notes" value={transaction.notes || '—'} multiline />
           </DetailCard>
 
-          <DetailCard title="Laundry">
+          <DetailCard title={serviceItems.length > 0 ? 'Primary Service' : 'Laundry'}>
             <DetailRow label="Service" value={transaction.service_label_snapshot || transaction.service_code_snapshot || transaction.services?.label || transaction.services?.code || '—'} />
             <DetailRow label="Weight" value={transaction.kg != null ? `${transaction.kg} kg` : '—'} />
             <DetailRow label="Loads" value={transaction.no_of_loads != null ? String(transaction.no_of_loads) : '—'} />
@@ -269,8 +278,37 @@ export default function TransactionDetailPage() {
           </DetailCard>
         </section>
 
+        {serviceItems.length > 0 && (
+          <section className="space-y-3">
+            <h2 className="font-semibold text-slate-900 dark:text-slate-100">Additional Services ({serviceItems.length})</h2>
+            <div className="grid gap-4 lg:grid-cols-2">
+              {serviceItems.map((item, index) => (
+                <DetailCard key={item.id} title={`Service ${index + 2} · ${item.service_label_snapshot || item.service_code_snapshot || '—'}`}>
+                  <DetailRow label="Weight" value={item.kg != null ? `${item.kg} kg` : '—'} />
+                  <DetailRow label="Loads" value={item.no_of_loads != null ? String(item.no_of_loads) : '—'} />
+                  <DetailRow label="Base Amount" value={peso(item.base_amount)} />
+                  {item.add_on_items.length > 0 && (
+                    <div className="space-y-1.5 border-t border-slate-200 pt-2 dark:border-slate-800">
+                      {item.add_on_items.map((addOnItem, addOnIndex) => (
+                        <div key={`${addOnItem.add_on_id}-${addOnIndex}`} className="flex items-center justify-between text-xs text-slate-500">
+                          <span>{addOnItem.name} × {addOnItem.quantity}</span>
+                          <span>{peso(addOnItem.line_total)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {(item.detergent_source || item.fabric_conditioner_source) && (
+                    <p className="text-xs text-slate-500">Used its own detergent / fabric conditioner, tracked separately from the primary service.</p>
+                  )}
+                  <DetailRow label="Line Total" value={peso(item.total_amount)} strong />
+                </DetailCard>
+              ))}
+            </div>
+          </section>
+        )}
+
         <section className="grid gap-4 lg:grid-cols-[1.3fr_1fr]">
-          <DetailCard title="Add-ons">
+          <DetailCard title={serviceItems.length > 0 ? 'Primary Service Add-ons' : 'Add-ons'}>
             {transaction.add_on_items?.length ? (
               <div className="space-y-2">
                 {transaction.add_on_items.map((item, index) => (
@@ -294,6 +332,9 @@ export default function TransactionDetailPage() {
 
           <DetailCard title="Payment">
             <DetailRow label="Total" value={peso(transaction.total_amount)} strong />
+            {serviceItems.length > 0 && (
+              <p className="text-xs text-slate-500">Grand total across the primary service and {serviceItems.length} additional service{serviceItems.length === 1 ? '' : 's'}.</p>
+            )}
             {transaction.payment_method === 'paid' && <>
               <DetailRow label="Cash Received" value={peso(transaction.cash_amount)} />
               <DetailRow label="Change" value={peso(cashChange)} />
