@@ -81,6 +81,8 @@ The two-tab result also exposed a client-side verification gap: the Edit modal b
 ## Local verification on the follow-up PR source
 
 - `node tests/backend/test.mjs`: 74 PASS, 0 FAIL. The suite does not run multi-session contention, Supabase API/Realtime transport, or external n8n export.
+- `npm run test:receipt`: 5 PASS, 0 FAIL. The unit tests cover multi-service receipt rows/grand total, add-ons and GCash/Pay Later labels, HTML escaping, and print CSS/trigger; a rendered print-preview check remains open.
+- GitHub Actions CI now runs `test:receipt` alongside the backend, customer-item, sales-metrics, and staff-account suites.
 - `npm run check:migrations`: passed with 49 migration files after adding the unapplied advisor-hardening migration.
 - `npx oxlint`: exit 0, 39 warnings (same baseline).
 - `npx tsc -b`: exit 0.

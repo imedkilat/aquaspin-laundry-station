@@ -37,6 +37,9 @@ jobs:
       - name: Run staff account tests
         run: npm run test:staff-accounts
 
+      - name: Run receipt tests
+        run: npm run test:receipt
+
       - name: Lint
         run: npx oxlint
 
