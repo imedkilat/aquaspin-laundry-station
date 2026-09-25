@@ -156,6 +156,14 @@ export default function EditTransactionModal({ transaction, onClose }: { transac
         }
         const rows = (data ?? []) as TransactionServiceItem[]
         hadServiceLinesInitiallyRef.current = rows.length > 0
+        if (rows.length > 0) {
+          const additionalServicesTotal = rows.reduce((sum, row) => sum + Number(row.total_amount), 0)
+          const originalTotal = String(transaction.total_amount)
+          const primaryTotal = (transaction.total_amount - additionalServicesTotal).toFixed(2)
+          setForm((current) => current.total_amount === originalTotal
+            ? { ...current, total_amount: primaryTotal }
+            : current)
+        }
         setServiceLines(rows.map(serviceItemToDraft))
         setServiceLinesError(null)
         setServiceLinesLoadedForTransaction(transaction.id)
