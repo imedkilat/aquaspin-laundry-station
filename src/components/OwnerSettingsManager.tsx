@@ -4,6 +4,7 @@ import { useShopSettings } from '../lib/shop-settings-context'
 import {
   SHOP_BRANDING_BUCKET,
   getShopLogoUrl,
+  compressImageBeforeUpload,
   imageExtension,
   validateProfileImage,
 } from '../lib/storage-images'
@@ -166,9 +167,10 @@ export default function OwnerSettingsManager() {
 
     const previousPath = settings.logo_path
     const path = `branding/logo-${Date.now()}.${imageExtension(file)}`
+    const uploadFile = await compressImageBeforeUpload(file)
     const { error: uploadError } = await supabase.storage
       .from(SHOP_BRANDING_BUCKET)
-      .upload(path, file, { cacheControl: '3600', upsert: false, contentType: file.type })
+      .upload(path, uploadFile, { cacheControl: '3600', upsert: false, contentType: file.type })
 
     if (uploadError) {
       setUploadingLogo(false)

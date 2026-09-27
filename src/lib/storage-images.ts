@@ -22,6 +22,31 @@ export function imageExtension(file: File) {
   return 'jpg'
 }
 
+export async function compressImageBeforeUpload(file: File, maxDimension = 1600, quality = 0.82): Promise<File> {
+  try {
+    const image = await createImageBitmap(file)
+    const scale = Math.min(1, maxDimension / Math.max(image.width, image.height))
+    const width = Math.max(1, Math.round(image.width * scale))
+    const height = Math.max(1, Math.round(image.height * scale))
+    const canvas = document.createElement('canvas')
+    canvas.width = width
+    canvas.height = height
+    const context = canvas.getContext('2d')
+    if (!context) return file
+    context.drawImage(image, 0, 0, width, height)
+    image.close()
+
+    const blob = await new Promise<Blob | null>((resolve) => {
+      if (file.type === 'image/png') canvas.toBlob(resolve, file.type)
+      else canvas.toBlob(resolve, file.type, quality)
+    })
+    if (!blob || blob.type !== file.type || blob.size >= file.size) return file
+    return new File([blob], file.name, { type: file.type, lastModified: file.lastModified })
+  } catch {
+    return file
+  }
+}
+
 export function getShopLogoUrl(path: string | null | undefined) {
   if (!path) return null
   return supabase.storage.from(SHOP_BRANDING_BUCKET).getPublicUrl(path).data.publicUrl
