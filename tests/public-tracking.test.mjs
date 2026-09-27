@@ -20,6 +20,17 @@ test('signed tracking token is verifiable and bound to its transaction', async (
   assert.equal(await verifyPublicTrackingToken(token, 'fedcba9876543210'.repeat(4)), null)
 })
 
+test('key rotation can verify old links temporarily while issuing with the current key', async () => {
+  const previousSecret = 'abcdef0123456789'.repeat(4)
+  const oldToken = await createPublicTrackingToken(transactionId, previousSecret)
+  assert.equal(await verifyPublicTrackingToken(oldToken, secret), null)
+  assert.equal(await verifyPublicTrackingToken(oldToken, [secret, previousSecret]), transactionId)
+
+  const currentToken = await createPublicTrackingToken(transactionId, secret)
+  assert.equal(await verifyPublicTrackingToken(currentToken, [secret, previousSecret]), transactionId)
+  assert.equal(await verifyPublicTrackingToken(oldToken, [secret]), null)
+})
+
 test('malformed and tampered tracking tokens fail closed', async () => {
   assert.equal(await createPublicTrackingToken('not-a-uuid', secret), null)
   assert.equal(await createPublicTrackingToken(transactionId, 'short'), null)
