@@ -31,6 +31,21 @@ test('key rotation can verify old links temporarily while issuing with the curre
   assert.equal(await verifyPublicTrackingToken(oldToken, [secret]), null)
 })
 
+test('current and previous signing keys resolve to the same transaction rate-limit bucket', async () => {
+  const previousSecret = 'abcdef0123456789'.repeat(4)
+  const oldToken = await createPublicTrackingToken(transactionId, previousSecret)
+  const currentToken = await createPublicTrackingToken(transactionId, secret)
+
+  const oldTokenTransactionId = await verifyPublicTrackingToken(oldToken, [secret, previousSecret])
+  const currentTokenTransactionId = await verifyPublicTrackingToken(currentToken, [secret, previousSecret])
+  assert.equal(oldTokenTransactionId, transactionId)
+  assert.equal(currentTokenTransactionId, transactionId)
+
+  const oldTokenBucket = await createTrackingRateLimitKey(oldTokenTransactionId, secret)
+  const currentTokenBucket = await createTrackingRateLimitKey(currentTokenTransactionId, secret)
+  assert.equal(oldTokenBucket, currentTokenBucket)
+})
+
 test('malformed and tampered tracking tokens fail closed', async () => {
   assert.equal(await createPublicTrackingToken('not-a-uuid', secret), null)
   assert.equal(await createPublicTrackingToken(transactionId, 'short'), null)
