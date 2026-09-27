@@ -16,7 +16,7 @@ This roadmap stages the product ideas captured in the September 2026 Antigravity
 
 - [x] Record the proposed feature sequence and release gates here.
 - [x] Antigravity pushed the implementation to draft PR #35, based on the current `main` commit.
-- [ ] Independently review and resolve the security and functional findings in PR #35.
+- [x] Independently review the combined PR #35/#36 candidate and resolve the identified code findings in the local candidate.
 - [ ] Reconcile the handoff's reported build, lint, migration, and test results against CI and the implementation branch.
 
 **Exit criteria:** the implementation starts from a known commit, with no unreviewed local edits or assumptions about Production schema.
@@ -25,7 +25,7 @@ This roadmap stages the product ideas captured in the September 2026 Antigravity
 
 ### 1A. Thermal receipt and bag tag
 
-**Status: Print fixes proposed in draft PR #36 (based on PR #35); secure QR-link integration required**
+**Status: Draft PR #35/#36; print fixes integrated in local combined candidate; Staging/printer QA pending**
 
 - Review the current receipt, transaction, add-on, inventory-use, and customer-item types.
 - Implement 58 mm and 80 mm receipt and bag-tag layouts, QR generation, and print preview as an isolated UI slice.
@@ -37,14 +37,14 @@ This roadmap stages the product ideas captured in the September 2026 Antigravity
 
 ### 1B. Public order tracker
 
-**Status: Security redesign in local review branch; contract and rate-limit plan pending independent review**
+**Status: Signed-capability candidate implemented locally; independent code review passed; Staging/runtime verification pending**
 
 - Review transaction-code entropy, status history, grants, RLS, shop settings, and the canonical status rules.
 - Replace the anonymous transaction-code RPC with an Edge Function capability flow; keep the 8-character order code separate from authorization to retrieve tracking data.
 - Return only the approved public allowlist (currently order code and current lifecycle status); verify malformed, cancelled, deleted, on-hold, and completed behavior.
 - Issue a high-entropy signed link only after authenticated active-profile and order-access checks; keep the capability out of HTTP paths and referrers.
-- Review the local per-IP rate limit (60 requests/minute through the existing service-role `check_rate_limit` function); decide whether its limits and behavior are sufficient.
-- Finalize key rotation and printed-link lifecycle before the security contract is final.
+- Rate-limit only after capability verification, using a transaction-scoped HMAC key through the existing service-role `check_rate_limit` function (60 requests/minute); invalid tokens do not reach the limiter or privileged lookup.
+- Keep current/previous signing-key rotation covered by regression tests; the previous key remains optional during the rotation window.
 - No migration or remote database change is part of the current local slice. If later needed, review and verify it on Staging before any separate Production review.
 
 **Exit criteria:** anonymous callers can retrieve only the matching order's approved fields using a protected capability; malformed/unknown/cancelled/deleted orders fail closed; rate limits and key-rotation behavior are documented and tested; Edge Functions and UI pass focused tests plus Staging QA. No Production rollout is implied.
@@ -89,7 +89,7 @@ Potential slices, each with its own review and Staging evidence:
 
 ## Immediate next slice
 
-Phase 0 baseline is recorded. Antigravity's print fixes are in draft PR #36, based on draft PR #35; the lead's tracking-security candidate remains local. The PR #36 source review found that its QR still encodes the public transaction code in `/track/{code}`. Replace this with the signed capability path issued by `issue-order-tracking-link`, and handle issuance failure without falling back to the short code, before print changes can integrate with the tracker. Keep both PRs unmerged until the independent tracker review, focused tests, and Staging QA pass. Do not start multi-tenant schema work until Phase 3 decisions are complete.
+Phase 0 baseline is recorded. PR #35 and dependent PR #36 remain drafts. The combined local candidate `e6582948553b5046591603129c75b7758a20ffbf` contains the tracker security work and print fixes; it has not been pushed. Claude's independent review of the exact `c446e6d..e658294` patch found no code blockers. Remaining gates are Staging verification of the old RPC and migration ledger, Edge Function runtime/secrets, signed-link and popup browser QA, and physical 58 mm/80 mm printer verification. If the old RPC exists on Staging, prepare and review a forward DROP migration; deleting its historical migration file cannot remove an already deployed function. No remote database has been accessed by this review. Keep both PRs draft and do not start multi-tenant schema work until Phase 3 decisions are complete.
 
 ## Progress log
 
@@ -101,3 +101,4 @@ Phase 0 baseline is recorded. Antigravity's print fixes are in draft PR #36, bas
 
 | 2026-09-28 | Antigravity reported print-fix draft PR #36 (`e564e8f`) with 8 changed files and a successful Vercel Preview check. The lead reviewed its changed-file patches and confirmed the modal and print helper still build QR URLs from `transaction_code`/`transaction_no`, which conflicts with the signed-capability tracker design. PR #36 must integrate the authenticated capability issuer and fail closed if link issuance fails. Antigravity's local test claims and browser/printer behavior remain unverified here. No remote database, merge, deployment, or production change. | Blocked on secure QR integration and verification |
 | 2026-09-28 | Claude's independent review confirmed the public print QR still uses the obsolete code route and identified that caller-controlled `X-Forwarded-For` can bypass per-address throttling. The local tracker branch now derives its HMAC rate-limit key only from a validated/canonicalized `cf-connecting-ip`; regression coverage now verifies spoofed `X-Forwarded-For` is ignored. Focused tests pass 8/8 and lint exits 0 with existing warnings. TypeScript and migration checks pass, but the latest Vite build process exited with an out-of-memory error; Staging header/runtime verification and Claude review of this correction remain pending. No remote database, merge, deployment, or production change. | In progress; runtime/build verification pending |\n
+| 2026-09-28 | Claude independently reviewed exact combined local candidate `e6582948553b5046591603129c75b7758a20ffbf` against base `c446e6d355f20e7f3a4891fb389e93a782110ca4`. No code blocker was found: public allowlist, signature-before-read, token-scoped rate limit, key rotation, JWT settings, shared signed print/detail links, and print-data failure guards were checked. Claude reports 11/11 public-tracking tests, 40/40 thermal-receipt tests, 6/6 receipt tests, and full-project `tsc --noEmit` passing against the patch. **Operational gate remains:** verify on Staging, read-only, whether `public.get_public_order_status(text)` exists regardless of the migration ledger and whether version `20260930010000` is recorded. No database was accessed. If the function exists, prepare a separately reviewed forward DROP migration. Also pending are Edge Function runtime/secrets, signed-link/browser and popup QA, and physical printer QA. Current GitHub PR heads remain #35 `c446e6d` and #36 `4336205`; the combined candidate is local-only and both PRs remain draft. No migration applied, merge, deployment, or Production change. | Review passed; operational verification pending |
