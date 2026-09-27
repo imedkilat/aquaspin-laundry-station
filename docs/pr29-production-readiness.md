@@ -12,9 +12,8 @@
 
 - Production Supabase ref: `yhckdhidchxsypfeyzxj`.
 - Staging Supabase ref: `wmubrkhgncrtwdlsusea`.
-- PR #29: `feat/multi-service-transactions`, head `4c42dd0956b3a91c6797f2326c27664b72ca08e4`.
-- Its PR Preview is READY and the loaded bundle targets Staging, not Production.
-- GitHub Actions CI run `36314880040` and Vercel deployment `dpl_DdTCia98n9fR1BH2xfjmtNbJcqm1` passed for that exact head.
+- PR #29: `feat/multi-service-transactions`. Consult the live PR checks for its current head and deployment status; documentation-only commits can advance the head without changing application code.
+- The latest branch revision checked while preparing this report had GitHub Actions CI and its Vercel Preview deployment both READY. The live PR Checks page is the source of truth for later commits.
 - `main` is at `0c1a1eb094114eee959c9cd74979d172e24b6088`; the feature branch is one commit behind, with the main-only commit removing Claude delivery artifacts. GitHub reports the PR mergeable. No branch protection, required checks, or repository rulesets were reported in the independent GitHub API check.
 
 ## Production migration and schema state
@@ -79,5 +78,5 @@ The independent source review also found that the original replace RPC accepted 
 ## Remaining release actions
 
 1. Keep `300700` unapplied in Staging unless a separate Staging rollout is requested.
-2. Re-check the exact PR head and checks after this readiness-document update.
+2. Verify the current PR head and required checks immediately before merging.
 3. Obtain the owner's explicit final merge approval. Merging automatically deploys the app to Production.
