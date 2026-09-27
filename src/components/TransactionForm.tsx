@@ -6,7 +6,8 @@ import { useDiscountPromos } from '../hooks/useDiscountPromos'
 import { useCustomers } from '../hooks/useCustomers'
 import { useAuth } from '../lib/auth-context'
 import { useShopSettings } from '../lib/shop-settings-context'
-import type { DiscountPromo, NewTransactionWithServicesPayload, PaymentMethod, TransactionAddOnItem } from '../types/database'
+import { Link } from 'react-router-dom'
+import type { DiscountPromo, NewTransactionWithServicesPayload, PaymentMethod, TransactionAddOnItem, TransactionWithService } from '../types/database'
 import { shopDate } from '../lib/date'
 import { toTitleCaseName } from '../lib/text'
 import { ButtonSpinner, InlineAlert, LoadingPanel } from './UiFeedback'
@@ -19,6 +20,8 @@ import {
   serviceLineDraftIsComplete,
   type ServiceLineDraft,
 } from '../lib/service-line-items'
+import ThermalPrintModal from './ThermalPrintModal'
+import UiIcon from './UiIcon'
 import {
   emptyInventoryUsageDraft,
   OTHER_INVENTORY_SOURCE,
@@ -78,6 +81,8 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
+  const [createdTransaction, setCreatedTransaction] = useState<TransactionWithService | null>(null)
+  const [showThermalModal, setShowThermalModal] = useState(false)
   const [clientRequestId, setClientRequestId] = useState(() => crypto.randomUUID())
   const submitLockRef = useRef(false)
 
@@ -413,13 +418,29 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
         client_request_id: clientRequestId,
       }
 
-      const { error: insertError } =
-        serviceLines.length === 0
-          ? await supabase.from('transactions').insert({ ...transactionPayload, created_by: profile?.id ?? null })
-          : await supabase.rpc('create_transaction_with_service_items', {
-              p_transaction: transactionPayload,
-              p_service_items: serviceLines.map((line) => draftToServiceItemInput(line, addOns)),
-            })
+      let insertedData: unknown = null
+      let insertError: any = null
+
+      if (serviceLines.length === 0) {
+        const res = await supabase
+          .from('transactions')
+          .insert({ ...transactionPayload, created_by: profile?.id ?? null })
+          .select('*, services(*)')
+          .maybeSingle()
+        insertedData = res.data
+        insertError = res.error
+      } else {
+        const res = await supabase.rpc('create_transaction_with_service_items', {
+          p_transaction: transactionPayload,
+          p_service_items: serviceLines.map((line) => draftToServiceItemInput(line, addOns)),
+        })
+        insertedData = res.data
+        insertError = res.error
+      }
+
+      if (insertedData) {
+        setCreatedTransaction(insertedData as unknown as TransactionWithService)
+      }
 
       setSubmitting(false)
 
@@ -440,6 +461,10 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
         return
       }
 
+      if (insertedData) {
+        setCreatedTransaction(insertedData as TransactionWithService)
+      }
+
       const changeMessage = form.payment_method === 'paid' && changeDue > 0 ? ` · Change ${peso(changeDue)}` : ''
       const gcashMessage = form.payment_method === 'gcash' ? ` · GCash #${form.gcash_reference.trim()}` : ''
       const addOnMessage = selectedAddOnItems.length > 0 ? ` · Add-ons ${peso(addOnsTotal)}` : ''
@@ -448,7 +473,6 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
       setSuccess(`Added — ${normalizedCustomerName}${addOnMessage}${discountMessage}${servicesMessage}${changeMessage}${gcashMessage}`)
       resetForm()
       onAdded?.()
-      setTimeout(() => setSuccess(null), 4000)
     } finally {
       setSubmitting(false)
       submitLockRef.current = false
@@ -471,8 +495,37 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="bg-white rounded-2xl border border-slate-200 p-5 space-y-5 dark:bg-slate-900 dark:border-slate-800">
-      <h2 className="font-semibold text-slate-900 dark:text-slate-100">Add Customer Transaction</h2>
+    <>
+      <form onSubmit={handleSubmit} className="bg-white rounded-2xl border border-slate-200 p-5 space-y-5 dark:bg-slate-900 dark:border-slate-800">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h2 className="font-semibold text-slate-900 dark:text-slate-100">Add Customer Transaction</h2>
+        {createdTransaction && (
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setShowThermalModal(true)}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-sky-600 px-3.5 py-1.5 text-xs font-bold text-white shadow-xs hover:bg-sky-500"
+            >
+              <UiIcon name="printer" size={14} />
+              Print Thermal Slip / Bag Tag
+            </button>
+            <Link
+              to={`/orders/${createdTransaction.id}`}
+              className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
+            >
+              View Order →
+            </Link>
+            <button
+              type="button"
+              onClick={() => setCreatedTransaction(null)}
+              className="rounded-lg p-1 text-slate-400 hover:text-slate-600"
+              title="Dismiss"
+            >
+              ✕
+            </button>
+          </div>
+        )}
+      </div>
 
       {(servicesError || addOnsError || customersError || discountPromosError) && (
         <InlineAlert variant="warning" title="Some catalog data could not be refreshed">
@@ -717,5 +770,13 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
         {submitting && <ButtonSpinner />}{submitting ? 'Saving…' : 'Add Transaction'}
       </button>
     </form>
+
+    {showThermalModal && createdTransaction && (
+      <ThermalPrintModal
+        transaction={createdTransaction}
+        onClose={() => setShowThermalModal(false)}
+      />
+    )}
+  </>
   )
 }
