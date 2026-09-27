@@ -1,10 +1,11 @@
-import type { PaymentMethod, TransactionWithService, TransactionCustomerItem } from '../types/database'
-import { generateQrSvg } from './qr-code'
+import type { PaymentMethod, TransactionWithService, TransactionCustomerItem, TransactionServiceItem } from '../types/database.ts'
+import { generateQrSvg } from './qr-code.ts'
+import { isDropOffTransaction } from './service-classification.ts'
 
 export type ThermalPrintMode = 'receipt' | 'bag_tag' | 'both'
 export type ThermalPaperWidth = '58mm' | '80mm'
 
-const escapeHtml = (value: unknown) =>
+export const escapeHtml = (value: unknown) =>
   String(value ?? '')
     .replaceAll('&', '&amp;')
     .replaceAll('<', '&lt;')
@@ -12,42 +13,60 @@ const escapeHtml = (value: unknown) =>
     .replaceAll('"', '&quot;')
     .replaceAll("'", '&#039;')
 
-const peso = (value: number) =>
+export const peso = (value: number) =>
   `₱${Number(value || 0).toLocaleString('en-PH', {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })}`
 
-const paymentLabel = (method: PaymentMethod) => {
+export const paymentLabel = (method: PaymentMethod) => {
   if (method === 'paid') return 'Cash'
   if (method === 'gcash') return 'GCash'
   return 'Pay Later'
 }
 
-const recordedLabel = (value: string) =>
+export const recordedLabel = (value: string) =>
   new Date(value).toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' })
+
+export type WindowLike = {
+  opener?: unknown
+  document: {
+    open?: () => void
+    write: (content: string) => void
+    close: () => void
+  }
+  close?: () => void
+}
 
 export type ThermalPrintOptions = {
   transaction: TransactionWithService
   customerItems?: TransactionCustomerItem[]
+  serviceItems?: TransactionServiceItem[]
   shopName?: string
   address?: string | null
   contactPhone?: string | null
   reportFooter?: string | null
   mode?: ThermalPrintMode
   paperWidth?: ThermalPaperWidth
+  targetWindow?: WindowLike | null
+  qrSvg?: string
+  trackingPath?: string
+  trackingUrl?: string
+  resolveTrackingPath?: (transactionId: string) => Promise<string>
 }
 
-export async function openThermalPrintWindow({
+export function buildThermalReceiptParts({
   transaction,
   customerItems = [],
-  shopName = import.meta.env.VITE_SHOP_NAME || 'Aquaspin Laundry Station',
+  serviceItems = [],
+  shopName = import.meta.env?.VITE_SHOP_NAME || 'Aquaspin Laundry Station',
   address,
   contactPhone,
   reportFooter,
   mode = 'receipt',
   paperWidth = '58mm',
-}: ThermalPrintOptions) {
+  qrSvg,
+}: ThermalPrintOptions & { qrSvg?: string }) {
   const serviceName =
     transaction.service_label_snapshot ||
     transaction.services?.label ||
@@ -55,21 +74,40 @@ export async function openThermalPrintWindow({
     transaction.services?.code ||
     'Laundry service'
 
-  const trackingUrl = `${window.location.origin}/track/${transaction.transaction_code || transaction.transaction_no}`
-  const qrSvg = await generateQrSvg(trackingUrl)
-
-  const printAreaWidth = paperWidth === '80mm' ? '72mm' : '48mm'
   const is58 = paperWidth === '58mm'
-  const baseFontSize = is58 ? '11px' : '12px'
 
-  // Format Add-ons
-  const addOnRows = transaction.add_on_items?.map((item) => `
+  // Primary Add-ons
+  const primaryAddOnRows = transaction.add_on_items?.map((item) => `
     <tr>
-      <td style="padding: 2px 0;">${escapeHtml(item.name)} <span style="font-size: 9px; color: #555;">(${escapeHtml(item.quantity)} ${escapeHtml(item.unit_type)})</span></td>
+      <td style="padding: 2px 0 2px 8px; color: #333;">+ ${escapeHtml(item.name)} <span style="font-size: 9px; color: #555;">(${escapeHtml(item.quantity)} ${escapeHtml(item.unit_type)})</span></td>
       <td style="text-align: right; padding: 2px 0; white-space: nowrap;">${escapeHtml(peso(item.line_total))}</td>
     </tr>`).join('') ?? ''
 
-  // Format Detergent & Fabcon summary
+  // Additional service items (PR #29 multi-service)
+  const additionalServiceRows = serviceItems.map((item, index) => {
+    const name = item.service_label_snapshot || item.service_code_snapshot || `Service ${index + 2}`
+    const weightText = item.kg != null
+      ? `<br><span style="font-size: 9px; color: #444;">${escapeHtml(item.kg)} kg (${escapeHtml(item.no_of_loads ?? 1)} load${(item.no_of_loads ?? 1) > 1 ? 's' : ''})</span>`
+      : ''
+    const itemAddOns = (item.add_on_items ?? []).map((addon) => `
+      <tr>
+        <td style="padding: 2px 0 2px 8px; color: #333;">+ ${escapeHtml(addon.name)} <span style="font-size: 9px; color: #555;">(${escapeHtml(addon.quantity)} ${escapeHtml(addon.unit_type)})</span></td>
+        <td style="text-align: right; padding: 2px 0; white-space: nowrap;">${escapeHtml(peso(addon.line_total))}</td>
+      </tr>`).join('')
+
+    return `
+      <tr style="border-top: 1px dashed #cbd5e1;">
+        <td style="padding: 4px 0 2px 0;">
+          <strong>${escapeHtml(name)}</strong>
+          ${weightText}
+        </td>
+        <td style="text-align: right; padding: 4px 0 2px 0; vertical-align: top; font-weight: 600;">${escapeHtml(peso(item.base_amount))}</td>
+      </tr>
+      ${itemAddOns}
+    `
+  }).join('')
+
+  // Format Detergent & Fabcon summary for Primary Service
   const detergentText = transaction.detergent_source === 'customer_supplied'
     ? 'Customer Supplied'
     : transaction.detergent_quantity ? `${transaction.detergent_quantity} dose/sachet` : null
@@ -79,12 +117,13 @@ export async function openThermalPrintWindow({
     : transaction.fabric_conditioner_quantity ? `${transaction.fabric_conditioner_quantity} ml/sachet` : null
 
   // Format Customer Items
-  const customerItemRows = customerItems.map((ci) => {
+  const activeCustomerItems = customerItems.filter((ci) => Number(ci.quantity || 0) > 0)
+  const customerItemRows = activeCustomerItems.map((ci) => {
     const label = ci.custom_item_name || ci.item_type.replace('_', ' ')
     return `<span style="display: inline-block; margin-right: 6px; font-size: 10px;">${escapeHtml(ci.quantity)}x ${escapeHtml(label)}</span>`
   }).join(', ')
 
-  const totalGarments = customerItems.reduce((sum, item) => sum + Number(item.quantity || 0), 0)
+  const totalGarments = activeCustomerItems.reduce((sum, item) => sum + Number(item.quantity || 0), 0)
 
   // Payment Breakdown
   const cashReceived = Number(transaction.cash_amount || 0)
@@ -127,16 +166,18 @@ export async function openThermalPrintWindow({
         <tbody>
           <tr>
             <td style="padding: 3px 0;">
-              ${escapeHtml(serviceName)}
-              ${transaction.kg ? `<br><span style="font-size: 9px; color: #444;">${transaction.kg} kg (${transaction.no_of_loads ?? 1} load${(transaction.no_of_loads ?? 1) > 1 ? 's' : ''})</span>` : ''}
+              <strong>${escapeHtml(serviceName)}</strong>
+              ${transaction.kg != null ? `<br><span style="font-size: 9px; color: #444;">${escapeHtml(transaction.kg)} kg (${escapeHtml(transaction.no_of_loads ?? 1)} load${(transaction.no_of_loads ?? 1) > 1 ? 's' : ''})</span>` : ''}
             </td>
-            <td style="text-align: right; padding: 3px 0; vertical-align: top;">${escapeHtml(peso(transaction.base_amount))}</td>
+            <td style="text-align: right; padding: 3px 0; vertical-align: top; font-weight: 600;">${escapeHtml(peso(transaction.base_amount))}</td>
           </tr>
-          ${addOnRows}
+          ${primaryAddOnRows}
+          ${additionalServiceRows}
         </tbody>
       </table>
 
       ${transaction.discount_amount > 0 ? `
+        <div class="divider-dashed"></div>
         <div class="flex-row" style="font-size: 10px; color: #000; margin: 2px 0;">
           <span>Discount (${escapeHtml(transaction.discount_promo_name_snapshot || 'Promo')}):</span>
           <span>-${escapeHtml(peso(transaction.discount_amount))}</span>
@@ -146,7 +187,7 @@ export async function openThermalPrintWindow({
       <div class="divider-dashed"></div>
 
       <div class="flex-row" style="font-size: 13px; font-weight: 800; margin: 4px 0;">
-        <span>TOTAL AMOUNT:</span>
+        <span>TOTAL AMOUNT${serviceItems.length > 0 ? ` (${serviceItems.length + 1} services)` : ''}:</span>
         <span>${escapeHtml(peso(transaction.total_amount))}</span>
       </div>
 
@@ -186,10 +227,63 @@ export async function openThermalPrintWindow({
       <div class="divider-dashed"></div>
       <div style="font-size: 8px; text-align: center; color: #444; margin-top: 6px; line-height: 1.3;">
         <div>Recorded: ${escapeHtml(recordedLabel(transaction.created_at))}</div>
-        ${escapeHtml(reportFooter || 'Please present this slip upon pickup. Thank you for washing with us!')}
+        <div>${escapeHtml(reportFooter || 'Please present this slip upon pickup. Thank you for washing with us!')}</div>
       </div>
     </div>
   `
+
+  // Additional services breakdown for Bag Tag
+  const additionalBagTagServices = serviceItems.map((item, index) => {
+    const name = item.service_label_snapshot || item.service_code_snapshot || `Service ${index + 2}`
+    const itemDetergent = item.detergent_source === 'customer_supplied'
+      ? 'Customer Supplied'
+      : item.detergent_quantity ? `${item.detergent_quantity} dose/sachet` : null
+    const itemFabcon = item.fabric_conditioner_source === 'customer_supplied'
+      ? 'Customer Supplied'
+      : item.fabric_conditioner_quantity ? `${item.fabric_conditioner_quantity} ml/sachet` : null
+
+    return `
+      <div style="margin-top: 4px; border-top: 1px dotted #888; padding-top: 3px;">
+        <div class="flex-row">
+          <span>Service ${index + 2}:</span>
+          <span style="font-weight: 700;">${escapeHtml(name)}</span>
+        </div>
+        <div class="flex-row">
+          <span>Weight / Loads:</span>
+          <span style="font-weight: 800;">${item.kg != null ? `${escapeHtml(item.kg)} kg` : '—'} · ${escapeHtml(item.no_of_loads ?? 1)} Load${(item.no_of_loads ?? 1) > 1 ? 's' : ''}</span>
+        </div>
+        ${itemDetergent ? `<div class="flex-row"><span>Detergent:</span><span>${escapeHtml(itemDetergent)}</span></div>` : ''}
+        ${itemFabcon ? `<div class="flex-row"><span>Fabcon:</span><span>${escapeHtml(itemFabcon)}</span></div>` : ''}
+      </div>
+    `
+  }).join('')
+
+  const totalOrderWeight = Number(transaction.kg || 0) + serviceItems.reduce((sum, item) => sum + Number(item.kg || 0), 0)
+  const totalOrderLoads = Number(transaction.no_of_loads ?? 1) + serviceItems.reduce((sum, item) => sum + Number(item.no_of_loads ?? 1), 0)
+
+  const isDropOff = isDropOffTransaction(transaction)
+
+  let garmentCountHtml = ''
+  if (totalGarments > 0) {
+    garmentCountHtml = `
+      <div class="divider-dashed"></div>
+      <div style="margin: 4px 0;">
+        <div style="font-size: 9px; font-weight: 800; text-transform: uppercase;">Garment Count (${totalGarments} items):</div>
+        <div style="font-size: 10px; line-height: 1.3; margin-top: 2px; color: #111;">
+          ${customerItemRows}
+        </div>
+      </div>
+    `
+  } else if (isDropOff) {
+    // Explicit warning so bag tags for drop-offs are never silently incomplete
+    garmentCountHtml = `
+      <div class="divider-dashed"></div>
+      <div style="margin: 4px 0; border: 1px dashed #000; padding: 4px; text-align: center;">
+        <div style="font-size: 9px; font-weight: 800; text-transform: uppercase;">*** NO GARMENT COUNT RECORDED ***</div>
+        <div style="font-size: 8px; color: #444; margin-top: 1px;">Clothing items pending count / check-in</div>
+      </div>
+    `
+  }
 
   const bagTagHtml = `
     <div class="slip bag-tag-slip">
@@ -212,26 +306,27 @@ export async function openThermalPrintWindow({
 
       <div style="font-size: 10px; line-height: 1.4; margin: 5px 0;">
         <div class="flex-row">
-          <span>Service:</span>
+          <span>${serviceItems.length > 0 ? 'Service 1:' : 'Service:'}</span>
           <span style="font-weight: 700;">${escapeHtml(serviceName)}</span>
         </div>
         <div class="flex-row">
           <span>Weight / Loads:</span>
-          <span style="font-weight: 800;">${transaction.kg ? `${transaction.kg} kg` : '—'} · ${transaction.no_of_loads ?? 1} Load${(transaction.no_of_loads ?? 1) > 1 ? 's' : ''}</span>
+          <span style="font-weight: 800;">${transaction.kg != null ? `${escapeHtml(transaction.kg)} kg` : '—'} · ${escapeHtml(transaction.no_of_loads ?? 1)} Load${(transaction.no_of_loads ?? 1) > 1 ? 's' : ''}</span>
         </div>
         ${detergentText ? `<div class="flex-row"><span>Detergent:</span><span>${escapeHtml(detergentText)}</span></div>` : ''}
         ${fabconText ? `<div class="flex-row"><span>Fabcon:</span><span>${escapeHtml(fabconText)}</span></div>` : ''}
+
+        ${additionalBagTagServices}
+
+        ${serviceItems.length > 0 ? `
+          <div class="flex-row" style="border-top: 1px dashed #000; margin-top: 4px; padding-top: 3px; font-weight: 800;">
+            <span>Total Weight / Loads:</span>
+            <span>${totalOrderWeight > 0 ? `${escapeHtml(totalOrderWeight)} kg` : '—'} · ${escapeHtml(totalOrderLoads)} Load${totalOrderLoads > 1 ? 's' : ''}</span>
+          </div>
+        ` : ''}
       </div>
 
-      ${totalGarments > 0 ? `
-        <div class="divider-dashed"></div>
-        <div style="margin: 4px 0;">
-          <div style="font-size: 9px; font-weight: 800; text-transform: uppercase;">Garment Count (${totalGarments} items):</div>
-          <div style="font-size: 10px; line-height: 1.3; margin-top: 2px; color: #111;">
-            ${customerItemRows}
-          </div>
-        </div>
-      ` : ''}
+      ${garmentCountHtml}
 
       ${transaction.notes ? `
         <div class="divider-dashed"></div>
@@ -278,17 +373,22 @@ export async function openThermalPrintWindow({
     contentHtml = `${receiptHtml}<div class="page-break"></div>${bagTagHtml}`
   }
 
-  const printWindow = window.open('', '_blank', `width=450,height=720`)
-  if (!printWindow) {
-    throw new Error('Popup blocked. Allow popups for Aquaspin to print thermal receipts.')
-  }
-  printWindow.opener = null
+  return { receiptHtml, bagTagHtml, contentHtml }
+}
 
-  printWindow.document.write(`<!doctype html>
+export function buildThermalDocumentHtml(options: ThermalPrintOptions & { qrSvg?: string }): string {
+  const { paperWidth = '58mm', transaction } = options
+  const printAreaWidth = paperWidth === '80mm' ? '72mm' : '48mm'
+  const is58 = paperWidth === '58mm'
+  const baseFontSize = is58 ? '11px' : '12px'
+
+  const { contentHtml } = buildThermalReceiptParts(options)
+
+  return `<!doctype html>
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>thermal-${transaction.transaction_code || transaction.transaction_no}</title>
+  <title>thermal-${escapeHtml(transaction.transaction_code || transaction.transaction_no)}</title>
   <style>
     @page {
       size: ${paperWidth} auto;
@@ -399,6 +499,59 @@ export async function openThermalPrintWindow({
     });
   </script>
 </body>
-</html>`)
+</html>`
+}
+
+export function writeThermalPrintDocument(printWindow: WindowLike, html: string) {
+  printWindow.opener = null
+  if (typeof printWindow.document.open === 'function') {
+    printWindow.document.open()
+  }
+  printWindow.document.write(html)
   printWindow.document.close()
+}
+
+async function getOrderTrackingPath(transactionId: string): Promise<string> {
+  const mod = await import('./tracking-links')
+  return mod.requestOrderTrackingPath(transactionId)
+}
+
+export async function openThermalPrintWindow(options: ThermalPrintOptions) {
+  const { transaction, targetWindow } = options
+
+  // 1. Obtain window synchronously before any await if not already supplied
+  const printWindow =
+    targetWindow !== undefined
+      ? targetWindow
+      : typeof window !== 'undefined'
+      ? window.open('', '_blank', 'width=450,height=720')
+      : null
+
+  if (!printWindow) {
+    throw new Error('Popup blocked. Allow popups for Aquaspin to print thermal receipts.')
+  }
+
+  // 2. Resolve QR code SVG (either pre-supplied or generated asynchronously via signed-link issuer)
+  let qrSvg = options.qrSvg
+  if (!qrSvg) {
+    try {
+      let fullTrackingUrl = options.trackingUrl
+      if (!fullTrackingUrl) {
+        const path =
+          options.trackingPath ??
+          (await (options.resolveTrackingPath ?? getOrderTrackingPath)(transaction.id))
+        const origin = typeof window !== 'undefined' && window.location?.origin ? window.location.origin : ''
+        fullTrackingUrl = `${origin}${path}`
+      }
+      qrSvg = await generateQrSvg(fullTrackingUrl)
+    } catch {
+      // If signed tracking link creation or QR generation fails, do NOT fall back to order code.
+      // Access authorization requires the cryptographically signed link path (/track#v1....).
+      qrSvg = ''
+    }
+  }
+
+  // 3. Build and write complete HTML into window
+  const html = buildThermalDocumentHtml({ ...options, qrSvg })
+  writeThermalPrintDocument(printWindow, html)
 }
