@@ -82,7 +82,11 @@ export default function TransactionDetailPage() {
     setTransaction((transactionResult.data as unknown as TransactionWithService | null) ?? null)
     setCustomerItems(customerItemsResult.error ? [] : (customerItemsResult.data as unknown as TransactionCustomerItem[]) ?? [])
     setServiceItems(serviceItemsResult.error ? [] : (serviceItemsResult.data as unknown as TransactionServiceItem[]) ?? [])
-    if (historyResult.error) {
+    if (customerItemsResult.error) {
+      setError('The order opened, but customer clothing items could not be loaded. Refresh and try again.')
+    } else if (serviceItemsResult.error) {
+      setError('The order opened, but additional service lines could not be loaded. Refresh and try again.')
+    } else if (historyResult.error) {
       setHistory([])
       setError('The order opened, but its status history could not be loaded. Refresh and try again.')
     } else {

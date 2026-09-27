@@ -113,3 +113,27 @@ test('Pay Later receipts use the expected label and omit GCash reference', () =>
   assert.match(html, /<strong>Payment<\/strong><span>Pay Later<\/span>/)
   assert.doesNotMatch(html, /GCash reference/)
 })
+
+test('multi-service receipt displays discount and grand total accurately', () => {
+  const { html } = renderReceipt({
+    transaction: transaction({
+      base_amount: 195,
+      discount_amount: 25,
+      discount_promo_name_snapshot: 'Weekend Special',
+      total_amount: 390,
+    }),
+    serviceItems: [{
+      service_label_snapshot: 'Comforter / Special Item',
+      kg: 3,
+      base_amount: 220,
+      add_on_items: [],
+    }],
+    shopName: 'Aquaspin QA',
+  })
+
+  assert.match(html, /Weekend Special/)
+  assert.match(html, /-₱25\.00/)
+  assert.match(html, /Total \(2 services\)/)
+  assert.match(html, /₱390\.00/)
+})
+
