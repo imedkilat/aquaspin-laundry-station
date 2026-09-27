@@ -11,6 +11,7 @@ import UiIcon, { type IconName } from './UiIcon'
 type NavItem = {
   to: string
   label: string
+  mobileLabel?: string
   icon: IconName
   end?: boolean
 }
@@ -23,11 +24,11 @@ export default function Layout({ children }: { children: ReactNode }) {
   const logoUrl = getShopLogoUrl(settings.logo_path)
 
   const navItems: NavItem[] = [
-    { to: '/', label: 'Home', icon: 'home', end: true },
-    { to: '/new', label: 'New Order', icon: 'plus' },
-    { to: '/orders', label: 'Orders', icon: 'orders' },
-    { to: '/customers', label: 'Customers', icon: 'customers' },
-    ...(canOpenDashboard ? [{ to: '/dashboard', label: isOwner ? 'Dashboard' : 'Reports', icon: 'dashboard' as IconName }] : []),
+    { to: '/', label: 'Home', mobileLabel: 'Home', icon: 'home', end: true },
+    { to: '/new', label: 'New Order', mobileLabel: 'New', icon: 'plus' },
+    { to: '/orders', label: 'Orders', mobileLabel: 'Orders', icon: 'orders' },
+    { to: '/customers', label: 'Customers', mobileLabel: 'Clients', icon: 'customers' },
+    ...(canOpenDashboard ? [{ to: '/dashboard', label: isOwner ? 'Dashboard' : 'Reports', mobileLabel: isOwner ? 'Dash' : 'Reports', icon: 'dashboard' as IconName }] : []),
   ]
 
   const desktopLinkClass = ({ isActive }: { isActive: boolean }) =>
@@ -97,10 +98,12 @@ function MobileNavLink({ item }: { item: NavItem }) {
     <NavLink
       to={item.to}
       end={item.end}
+      aria-label={item.label}
+      title={item.label}
       className={({ isActive }) => `flex min-w-0 flex-1 flex-col items-center justify-center rounded-xl px-1 py-1.5 text-[10px] font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 ${isActive ? 'bg-sky-50 text-sky-700 dark:bg-sky-950 dark:text-sky-300' : 'text-slate-500 dark:text-slate-400'}`}
     >
       <UiIcon name={item.icon} size={19} />
-      <span className="mt-0.5 truncate">{item.label}</span>
+      <span className="mt-0.5 truncate">{item.mobileLabel ?? item.label}</span>
     </NavLink>
   )
 }
