@@ -59,6 +59,16 @@ export async function createPublicTrackingToken(transactionId: string, secretHex
   return `${TOKEN_PREFIX}.${transactionId.toLowerCase()}.${toBase64Url(signature)}`
 }
 
+/** Hash the network address for the existing service-role rate-limit table. */
+export async function createTrackingRateLimitKey(clientAddress: string, secretHex: string): Promise<string | null> {
+  if (!clientAddress || clientAddress.length > 128) return null
+  const key = await importHmacKey(secretHex)
+  if (!key) return null
+  const message = new TextEncoder().encode(`aquaspin:public-order-tracking:rate-limit:v1:${clientAddress}`)
+  const digest = new Uint8Array(await crypto.subtle.sign('HMAC', key, message))
+  return `public-order-tracking:${toBase64Url(digest)}`
+}
+
 export async function verifyPublicTrackingToken(token: string, secretHex: string): Promise<string | null> {
   if (typeof token !== 'string' || token.length > 100) return null
   const [version, transactionId, signature, extra] = token.split('.')
