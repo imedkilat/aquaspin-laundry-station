@@ -25,7 +25,7 @@ This roadmap stages the product ideas captured in the September 2026 Antigravity
 
 ### 1A. Thermal receipt and bag tag
 
-**Status: In draft PR #35; review blocked**
+**Status: Print fixes proposed in draft PR #36 (based on PR #35); secure QR-link integration required**
 
 - Review the current receipt, transaction, add-on, inventory-use, and customer-item types.
 - Implement 58 mm and 80 mm receipt and bag-tag layouts, QR generation, and print preview as an isolated UI slice.
@@ -89,7 +89,7 @@ Potential slices, each with its own review and Staging evidence:
 
 ## Immediate next slice
 
-Phase 0 baseline is recorded. Phase 1A print fixes and Phase 1B tracking security are proceeding as separate reviewable workstreams within draft PR #35. Antigravity owns print UI changes; the lead owns the tracker contract and implementation, pending Claude's independent review of the new capability contract. Keep both unmerged until focused tests and Staging QA pass. Do not start multi-tenant schema work until Phase 3 decisions are complete.
+Phase 0 baseline is recorded. Antigravity's print fixes are in draft PR #36, based on draft PR #35; the lead's tracking-security candidate remains local. The PR #36 source review found that its QR still encodes the public transaction code in `/track/{code}`. Replace this with the signed capability path issued by `issue-order-tracking-link`, and handle issuance failure without falling back to the short code, before print changes can integrate with the tracker. Keep both PRs unmerged until the independent tracker review, focused tests, and Staging QA pass. Do not start multi-tenant schema work until Phase 3 decisions are complete.
 
 ## Progress log
 
@@ -98,3 +98,5 @@ Phase 0 baseline is recorded. Phase 1A print fixes and Phase 1B tracking securit
 | 2026-09-27 | Added this phased roadmap from the Antigravity handoff; no application code or database was changed. | Planning |
 | 2026-09-28 | Antigravity pushed printing and public tracking to draft PR #35. Initial review found public financial/order fields in the anon RPC response and functional QA gaps. No database or production changes. | Blocked pending fixes |
 | 2026-09-28 | Claude's read-only review of the original PR RPC identified a wrapped-column lookup, missing rate limit, and missing multi-service details. The local candidate removes that RPC, uses a signed capability and ID lookup, and intentionally returns only order code/status, so service-line exposure is removed from the public contract. Local commits `a1b81b0`, `e99343e`, `55e18f9`, and `60325ee` now contain the helpers, hashed client-address limiter, signed Edge/UI integration, previous-key rotation support, and seven regression tests. The branch is not pushed. Claude's independent review of this exact contract, Deno runtime validation, print integration, and Staging QA remain pending. No remote database, deployment, merge, or production change. | In progress; PR #35 remains draft |
+
+| 2026-09-28 | Antigravity reported print-fix draft PR #36 (`e564e8f`) with 8 changed files and a successful Vercel Preview check. The lead reviewed its changed-file patches and confirmed the modal and print helper still build QR URLs from `transaction_code`/`transaction_no`, which conflicts with the signed-capability tracker design. PR #36 must integrate the authenticated capability issuer and fail closed if link issuance fails. Antigravity's local test claims and browser/printer behavior remain unverified here. No remote database, merge, deployment, or production change. | Blocked on secure QR integration and verification |
