@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   createPublicTrackingToken,
+  createTrackingRateLimitKey,
   verifyPublicTrackingToken,
   toPublicTrackingStatus,
   canIssuePublicTrackingLink,
@@ -29,6 +30,15 @@ test('malformed and tampered tracking tokens fail closed', async () => {
   const token = await createPublicTrackingToken(transactionId, secret)
   const tampered = token.replace(transactionId, '0bd2c1a7-6e43-4d81-83fb-57d577c42481')
   assert.equal(await verifyPublicTrackingToken(tampered, secret), null)
+})
+
+test('tracking rate-limit keys are stable, address-scoped, and do not contain the address', async () => {
+  const first = await createTrackingRateLimitKey('203.0.113.7', secret)
+  assert.ok(first)
+  assert.equal(await createTrackingRateLimitKey('203.0.113.7', secret), first)
+  assert.notEqual(await createTrackingRateLimitKey('203.0.113.8', secret), first)
+  assert.ok(!first.includes('203.0.113.7'))
+  assert.equal(await createTrackingRateLimitKey('', secret), null)
 })
 
 test('tracking response only includes the public order code and current status', () => {
