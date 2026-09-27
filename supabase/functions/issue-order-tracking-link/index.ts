@@ -1,6 +1,6 @@
 import 'jsr:@supabase/functions-js/edge-runtime.d.ts'
 import { createClient } from 'npm:@supabase/supabase-js@2'
-import { canIssuePublicTrackingLink, createPublicTrackingToken } from '../../../src/lib/public-tracking.ts'
+import { canIssuePublicTrackingLink, createPublicTrackingToken, getTrackingIssueTransactionId } from '../../../src/lib/public-tracking.ts'
 
 const headers = {
   'Access-Control-Allow-Origin': '*',
@@ -23,7 +23,10 @@ Deno.serve(async (request: Request) => {
   const supabaseUrl = Deno.env.get('SUPABASE_URL')
   const anonKey = Deno.env.get('SUPABASE_ANON_KEY')
   const secret = Deno.env.get('TRACKING_TOKEN_SECRET_HEX')
-  if (!authorization?.startsWith('Bearer ') || !supabaseUrl || !anonKey || !secret) {
+  if (!supabaseUrl || !anonKey || !secret) {
+    return json(503, { error: 'Tracking is temporarily unavailable.' })
+  }
+  if (!authorization?.startsWith('Bearer ')) {
     return json(401, { error: 'Sign in to create a tracking link.' })
   }
 
@@ -46,10 +49,8 @@ Deno.serve(async (request: Request) => {
     }
 
     const payload: unknown = await request.json()
-    const transactionId = typeof payload === 'object' && payload !== null && 'transactionId' in payload
-      ? (payload as { transactionId?: unknown }).transactionId
-      : null
-    if (typeof transactionId !== 'string' || transactionId.length > 64) {
+    const transactionId = getTrackingIssueTransactionId(payload)
+    if (!transactionId) {
       return json(400, { error: 'Invalid transaction.' })
     }
 

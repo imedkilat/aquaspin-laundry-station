@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import {
   createPublicTrackingToken,
   createTrackingRateLimitKey,
+  getTrackingIssueTransactionId,
   verifyPublicTrackingToken,
   toPublicTrackingStatus,
   canIssuePublicTrackingLink,
@@ -10,6 +11,13 @@ import {
 } from '../src/lib/public-tracking.ts'
 
 const transactionId = '0ad2c1a7-6e43-4d81-83fb-57d577c42481'
+
+test('tracking link issuer accepts the shared snake-case transaction_id payload', () => {
+  assert.equal(getTrackingIssueTransactionId({ transaction_id: transactionId }), transactionId)
+  assert.equal(getTrackingIssueTransactionId({ transactionId }), null)
+  assert.equal(getTrackingIssueTransactionId({ transaction_id: 'not-a-uuid' }), null)
+  assert.equal(getTrackingIssueTransactionId(null), null)
+})
 const secret = '0123456789abcdef'.repeat(4)
 
 test('signed tracking token is verifiable and bound to its transaction', async () => {

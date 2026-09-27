@@ -18,6 +18,12 @@ export function canIssuePublicTrackingLink(profile: { role?: unknown; is_active?
   return Boolean(profile?.is_active === true && (profile.role === 'owner' || profile.role === 'staff'))
 }
 
+export function getTrackingIssueTransactionId(payload: unknown): string | null {
+  if (!payload || typeof payload !== 'object' || !('transaction_id' in payload)) return null
+  const transactionId = (payload as { transaction_id?: unknown }).transaction_id
+  return typeof transactionId === 'string' && UUID_PATTERN.test(transactionId) ? transactionId.toLowerCase() : null
+}
+
 function parseSecret(secretHex: string): Uint8Array | null {
   if (!/^[0-9a-f]{64}$/i.test(secretHex)) return null
   return Uint8Array.from(secretHex.match(/.{2}/g)!, (byte) => Number.parseInt(byte, 16))

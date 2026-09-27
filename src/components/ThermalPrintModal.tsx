@@ -11,6 +11,7 @@ import {
 import { generateQrSvg } from '../lib/qr-code'
 import { issueOrderTrackingLink } from '../lib/order-tracking'
 import { isDropOffTransaction } from '../lib/service-classification'
+import { canPrintDetails, getPrintDetailsError } from '../lib/print-details-state'
 import { supabase } from '../lib/supabase'
 import { useShopSettings } from '../lib/shop-settings-context'
 import UiIcon from './UiIcon'
@@ -37,11 +38,12 @@ export default function ThermalPrintModal({
   const [printing, setPrinting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const initialDetailsError =
-    initialCustomerItemsError ||
-    initialServiceItemsError ||
-    (initialCustomerItems === null ? 'Could not load clothing items for this order. Please try again.' : null) ||
-    (initialServiceItems === null ? 'Could not load service lines for this order. Please try again.' : null)
+  const initialDetailsError = getPrintDetailsError({
+    customerItems: initialCustomerItems,
+    serviceItems: initialServiceItems,
+    customerItemsError: initialCustomerItemsError ?? null,
+    serviceItemsError: initialServiceItemsError ?? null,
+  })
 
   // Loaded details state
   const [customerItems, setCustomerItems] = useState<TransactionCustomerItem[]>(initialCustomerItems ?? [])
@@ -739,7 +741,7 @@ export default function ThermalPrintModal({
           <button
             type="button"
             onClick={handlePrint}
-            disabled={printing || loadingDetails || Boolean(detailsError)}
+            disabled={printing || loadingDetails || !canPrintDetails(customerItems, serviceItems, detailsError)}
             className="inline-flex items-center gap-2 rounded-xl bg-sky-600 px-5 py-2 text-xs font-bold text-white shadow-sm hover:bg-sky-500 disabled:opacity-60"
           >
             {printing ? (

@@ -11,9 +11,10 @@ import UiIcon from '../components/UiIcon'
 import { ButtonSpinner, EmptyState, InlineAlert, LoadingPanel } from '../components/UiFeedback'
 import { useAuth } from '../lib/auth-context'
 import { makeRealtimeTopic } from '../lib/realtime'
+import { canPrintDetails, resolvePrintDetails } from '../lib/print-details-state'
 import { useShopSettings } from '../lib/shop-settings-context'
 import { isDropOffTransaction } from '../lib/service-classification'
-import { requestOrderTrackingPath } from '../lib/tracking-links'
+import { issueOrderTrackingLink } from '../lib/order-tracking'
 import { supabase } from '../lib/supabase'
 import type { TransactionCustomerItem, TransactionServiceItem, TransactionWithService } from '../types/database'
 
@@ -77,7 +78,7 @@ export default function TransactionDetailPage() {
     setOpeningTracking(true)
     setTrackingError(null)
     try {
-      trackingWindow.location.replace(await requestOrderTrackingPath(transaction.id))
+      trackingWindow.location.replace(await issueOrderTrackingLink(transaction.id))
     } catch (err) {
       trackingWindow.close()
       setTrackingError(err instanceof Error ? err.message : 'Could not create a secure tracking link.')
@@ -110,24 +111,24 @@ export default function TransactionDetailPage() {
 
     setTransaction((transactionResult.data as unknown as TransactionWithService | null) ?? null)
 
-    if (customerItemsResult.error) {
-      setCustomerItems(null)
-      const msg = 'The order opened, but customer clothing items could not be loaded. Refresh and try again.'
-      setCustomerItemsError(msg)
-      setError(msg)
-    } else {
-      setCustomerItems((customerItemsResult.data as unknown as TransactionCustomerItem[]) ?? [])
-      setCustomerItemsError(null)
-    }
+    const printDetails = resolvePrintDetails(
+      {
+        data: customerItemsResult.data as unknown as TransactionCustomerItem[] | null,
+        error: customerItemsResult.error,
+      },
+      {
+        data: serviceItemsResult.data as unknown as TransactionServiceItem[] | null,
+        error: serviceItemsResult.error,
+      },
+    )
+    setCustomerItems(printDetails.customerItems)
+    setCustomerItemsError(printDetails.customerItemsError)
+    setServiceItems(printDetails.serviceItems)
+    setServiceItemsError(printDetails.serviceItemsError)
 
-    if (serviceItemsResult.error) {
-      setServiceItems(null)
-      const msg = 'The order opened, but additional service lines could not be loaded. Refresh and try again.'
-      setServiceItemsError(msg)
-      setError((prev) => prev ? `${prev} Also, additional service lines could not be loaded.` : msg)
-    } else {
-      setServiceItems((serviceItemsResult.data as unknown as TransactionServiceItem[]) ?? [])
-      setServiceItemsError(null)
+    if (printDetails.customerItemsError) setError(printDetails.customerItemsError)
+    if (printDetails.serviceItemsError) {
+      setError((prev) => prev ? `${prev} Also, additional service lines could not be loaded.` : printDetails.serviceItemsError)
     }
 
     if (historyResult.error) {
@@ -256,7 +257,7 @@ export default function TransactionDetailPage() {
                 <button
                   type="button"
                   onClick={() => setShowThermalModal(true)}
-                  disabled={loading || Boolean(customerItemsError || serviceItemsError)}
+                  disabled={loading || !canPrintDetails(customerItems, serviceItems, customerItemsError || serviceItemsError)}
                   title={customerItemsError || serviceItemsError ? 'Cannot print while order details failed to load' : undefined}
                   className="inline-flex items-center gap-1.5 rounded-xl border border-sky-300 bg-sky-50 px-4 py-2 text-sm font-semibold text-sky-700 hover:bg-sky-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-sky-800 dark:bg-sky-950 dark:text-sky-300 dark:hover:bg-sky-900"
                 >
