@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
 import {
   createPublicTrackingToken,
   createTrackingRateLimitKey,
@@ -17,6 +18,12 @@ test('tracking link issuer accepts the shared snake-case transaction_id payload'
   assert.equal(getTrackingIssueTransactionId({ transactionId }), null)
   assert.equal(getTrackingIssueTransactionId({ transaction_id: 'not-a-uuid' }), null)
   assert.equal(getTrackingIssueTransactionId(null), null)
+})
+
+test('only public tracking lookup disables platform JWT verification', async () => {
+  const config = await readFile(new URL('../supabase/config.toml', import.meta.url), 'utf8')
+  assert.match(config, /\[functions\.issue-order-tracking-link\]\s+verify_jwt\s*=\s*true/)
+  assert.match(config, /\[functions\.lookup-order-tracking-status\]\s+verify_jwt\s*=\s*false/)
 })
 const secret = '0123456789abcdef'.repeat(4)
 

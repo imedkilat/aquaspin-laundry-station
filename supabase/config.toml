@@ -1,4 +1,7 @@
 project_id = "aquaspin-laundry-station"
 
+[functions.issue-order-tracking-link]
+verify_jwt = true
+
 [functions.lookup-order-tracking-status]
 verify_jwt = false
