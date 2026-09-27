@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import ActionErrorBoundary from '../components/ActionErrorBoundary'
 import DeleteTransactionModal from '../components/DeleteTransactionModal'
 import EditTransactionModal from '../components/EditTransactionModal'
@@ -12,23 +13,46 @@ import { useAuth } from '../lib/auth-context'
 import { shopDateDaysAgo } from '../lib/date'
 import { useShopSettings } from '../lib/shop-settings-context'
 import { isCustomerItemsPending } from '../lib/customer-items-pending'
+import { outstandingPayLaterBalance } from '../lib/sales-metrics'
 import type { PaymentMethod, TransactionWithService } from '../types/database'
 
 const peso = (value: number) =>
   `₱${value.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 
+type OrdersPaymentFilter = PaymentMethod | 'all' | 'collected'
+
+function isPaymentFilter(value: string | null): value is OrdersPaymentFilter {
+  return value === 'all' || value === 'paid' || value === 'gcash' || value === 'pay_later' || value === 'collected'
+}
+
+function isDateFilter(value: string | null): value is string {
+  return value != null && /^\d{4}-\d{2}-\d{2}$/.test(value)
+}
+
 export default function OrdersPage() {
+  const [searchParams] = useSearchParams()
   const { profile } = useAuth()
   const { settings } = useShopSettings()
   const isOwner = profile?.role === 'owner'
   const historyRestricted = !isOwner && (!settings.staff_can_access_dashboard || !settings.staff_can_view_full_history)
   const today = useShopDate()
 
-  const [dateFrom, setDateFrom] = useState(today)
-  const [dateTo, setDateTo] = useState(today)
+  const [dateFrom, setDateFrom] = useState(() => {
+    const value = searchParams.get('dateFrom')
+    return value === 'all' ? '' : isDateFilter(value) ? value : today
+  })
+  const [dateTo, setDateTo] = useState(() => {
+    const value = searchParams.get('dateTo')
+    return isDateFilter(value) ? value : today
+  })
   const [search, setSearch] = useState('')
-  const [methodFilter, setMethodFilter] = useState<PaymentMethod | 'all'>('all')
+  const [methodFilter, setMethodFilter] = useState<OrdersPaymentFilter>(() => {
+    const value = searchParams.get('payment')
+    return isPaymentFilter(value) ? value : 'all'
+  })
   const [customerItemsFilter, setCustomerItemsFilter] = useState<'all' | 'pending'>('all')
+  const [excludeCancelled, setExcludeCancelled] = useState(() => searchParams.get('excludeCancelled') === '1')
+  const [outstandingOnly, setOutstandingOnly] = useState(() => searchParams.get('outstanding') === '1')
   const [showDeleted, setShowDeleted] = useState(false)
   const [editingTransaction, setEditingTransaction] = useState<TransactionWithService | null>(null)
   const [deletingTransaction, setDeletingTransaction] = useState<TransactionWithService | null>(null)
@@ -48,13 +72,16 @@ export default function OrdersPage() {
   const filtered = useMemo(() => {
     const needle = search.trim().toLowerCase()
     return rows.filter((row) => {
-      if (methodFilter !== 'all' && row.payment_method !== methodFilter) return false
+      if (methodFilter === 'collected' && row.payment_method !== 'paid' && row.payment_method !== 'gcash') return false
+      if (methodFilter !== 'all' && methodFilter !== 'collected' && row.payment_method !== methodFilter) return false
+      if (excludeCancelled && row.order_status === 'cancelled') return false
+      if (outstandingOnly && outstandingPayLaterBalance(row) <= 0) return false
       if (customerItemsFilter === 'pending' && !isCustomerItemsPending(row)) return false
       if (!needle) return true
       return [row.customer_name, row.phone_number || '', row.transaction_code || '']
         .some((value) => value.toLowerCase().includes(needle))
     })
-  }, [rows, search, methodFilter, customerItemsFilter])
+  }, [rows, search, methodFilter, excludeCancelled, outstandingOnly, customerItemsFilter])
 
   const stats = useMemo(() => {
     const activeRows = filtered.filter((row) => !row.deleted_at)
@@ -134,10 +161,15 @@ export default function OrdersPage() {
               <select
                 id="orders-payment"
                 value={methodFilter}
-                onChange={(event) => setMethodFilter(event.target.value as PaymentMethod | 'all')}
+                onChange={(event) => {
+                  const next = event.target.value as OrdersPaymentFilter
+                  setMethodFilter(next)
+                  if (next !== 'pay_later') setOutstandingOnly(false)
+                }}
                 className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950 lg:w-40"
               >
                 <option value="all">All payments</option>
+                <option value="collected">Cash + GCash</option>
                 <option value="paid">Cash</option>
                 <option value="gcash">GCash</option>
                 <option value="pay_later">Pay Later</option>
@@ -166,8 +198,8 @@ export default function OrdersPage() {
             </button>
           </div>
 
-          {!historyRestricted && (
             <div className="mt-4 flex flex-wrap items-end gap-2 border-t border-slate-100 pt-4 dark:border-slate-800">
+              {!historyRestricted && <>
               <button type="button" onClick={() => setRange(1)} className="rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700">Today</button>
               <button type="button" onClick={() => setRange(7)} className="rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700">7 days</button>
               <button type="button" onClick={() => setRange(30)} className="rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700">30 days</button>
@@ -179,6 +211,17 @@ export default function OrdersPage() {
                 <span>To</span>
                 <input aria-label="Orders to date" type="date" value={dateTo} onChange={(event) => setDateTo(event.target.value)} className="rounded-lg border border-slate-300 bg-white px-2 py-1.5 dark:border-slate-700 dark:bg-slate-950" />
               </label>
+              </>}
+              <label className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+                <input type="checkbox" checked={excludeCancelled} onChange={(event) => setExcludeCancelled(event.target.checked)} />
+                Exclude cancelled
+              </label>
+              {methodFilter === 'pay_later' && (
+                <label className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+                  <input type="checkbox" checked={outstandingOnly} onChange={(event) => setOutstandingOnly(event.target.checked)} />
+                  Balance due only
+                </label>
+              )}
               {isOwner && (
                 <label className="ml-auto flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
                   <input type="checkbox" checked={showDeleted} onChange={(event) => setShowDeleted(event.target.checked)} />
@@ -186,10 +229,9 @@ export default function OrdersPage() {
                 </label>
               )}
             </div>
-          )}
         </BentoCard>
 
-        <BentoCard title="Transaction history" description={`${filtered.length} matching records · ${effectiveDateFrom} to ${effectiveDateTo}`} icon="orders">
+        <BentoCard title="Transaction history" description={`${filtered.length} matching records · ${effectiveDateFrom || 'all dates'} to ${effectiveDateTo}`} icon="orders">
           <TransactionTable
             rows={filtered}
             loading={loading}
