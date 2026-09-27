@@ -1,4 +1,4 @@
-import { supabase } from './supabase'
+import { supabase } from './supabase.ts'
 
 export const SHOP_BRANDING_BUCKET = 'shop-branding'
 export const PROFILE_AVATARS_BUCKET = 'profile-avatars'
@@ -27,7 +27,7 @@ export function imageExtension(file: File) {
 // would silently discard every frame but one. Detect them up front by
 // walking the container's chunks and skip compression entirely for an
 // animated input — it uploads as-is instead of losing its animation.
-function isAnimatedPng(bytes: Uint8Array): boolean {
+export function isAnimatedPng(bytes: Uint8Array): boolean {
   // PNG: 8-byte signature, then [4-byte length][4-byte type][data][4-byte CRC]
   // chunks. A valid APNG's 'acTL' chunk always precedes the first 'IDAT'.
   let offset = 8
@@ -42,7 +42,7 @@ function isAnimatedPng(bytes: Uint8Array): boolean {
   return false
 }
 
-function isAnimatedWebp(bytes: Uint8Array): boolean {
+export function isAnimatedWebp(bytes: Uint8Array): boolean {
   // WebP: 'RIFF'(4) + size(4) + 'WEBP'(4), then [4-byte fourCC][4-byte size]
   // chunks (data padded to an even length). An animated WebP carries an
   // 'ANIM' chunk.
@@ -57,7 +57,7 @@ function isAnimatedWebp(bytes: Uint8Array): boolean {
   return false
 }
 
-async function isAnimatedImage(file: File): Promise<boolean> {
+export async function isAnimatedImage(file: File): Promise<boolean> {
   if (file.type !== 'image/png' && file.type !== 'image/webp') return false
   try {
     const bytes = new Uint8Array(await file.arrayBuffer())
