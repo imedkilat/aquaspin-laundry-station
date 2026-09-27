@@ -1305,7 +1305,12 @@ try {
     await assert.rejects(status(shortOrder, 'completed'), e => e.code === '23514' && e.message.includes('Insufficient'));
   });
 
-  await test('transaction_service_items RLS: anon denied, and direct inserts require the same permissions as the RPCs', async () => {
+  await test('transaction_service_items writes go through total-validating RPCs', async () => {
+    const inventoryLockFunction = await one(
+      "select pg_get_functiondef('private.lock_transaction_inventory_for_completion()'::regprocedure) as definition",
+    );
+    assert.match(inventoryLockFunction.definition, /order by requested\.item_id/i);
+
     const t = await transaction({ customer_name: 'Direct insert guard', phone_number: null, service_id: wdfId, base_amount: 195, total_amount: 195, payment_method: 'pay_later' });
     await setting('staff_can_create_transactions', false);
     await setting('staff_can_edit_transactions', false);
@@ -1318,6 +1323,25 @@ try {
     await asUser(owner);
     await setting('staff_can_create_transactions', true);
     await setting('staff_can_edit_transactions', true);
+
+    await asUser(staff);
+    const created = await createWithServices(multiServicePrimary({ total_amount: 195 }), [csdbLine()]);
+    const [line] = await q('select id from transaction_service_items where transaction_id=$1', [created.id]);
+    await rejects(
+      'insert into transaction_service_items (transaction_id, service_id, base_amount) values ($1,$2,$3)',
+      [created.id, csdbId, 220],
+      '42501',
+    );
+    await rejects(
+      'update transaction_service_items set base_amount = 1 where id = $1',
+      [line.id],
+      '42501',
+    );
+    await rejects('delete from transaction_service_items where id = $1', [line.id], '42501');
+
+    const reduced = await replaceServices(created.id, created.updated_at, multiServicePrimary({ total_amount: 195 }), []);
+    assert.equal(Number(reduced.total_amount), 195, 'the authorized RPC removes the line and recalculates the parent total');
+    assert.equal((await q('select id from transaction_service_items where transaction_id=$1', [created.id])).length, 0);
 
     await asUser(null, 'anon');
     await rejects('select * from transaction_service_items', [], '42501');
