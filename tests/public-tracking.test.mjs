@@ -43,13 +43,14 @@ test('malformed and tampered tracking tokens fail closed', async () => {
   assert.equal(await verifyPublicTrackingToken(tampered, secret), null)
 })
 
-test('tracking rate-limit keys are stable, address-scoped, and do not contain the address', async () => {
-  const first = await createTrackingRateLimitKey('203.0.113.7', secret)
+test('tracking rate-limit keys are stable, transaction-scoped, and do not contain the transaction ID', async () => {
+  const otherTransactionId = '1ad2c1a7-6e43-4d81-83fb-57d577c42481'
+  const first = await createTrackingRateLimitKey(transactionId, secret)
   assert.ok(first)
-  assert.equal(await createTrackingRateLimitKey('203.0.113.7', secret), first)
-  assert.notEqual(await createTrackingRateLimitKey('203.0.113.8', secret), first)
-  assert.ok(!first.includes('203.0.113.7'))
-  assert.equal(await createTrackingRateLimitKey('', secret), null)
+  assert.equal(await createTrackingRateLimitKey(transactionId, secret), first)
+  assert.notEqual(await createTrackingRateLimitKey(otherTransactionId, secret), first)
+  assert.ok(!first.includes(transactionId))
+  assert.equal(await createTrackingRateLimitKey('not-a-uuid', secret), null)
 })
 
 test('tracking response only includes the public order code and current status', () => {
@@ -109,4 +110,38 @@ test('lookup verifies the capability before reading data and fails closed for hi
   assert.deepEqual(await hidden(null), { found: false })
   assert.deepEqual(await hidden({ transaction_code: 'AQ-TEST', order_status: 'cancelled', deleted_at: null }), { found: false })
   assert.deepEqual(await hidden({ transaction_code: 'AQ-TEST', order_status: 'washing', deleted_at: '2026-09-28T00:00:00Z' }), { found: false })
+})
+
+test('lookup rate limits only verified tokens before reading order data', async () => {
+  const token = await createPublicTrackingToken(transactionId, secret)
+  const calls = []
+  const readOrder = async (id) => {
+    calls.push(['read', id])
+    return { transaction_code: 'AQ-7C08D84E', order_status: 'washing', deleted_at: null }
+  }
+  const checkRateLimit = async (id) => {
+    calls.push(['limit', id])
+    return true
+  }
+
+  assert.deepEqual(await lookupPublicTrackingStatus('forged-token', secret, readOrder, checkRateLimit), { found: false })
+  assert.deepEqual(calls, [], 'invalid token must not invoke rate limiting or read order data')
+
+  assert.deepEqual(await lookupPublicTrackingStatus(token, secret, readOrder, checkRateLimit), {
+    found: true,
+    transaction_code: 'AQ-7C08D84E',
+    order_status: 'washing',
+  })
+  assert.deepEqual(calls, [['limit', transactionId], ['read', transactionId]])
+
+  calls.length = 0
+  const rejectRateLimit = async (id) => {
+    calls.push(['limit', id])
+    return false
+  }
+  assert.deepEqual(await lookupPublicTrackingStatus(token, secret, readOrder, rejectRateLimit), {
+    found: false,
+    rate_limited: true,
+  })
+  assert.deepEqual(calls, [['limit', transactionId]], 'rate-limited token must not read order data')
 })

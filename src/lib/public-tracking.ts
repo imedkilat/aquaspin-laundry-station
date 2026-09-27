@@ -12,6 +12,7 @@ export type PublicTrackingStatus = {
 export type PublicTrackingLookupResult =
   | { found: true; transaction_code: string; order_status: string }
   | { found: false }
+  | { found: false; rate_limited: true }
 
 export function canIssuePublicTrackingLink(profile: { role?: unknown; is_active?: unknown } | null): boolean {
   return Boolean(profile?.is_active === true && (profile.role === 'owner' || profile.role === 'staff'))
@@ -59,12 +60,12 @@ export async function createPublicTrackingToken(transactionId: string, secretHex
   return `${TOKEN_PREFIX}.${transactionId.toLowerCase()}.${toBase64Url(signature)}`
 }
 
-/** Hash the network address for the existing service-role rate-limit table. */
-export async function createTrackingRateLimitKey(clientAddress: string, secretHex: string): Promise<string | null> {
-  if (!clientAddress || clientAddress.length > 128) return null
+/** Hash a verified transaction ID for the existing service-role rate-limit table. */
+export async function createTrackingRateLimitKey(transactionId: string, secretHex: string): Promise<string | null> {
+  if (!UUID_PATTERN.test(transactionId)) return null
   const key = await importHmacKey(secretHex)
   if (!key) return null
-  const message = new TextEncoder().encode(`aquaspin:public-order-tracking:rate-limit:v1:${clientAddress}`)
+  const message = new TextEncoder().encode(`aquaspin:public-order-tracking:rate-limit:v1:${transactionId.toLowerCase()}`)
   const digest = new Uint8Array(await crypto.subtle.sign('HMAC', key, message))
   return `public-order-tracking:${toBase64Url(digest)}`
 }
@@ -107,9 +108,11 @@ export async function lookupPublicTrackingStatus(
   token: string,
   secretHex: string | readonly string[],
   readOrder: (transactionId: string) => Promise<Record<string, unknown> | null>,
+  checkRateLimit?: (transactionId: string) => Promise<boolean>,
 ): Promise<PublicTrackingLookupResult> {
   const transactionId = await verifyPublicTrackingToken(token, secretHex)
   if (!transactionId) return { found: false }
+  if (checkRateLimit && !await checkRateLimit(transactionId)) return { found: false, rate_limited: true }
 
   const row = await readOrder(transactionId)
   if (!row || row.deleted_at || row.order_status === 'cancelled') return { found: false }

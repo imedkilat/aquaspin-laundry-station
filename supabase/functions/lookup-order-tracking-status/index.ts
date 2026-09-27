@@ -31,23 +31,9 @@ Deno.serve(async (request: Request) => {
     // links should stop working. Issuance always uses the current key.
     const verificationSecrets = [secret, Deno.env.get('TRACKING_TOKEN_PREVIOUS_SECRET_HEX')]
       .filter((value): value is string => Boolean(value))
-    // Supabase's gateway provides the client address in X-Forwarded-For.
-    // Store only an HMAC of it in rate_limit_hits, never the raw address.
-    const forwardedFor = request.headers.get('x-forwarded-for')
-    const clientAddress = forwardedFor?.split(',')[0]?.trim()
-    const rateLimitKey = clientAddress ? await createTrackingRateLimitKey(clientAddress, secret) : null
-    if (!rateLimitKey) return json(503, { found: false, error: 'Tracking is temporarily unavailable.' })
-
     const admin = createClient(supabaseUrl, serviceRoleKey, {
       auth: { persistSession: false, autoRefreshToken: false },
     })
-    const { data: withinLimit, error: rateLimitError } = await admin.rpc('check_rate_limit', {
-      p_key: rateLimitKey,
-      p_max_count: 60,
-      p_window_seconds: 60,
-    })
-    if (rateLimitError) return json(503, { found: false, error: 'Tracking is temporarily unavailable.' })
-    if (!withinLimit) return json(429, { found: false, error: 'Too many tracking checks. Try again shortly.' })
 
     const payload: unknown = await request.json()
     const token = typeof payload === 'object' && payload !== null && 'token' in payload
@@ -57,15 +43,33 @@ Deno.serve(async (request: Request) => {
 
     // The privileged client is used only after validating the signed capability.
     // Its selected columns and response are deliberately restricted to the public allowlist.
-    const result = await lookupPublicTrackingStatus(token, verificationSecrets, async (transactionId) => {
-      const { data: row, error } = await admin
-        .from('transactions')
-        .select('transaction_code, order_status, deleted_at')
-        .eq('id', transactionId)
-        .maybeSingle()
-      if (error) throw error
-      return row
-    })
+    const result = await lookupPublicTrackingStatus(
+      token,
+      verificationSecrets,
+      async (transactionId) => {
+        const { data: row, error } = await admin
+          .from('transactions')
+          .select('transaction_code, order_status, deleted_at')
+          .eq('id', transactionId)
+          .maybeSingle()
+        if (error) throw error
+        return row
+      },
+      async (transactionId) => {
+        const rateLimitKey = await createTrackingRateLimitKey(transactionId, secret)
+        if (!rateLimitKey) throw new Error('Unable to create tracking rate-limit key.')
+        const { data: withinLimit, error } = await admin.rpc('check_rate_limit', {
+          p_key: rateLimitKey,
+          p_max_count: 60,
+          p_window_seconds: 60,
+        })
+        if (error) throw error
+        return Boolean(withinLimit)
+      },
+    )
+    if ('rate_limited' in result) {
+      return json(429, { found: false, error: 'Too many tracking checks. Try again shortly.' })
+    }
     return result.found
       ? json(200, result)
       : json(404, { found: false, error: 'Order not found.' })
