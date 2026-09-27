@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { readFile } from 'node:fs/promises'
 import {
   buildThermalReceiptParts,
   buildThermalDocumentHtml,
@@ -543,5 +544,260 @@ test('openThermalPrintWindow with omitQr=true writes slip with omission notice w
   assert.equal(issuerCalled, false)
   assert.match(writtenHtml, /\[ Live tracking QR omitted \]/)
   assert.doesNotMatch(writtenHtml, /Scan to track live order status/)
+})
+
+function simulateTransactionDetailReload({ transactionResult, customerItemsResult, serviceItemsResult, historyResult }) {
+  let loading = true
+  let error = null
+  let customerItems = null
+  let serviceItems = null
+  let customerItemsError = null
+  let serviceItemsError = null
+  let history = []
+  let transaction = null
+
+  if (transactionResult.error) {
+    error = 'Could not load this order. Check your connection and try again.'
+    customerItems = null
+    serviceItems = null
+    loading = false
+    return {
+      transaction,
+      customerItems,
+      serviceItems,
+      customerItemsError,
+      serviceItemsError,
+      history,
+      error,
+      loading,
+      isPrintDisabled: true,
+      alertTitle: 'Order unavailable',
+    }
+  }
+
+  transaction = transactionResult.data ?? null
+
+  if (customerItemsResult.error) {
+    customerItems = null
+    const msg = 'The order opened, but customer clothing items could not be loaded. Refresh and try again.'
+    customerItemsError = msg
+    error = msg
+  } else {
+    customerItems = customerItemsResult.data ?? []
+    customerItemsError = null
+  }
+
+  if (serviceItemsResult.error) {
+    serviceItems = null
+    const msg = 'The order opened, but additional service lines could not be loaded. Refresh and try again.'
+    serviceItemsError = msg
+    error = error ? `${error} Also, additional service lines could not be loaded.` : msg
+  } else {
+    serviceItems = serviceItemsResult.data ?? []
+    serviceItemsError = null
+  }
+
+  if (historyResult?.error) {
+    history = []
+    error = error || 'The order opened, but its status history could not be loaded. Refresh and try again.'
+  } else {
+    history = historyResult?.data ?? []
+  }
+
+  loading = false
+
+  const isPrintDisabled = loading || Boolean(customerItemsError || serviceItemsError)
+  const alertTitle = customerItemsError || serviceItemsError ? 'Order details incomplete' : 'Order action did not finish'
+
+  const modalInitialDetailsError =
+    customerItemsError ||
+    serviceItemsError ||
+    (customerItems === null ? 'Could not load clothing items for this order. Please try again.' : null) ||
+    (serviceItems === null ? 'Could not load service lines for this order. Please try again.' : null)
+
+  const modalLoadingDetails = !modalInitialDetailsError && (customerItems === undefined || serviceItems === undefined)
+  const modalPrintDisabled = modalLoadingDetails || Boolean(modalInitialDetailsError)
+  const modalButtonLabel = modalLoadingDetails ? 'Loading details…' : modalInitialDetailsError ? 'Print Disabled' : 'Print'
+
+  return {
+    transaction,
+    customerItems,
+    serviceItems,
+    customerItemsError,
+    serviceItemsError,
+    history,
+    error,
+    loading,
+    isPrintDisabled,
+    alertTitle,
+    modal: {
+      initialDetailsError: modalInitialDetailsError,
+      loadingDetails: modalLoadingDetails,
+      isPrintDisabled: modalPrintDisabled,
+      buttonLabel: modalButtonLabel,
+    },
+  }
+}
+
+test('customer-item query failure in TransactionDetailPage blocks printing and displays clear error', () => {
+  const result = simulateTransactionDetailReload({
+    transactionResult: { data: makeTransaction(), error: null },
+    customerItemsResult: { data: null, error: { message: 'Database query timeout on customer items' } },
+    serviceItemsResult: { data: [], error: null },
+  })
+
+  // Customer items must be null, not []
+  assert.equal(result.customerItems, null)
+  // Error must be clearly recorded and shown
+  assert.equal(result.customerItemsError, 'The order opened, but customer clothing items could not be loaded. Refresh and try again.')
+  assert.equal(result.error, 'The order opened, but customer clothing items could not be loaded. Refresh and try again.')
+  assert.equal(result.alertTitle, 'Order details incomplete')
+  // Page print button must be disabled
+  assert.equal(result.isPrintDisabled, true)
+  // Modal print button must be disabled with 'Print Disabled' label and error set
+  assert.equal(result.modal.isPrintDisabled, true)
+  assert.equal(result.modal.buttonLabel, 'Print Disabled')
+  assert.match(result.modal.initialDetailsError, /clothing items/)
+})
+
+test('service-item query failure in TransactionDetailPage blocks printing and displays clear error', () => {
+  const result = simulateTransactionDetailReload({
+    transactionResult: { data: makeTransaction(), error: null },
+    customerItemsResult: { data: [{ id: 'ci-1', quantity: 2 }], error: null },
+    serviceItemsResult: { data: null, error: { message: 'Network dropped connection on service items' } },
+  })
+
+  // Service items must be null, not []
+  assert.equal(result.serviceItems, null)
+  // Error must be clearly recorded and shown
+  assert.equal(result.serviceItemsError, 'The order opened, but additional service lines could not be loaded. Refresh and try again.')
+  assert.equal(result.error, 'The order opened, but additional service lines could not be loaded. Refresh and try again.')
+  assert.equal(result.alertTitle, 'Order details incomplete')
+  // Page print button must be disabled
+  assert.equal(result.isPrintDisabled, true)
+  // Modal print button must be disabled with 'Print Disabled' label and error set
+  assert.equal(result.modal.isPrintDisabled, true)
+  assert.equal(result.modal.buttonLabel, 'Print Disabled')
+  assert.match(result.modal.initialDetailsError, /service lines/)
+})
+
+test('simultaneous customer-item and service-item query failures combine errors and block printing', () => {
+  const result = simulateTransactionDetailReload({
+    transactionResult: { data: makeTransaction(), error: null },
+    customerItemsResult: { data: null, error: { message: 'Customer item query timeout' } },
+    serviceItemsResult: { data: null, error: { message: 'Service item query timeout' } },
+  })
+
+  assert.equal(result.customerItems, null)
+  assert.equal(result.serviceItems, null)
+  assert.match(result.error, /customer clothing items could not be loaded/)
+  assert.match(result.error, /additional service lines could not be loaded/)
+  assert.equal(result.isPrintDisabled, true)
+  assert.equal(result.modal.isPrintDisabled, true)
+  assert.equal(result.modal.buttonLabel, 'Print Disabled')
+})
+
+test('successful queries returning empty lists are treated as valid loaded data without error or print blocking', () => {
+  const result = simulateTransactionDetailReload({
+    transactionResult: { data: makeTransaction(), error: null },
+    customerItemsResult: { data: [], error: null },
+    serviceItemsResult: { data: [], error: null },
+  })
+
+  // Lists are empty arrays (not null)
+  assert.deepEqual(result.customerItems, [])
+  assert.deepEqual(result.serviceItems, [])
+  // No error states
+  assert.equal(result.customerItemsError, null)
+  assert.equal(result.serviceItemsError, null)
+  assert.equal(result.error, null)
+  // Page print action is enabled
+  assert.equal(result.isPrintDisabled, false)
+  // Modal print action is enabled
+  assert.equal(result.modal.isPrintDisabled, false)
+  assert.equal(result.modal.buttonLabel, 'Print')
+  assert.equal(result.modal.initialDetailsError, null)
+})
+
+test('TransactionDetailPage preserves query failure as error and disables print action', async () => {
+  const detailPage = await readFile(new URL('../src/pages/TransactionDetailPage.tsx', import.meta.url), 'utf8')
+
+  // Preserves null distinctly rather than silently coercing errors to []
+  assert.doesNotMatch(detailPage, /customerItemsResult\.error\s*\?\s*\[\]/)
+  assert.doesNotMatch(detailPage, /serviceItemsResult\.error\s*\?\s*\[\]/)
+
+  // State definitions track nullable items and distinct error messages
+  assert.match(detailPage, /useState<TransactionCustomerItem\[\] \| null>\(null\)/)
+  assert.match(detailPage, /useState<TransactionServiceItem\[\] \| null>\(null\)/)
+  assert.match(detailPage, /const \[customerItemsError, setCustomerItemsError\] = useState<string \| null>\(null\)/)
+  assert.match(detailPage, /const \[serviceItemsError, setServiceItemsError\] = useState<string \| null>\(null\)/)
+
+  // On query error, sets items to null and populates error messages
+  assert.match(detailPage, /if \(customerItemsResult\.error\)\s*\{\s*setCustomerItems\(null\)/)
+  assert.match(detailPage, /setCustomerItemsError\(msg\)/)
+  assert.match(detailPage, /if \(serviceItemsResult\.error\)\s*\{\s*setServiceItems\(null\)/)
+  assert.match(detailPage, /setServiceItemsError\(msg\)/)
+
+  // Print button is disabled on loading or query errors
+  assert.match(detailPage, /disabled=\{loading \|\| Boolean\(customerItemsError \|\| serviceItemsError\)\}/)
+  assert.match(detailPage, /title=\{customerItemsError \|\| serviceItemsError \? 'Cannot print while order details failed to load' : undefined\}/)
+
+  // Error and item states are explicitly forwarded to ThermalPrintModal
+  assert.match(detailPage, /customerItems=\{customerItems\}/)
+  assert.match(detailPage, /serviceItems=\{serviceItems\}/)
+  assert.match(detailPage, /customerItemsError=\{customerItemsError\}/)
+  assert.match(detailPage, /serviceItemsError=\{serviceItemsError\}/)
+})
+
+test('ThermalPrintModal preserves distinct loading, error, and empty-list states and blocks printing on failure', async () => {
+  const modalCode = await readFile(new URL('../src/components/ThermalPrintModal.tsx', import.meta.url), 'utf8')
+
+  // Prop signature accepts nullable items and explicit error messages
+  assert.match(modalCode, /customerItems\?:\s*TransactionCustomerItem\[\]\s*\|\s*null/)
+  assert.match(modalCode, /serviceItems\?:\s*TransactionServiceItem\[\]\s*\|\s*null/)
+  assert.match(modalCode, /customerItemsError\?:\s*string\s*\|\s*null/)
+  assert.match(modalCode, /serviceItemsError\?:\s*string\s*\|\s*null/)
+
+  // Distinct error evaluation: treats null as failure, but preserves empty list []
+  assert.match(modalCode, /initialCustomerItems === null/)
+  assert.match(modalCode, /initialServiceItems === null/)
+  assert.doesNotMatch(modalCode, /initialCustomerItems\.length === 0\s*\?/)
+
+  // Clearly notifies user when slip cannot be generated
+  assert.match(modalCode, /Cannot Generate Slip/)
+  assert.match(modalCode, /Printing is disabled to prevent producing slips with incomplete items or services/)
+
+  // Print button is disabled with descriptive label when detailsError is set
+  assert.match(modalCode, /disabled=\{printing \|\| loadingDetails \|\| Boolean\(detailsError\)\}/)
+  assert.match(modalCode, /detailsError\s*\n\s*\?\s*'Print Disabled'/)
+
+  // handlePrint guards against printing when detailsError is present
+  assert.match(modalCode, /if \(detailsError\)\s*\{\s*setError\(detailsError\)\s*return\s*\}/)
+
+  // In-modal query failure sets detailsError
+  assert.match(modalCode, /if \(custRes\.error \|\| servRes\.error\)/)
+  assert.match(modalCode, /setDetailsError\(/)
+})
+
+test('successfully loaded empty customer-items and service-items lists remain printable', () => {
+  const transaction = makeTransaction({
+    service_code_snapshot: 'WDF',
+  })
+
+  // Successfully loaded empty list ([]):
+  const { bagTagHtml, receiptHtml } = buildThermalReceiptParts({
+    transaction,
+    customerItems: [],
+    serviceItems: [],
+    mode: 'both',
+  })
+
+  // Bag tag renders with empty warning, allowing printing without silent failure
+  assert.match(bagTagHtml, /\*\*\* NO GARMENT COUNT RECORDED \*\*\*/)
+  assert.match(bagTagHtml, /Clothing items pending count \/ check-in/)
+
+  // Receipt renders primary service normally
+  assert.match(receiptHtml, /Wash-Dry-Fold/)
+  assert.match(receiptHtml, /₱180\.00/)
 })
 

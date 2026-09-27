@@ -20,11 +20,15 @@ export default function ThermalPrintModal({
   transaction,
   customerItems: initialCustomerItems,
   serviceItems: initialServiceItems,
+  customerItemsError: initialCustomerItemsError,
+  serviceItemsError: initialServiceItemsError,
   onClose,
 }: {
   transaction: TransactionWithService
-  customerItems?: TransactionCustomerItem[]
-  serviceItems?: TransactionServiceItem[]
+  customerItems?: TransactionCustomerItem[] | null
+  serviceItems?: TransactionServiceItem[] | null
+  customerItemsError?: string | null
+  serviceItemsError?: string | null
   onClose: () => void
 }) {
   const { settings } = useShopSettings()
@@ -33,11 +37,19 @@ export default function ThermalPrintModal({
   const [printing, setPrinting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  const initialDetailsError =
+    initialCustomerItemsError ||
+    initialServiceItemsError ||
+    (initialCustomerItems === null ? 'Could not load clothing items for this order. Please try again.' : null) ||
+    (initialServiceItems === null ? 'Could not load service lines for this order. Please try again.' : null)
+
   // Loaded details state
   const [customerItems, setCustomerItems] = useState<TransactionCustomerItem[]>(initialCustomerItems ?? [])
   const [serviceItems, setServiceItems] = useState<TransactionServiceItem[]>(initialServiceItems ?? [])
-  const [loadingDetails, setLoadingDetails] = useState(!initialCustomerItems || !initialServiceItems)
-  const [detailsError, setDetailsError] = useState<string | null>(null)
+  const [loadingDetails, setLoadingDetails] = useState(
+    !initialDetailsError && (initialCustomerItems === undefined || initialServiceItems === undefined)
+  )
+  const [detailsError, setDetailsError] = useState<string | null>(initialDetailsError)
   const [qrSvg, setQrSvg] = useState<string>('')
   const [loadingQr, setLoadingQr] = useState<boolean>(true)
   const [qrError, setQrError] = useState<string | null>(null)
@@ -91,10 +103,22 @@ export default function ThermalPrintModal({
 
   // Fetch missing customerItems or serviceItems from DB if not provided by caller
   useEffect(() => {
+    if (initialCustomerItemsError || initialServiceItemsError || initialCustomerItems === null || initialServiceItems === null) {
+      const err =
+        initialCustomerItemsError ||
+        initialServiceItemsError ||
+        (initialCustomerItems === null ? 'Could not load clothing items for this order. Please try again.' : null) ||
+        'Could not load service lines for this order. Please try again.'
+      setDetailsError(err)
+      setLoadingDetails(false)
+      return
+    }
+
     if (initialCustomerItems !== undefined && initialServiceItems !== undefined) {
       setCustomerItems(initialCustomerItems)
       setServiceItems(initialServiceItems)
       setLoadingDetails(false)
+      setDetailsError(null)
       return
     }
 
@@ -125,7 +149,13 @@ export default function ThermalPrintModal({
         if (cancelled) return
 
         if (custRes.error || servRes.error) {
-          setDetailsError('Could not load clothing items or services for this order. Please try again.')
+          const errMsg =
+            custRes.error && servRes.error
+              ? 'Could not load clothing items or services for this order. Please try again.'
+              : custRes.error
+              ? 'Could not load clothing items for this order. Please try again.'
+              : 'Could not load service lines for this order. Please try again.'
+          setDetailsError(errMsg)
           return
         }
 
@@ -149,9 +179,14 @@ export default function ThermalPrintModal({
     return () => {
       cancelled = true
     }
-  }, [transaction.id, initialCustomerItems, initialServiceItems])
+  }, [transaction.id, initialCustomerItems, initialServiceItems, initialCustomerItemsError, initialServiceItemsError])
 
   const handlePrint = async () => {
+    if (detailsError) {
+      setError(detailsError)
+      return
+    }
+
     // 1. Open popup synchronously during user gesture to avoid popup blocker
     const printWindow = window.open('', '_blank', 'width=450,height=720')
     if (!printWindow) {
@@ -665,6 +700,16 @@ export default function ThermalPrintModal({
               <ButtonSpinner />
               <p className="mt-3 text-xs">Loading order clothing items and services…</p>
             </div>
+          ) : detailsError ? (
+            <div className="flex flex-col items-center justify-center p-8 text-center text-slate-500">
+              <div className="rounded-xl border border-red-200 bg-red-50 p-6 text-red-700 dark:border-red-900/50 dark:bg-red-950/50 dark:text-red-300 max-w-sm">
+                <p className="font-semibold text-sm">Cannot Generate Slip</p>
+                <p className="mt-1 text-xs">{detailsError}</p>
+                <p className="mt-2 text-[11px] text-red-600/80 dark:text-red-400/80">
+                  Printing is disabled to prevent producing slips with incomplete items or services.
+                </p>
+              </div>
+            </div>
           ) : (
             <div className={`mx-auto ${previewWidthClass} rounded-lg border border-slate-300 bg-white p-4 font-mono text-xs text-slate-900 shadow-md dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 transition-all`}>
               {mode === 'receipt' && renderReceiptPreview()}
@@ -708,6 +753,8 @@ export default function ThermalPrintModal({
                 <span>
                   {loadingDetails
                     ? 'Loading details…'
+                    : detailsError
+                    ? 'Print Disabled'
                     : qrError
                     ? `Print ${mode === 'bag_tag' ? 'Bag Tag' : mode === 'both' ? 'Both Slips' : 'Receipt'} (No QR)`
                     : `Print ${mode === 'bag_tag' ? 'Bag Tag' : mode === 'both' ? 'Both Slips' : 'Receipt'}`}

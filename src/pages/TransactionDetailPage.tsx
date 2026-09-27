@@ -52,8 +52,10 @@ export default function TransactionDetailPage() {
 
   const [transaction, setTransaction] = useState<TransactionWithService | null>(null)
   const isTerminalOrder = ['completed', 'cancelled'].includes(transaction?.order_status ?? '')
-  const [customerItems, setCustomerItems] = useState<TransactionCustomerItem[]>([])
-  const [serviceItems, setServiceItems] = useState<TransactionServiceItem[]>([])
+  const [customerItems, setCustomerItems] = useState<TransactionCustomerItem[] | null>(null)
+  const [serviceItems, setServiceItems] = useState<TransactionServiceItem[] | null>(null)
+  const [customerItemsError, setCustomerItemsError] = useState<string | null>(null)
+  const [serviceItemsError, setServiceItemsError] = useState<string | null>(null)
   const [history, setHistory] = useState<TransactionStatusHistoryWithActor[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -88,6 +90,8 @@ export default function TransactionDetailPage() {
     if (!id) return
     setLoading(true)
     setError(null)
+    setCustomerItemsError(null)
+    setServiceItemsError(null)
 
     const [transactionResult, historyResult, customerItemsResult, serviceItemsResult] = await Promise.all([
       supabase.from('transactions').select(SELECT).eq('id', id).maybeSingle(),
@@ -98,20 +102,37 @@ export default function TransactionDetailPage() {
 
     if (transactionResult.error) {
       setError('Could not load this order. Check your connection and try again.')
+      setCustomerItems(null)
+      setServiceItems(null)
       setLoading(false)
       return
     }
 
     setTransaction((transactionResult.data as unknown as TransactionWithService | null) ?? null)
-    setCustomerItems(customerItemsResult.error ? [] : (customerItemsResult.data as unknown as TransactionCustomerItem[]) ?? [])
-    setServiceItems(serviceItemsResult.error ? [] : (serviceItemsResult.data as unknown as TransactionServiceItem[]) ?? [])
+
     if (customerItemsResult.error) {
-      setError('The order opened, but customer clothing items could not be loaded. Refresh and try again.')
-    } else if (serviceItemsResult.error) {
-      setError('The order opened, but additional service lines could not be loaded. Refresh and try again.')
-    } else if (historyResult.error) {
+      setCustomerItems(null)
+      const msg = 'The order opened, but customer clothing items could not be loaded. Refresh and try again.'
+      setCustomerItemsError(msg)
+      setError(msg)
+    } else {
+      setCustomerItems((customerItemsResult.data as unknown as TransactionCustomerItem[]) ?? [])
+      setCustomerItemsError(null)
+    }
+
+    if (serviceItemsResult.error) {
+      setServiceItems(null)
+      const msg = 'The order opened, but additional service lines could not be loaded. Refresh and try again.'
+      setServiceItemsError(msg)
+      setError((prev) => prev ? `${prev} Also, additional service lines could not be loaded.` : msg)
+    } else {
+      setServiceItems((serviceItemsResult.data as unknown as TransactionServiceItem[]) ?? [])
+      setServiceItemsError(null)
+    }
+
+    if (historyResult.error) {
       setHistory([])
-      setError('The order opened, but its status history could not be loaded. Refresh and try again.')
+      setError((prev) => prev || 'The order opened, but its status history could not be loaded. Refresh and try again.')
     } else {
       setHistory((historyResult.data as unknown as TransactionStatusHistoryWithActor[]) ?? [])
     }
@@ -235,7 +256,9 @@ export default function TransactionDetailPage() {
                 <button
                   type="button"
                   onClick={() => setShowThermalModal(true)}
-                  className="inline-flex items-center gap-1.5 rounded-xl border border-sky-300 bg-sky-50 px-4 py-2 text-sm font-semibold text-sky-700 hover:bg-sky-100 dark:border-sky-800 dark:bg-sky-950 dark:text-sky-300 dark:hover:bg-sky-900"
+                  disabled={loading || Boolean(customerItemsError || serviceItemsError)}
+                  title={customerItemsError || serviceItemsError ? 'Cannot print while order details failed to load' : undefined}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-sky-300 bg-sky-50 px-4 py-2 text-sm font-semibold text-sky-700 hover:bg-sky-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-sky-800 dark:bg-sky-950 dark:text-sky-300 dark:hover:bg-sky-900"
                 >
                   <UiIcon name="printer" size={16} />
                   Print Receipt / Bag Tag
@@ -267,7 +290,16 @@ export default function TransactionDetailPage() {
           {trackingError && <p className="mt-2 text-sm font-medium text-red-600 dark:text-red-400">{trackingError}</p>}
         </div>
 
-        {error && <InlineAlert variant="error" title="Order action did not finish" actionLabel="Refresh" onAction={() => void reload()}>{error}</InlineAlert>}
+        {error && (
+          <InlineAlert
+            variant="error"
+            title={customerItemsError || serviceItemsError ? 'Order details incomplete' : 'Order action did not finish'}
+            actionLabel="Refresh"
+            onAction={() => void reload()}
+          >
+            {error}
+          </InlineAlert>
+        )}
 
         {transaction.deleted_at && (
           <InlineAlert variant="warning" title="This transaction is soft-deleted">
@@ -277,7 +309,7 @@ export default function TransactionDetailPage() {
 
         <TransactionStatusPanel
           transaction={transaction}
-          hasCustomerItems={customerItems.length > 0 && customerItems.some((item) => item.quantity > 0)}
+          hasCustomerItems={Boolean(customerItems && customerItems.length > 0 && customerItems.some((item) => item.quantity > 0))}
           history={history}
           canEdit={canEdit && !transaction.deleted_at}
           isOwner={isOwner}
@@ -287,8 +319,8 @@ export default function TransactionDetailPage() {
         {isDropOffTransaction(transaction) && (
           <CustomerItemsCard
             transactionId={transaction.id}
-            items={customerItems}
-            canEdit={canEdit && !transaction.deleted_at && !['completed', 'cancelled'].includes(transaction.order_status)}
+            items={customerItems ?? []}
+            canEdit={canEdit && !transaction.deleted_at && !['completed', 'cancelled'].includes(transaction.order_status) && !customerItemsError}
             onSaved={reload}
           />
         )}
@@ -300,7 +332,7 @@ export default function TransactionDetailPage() {
             <DetailRow label="Notes" value={transaction.notes || '—'} multiline />
           </DetailCard>
 
-          <DetailCard title={serviceItems.length > 0 ? 'Primary Service' : 'Laundry'}>
+          <DetailCard title={(serviceItems && serviceItems.length > 0) ? 'Primary Service' : 'Laundry'}>
             <DetailRow label="Service" value={transaction.service_label_snapshot || transaction.service_code_snapshot || transaction.services?.label || transaction.services?.code || '—'} />
             <DetailRow label="Weight" value={transaction.kg != null ? `${transaction.kg} kg` : '—'} />
             <DetailRow label="Loads" value={transaction.no_of_loads != null ? String(transaction.no_of_loads) : '—'} />
@@ -314,7 +346,7 @@ export default function TransactionDetailPage() {
           </DetailCard>
         </section>
 
-        {serviceItems.length > 0 && (
+        {(serviceItems && serviceItems.length > 0) && (
           <section className="space-y-3">
             <h2 className="font-semibold text-slate-900 dark:text-slate-100">Additional Services ({serviceItems.length})</h2>
             <div className="grid gap-4 lg:grid-cols-2">
@@ -344,7 +376,7 @@ export default function TransactionDetailPage() {
         )}
 
         <section className="grid gap-4 lg:grid-cols-[1.3fr_1fr]">
-          <DetailCard title={serviceItems.length > 0 ? 'Primary Service Add-ons' : 'Add-ons'}>
+          <DetailCard title={(serviceItems && serviceItems.length > 0) ? 'Primary Service Add-ons' : 'Add-ons'}>
             {transaction.add_on_items?.length ? (
               <div className="space-y-2">
                 {transaction.add_on_items.map((item, index) => (
@@ -368,7 +400,7 @@ export default function TransactionDetailPage() {
 
           <DetailCard title="Payment">
             <DetailRow label="Total" value={peso(transaction.total_amount)} strong />
-            {serviceItems.length > 0 && (
+            {(serviceItems && serviceItems.length > 0) && (
               <p className="text-xs text-slate-500">Grand total across the primary service and {serviceItems.length} additional service{serviceItems.length === 1 ? '' : 's'}.</p>
             )}
             {transaction.payment_method === 'paid' && <>
@@ -412,6 +444,8 @@ export default function TransactionDetailPage() {
           transaction={transaction}
           customerItems={customerItems}
           serviceItems={serviceItems}
+          customerItemsError={customerItemsError}
+          serviceItemsError={serviceItemsError}
           onClose={() => setShowThermalModal(false)}
         />
       )}
