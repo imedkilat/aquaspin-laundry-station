@@ -606,6 +606,11 @@ test('unsupplied modal details remain a loading/fetch state while null details r
   }), /clothing items/)
 })
 
+test('print details cannot be used while a parent page reload is in progress', () => {
+  assert.equal(canPrintDetails([{ quantity: 1 }], [{ position: 1 }], null, true), false)
+  assert.equal(canPrintDetails([{ quantity: 1 }], [{ position: 1 }], null, false), true)
+})
+
 test('TransactionDetailPage preserves query failure as error and disables print action', async () => {
   const detailPage = await readFile(new URL('../src/pages/TransactionDetailPage.tsx', import.meta.url), 'utf8')
 
@@ -623,7 +628,7 @@ test('TransactionDetailPage preserves query failure as error and disables print 
   assert.match(detailPage, /setServiceItemsError\(printDetails\.serviceItemsError\)/)
 
   // Print button is disabled on loading or query errors
-  assert.match(detailPage, /disabled=\{loading \|\| !canPrintDetails\(customerItems, serviceItems, customerItemsError \|\| serviceItemsError\)\}/)
+  assert.match(detailPage, /disabled=\{loading \|\| !canPrintDetails\(customerItems, serviceItems, customerItemsError \|\| serviceItemsError, loading\)\}/)
   assert.match(detailPage, /title=\{customerItemsError \|\| serviceItemsError \? 'Cannot print while order details failed to load' : undefined\}/)
 
   // Error and item states are explicitly forwarded to ThermalPrintModal
@@ -631,6 +636,7 @@ test('TransactionDetailPage preserves query failure as error and disables print 
   assert.match(detailPage, /serviceItems=\{serviceItems\}/)
   assert.match(detailPage, /customerItemsError=\{customerItemsError\}/)
   assert.match(detailPage, /serviceItemsError=\{serviceItemsError\}/)
+  assert.match(detailPage, /parentLoading=\{loading\}/)
 })
 
 test('ThermalPrintModal preserves distinct loading, error, and empty-list states and blocks printing on failure', async () => {
@@ -641,6 +647,7 @@ test('ThermalPrintModal preserves distinct loading, error, and empty-list states
   assert.match(modalCode, /serviceItems\?:\s*TransactionServiceItem\[\]\s*\|\s*null/)
   assert.match(modalCode, /customerItemsError\?:\s*string\s*\|\s*null/)
   assert.match(modalCode, /serviceItemsError\?:\s*string\s*\|\s*null/)
+  assert.match(modalCode, /parentLoading\?:\s*boolean/)
 
   // Uses the tested shared resolver for null failures while allowing undefined to be fetched
   assert.match(modalCode, /getPrintDetailsError\(/)
@@ -650,7 +657,7 @@ test('ThermalPrintModal preserves distinct loading, error, and empty-list states
   assert.match(modalCode, /Printing is disabled to prevent producing slips with incomplete items or services/)
 
   // Print button is disabled with descriptive label when detailsError is set
-  assert.match(modalCode, /disabled=\{printing \|\| loadingDetails \|\| !canPrintDetails\(customerItems, serviceItems, detailsError\)\}/)
+  assert.match(modalCode, /disabled=\{printing \|\| isLoadingDetails \|\| !canPrintDetails\(customerItems, serviceItems, detailsError, isLoadingDetails\)\}/)
   assert.match(modalCode, /detailsError\s*\n\s*\?\s*'Print Disabled'/)
 
   // handlePrint guards against printing when detailsError is present
@@ -658,7 +665,7 @@ test('ThermalPrintModal preserves distinct loading, error, and empty-list states
 
   // In-modal query failure sets detailsError
   assert.match(modalCode, /if \(custRes\.error \|\| servRes\.error\)/)
-  assert.match(modalCode, /setDetailsError\(/)
+  assert.match(modalCode, /setLoadedDetailsError\(/)
 })
 
 test('successfully loaded empty customer-items and service-items lists remain printable', () => {

@@ -257,7 +257,7 @@ export default function TransactionDetailPage() {
                 <button
                   type="button"
                   onClick={() => setShowThermalModal(true)}
-                  disabled={loading || !canPrintDetails(customerItems, serviceItems, customerItemsError || serviceItemsError)}
+                  disabled={loading || !canPrintDetails(customerItems, serviceItems, customerItemsError || serviceItemsError, loading)}
                   title={customerItemsError || serviceItemsError ? 'Cannot print while order details failed to load' : undefined}
                   className="inline-flex items-center gap-1.5 rounded-xl border border-sky-300 bg-sky-50 px-4 py-2 text-sm font-semibold text-sky-700 hover:bg-sky-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-sky-800 dark:bg-sky-950 dark:text-sky-300 dark:hover:bg-sky-900"
                 >
@@ -447,6 +447,7 @@ export default function TransactionDetailPage() {
           serviceItems={serviceItems}
           customerItemsError={customerItemsError}
           serviceItemsError={serviceItemsError}
+          parentLoading={loading}
           onClose={() => setShowThermalModal(false)}
         />
       )}

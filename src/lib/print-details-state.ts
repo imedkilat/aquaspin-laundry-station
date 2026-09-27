@@ -45,6 +45,7 @@ export function canPrintDetails<TCustomerItem, TServiceItem>(
   customerItems: TCustomerItem[] | null,
   serviceItems: TServiceItem[] | null,
   detailsError: string | null,
+  loading = false,
 ): boolean {
-  return customerItems !== null && serviceItems !== null && !detailsError
+  return !loading && customerItems !== null && serviceItems !== null && !detailsError
 }

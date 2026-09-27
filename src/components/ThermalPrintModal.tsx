@@ -23,6 +23,7 @@ export default function ThermalPrintModal({
   serviceItems: initialServiceItems,
   customerItemsError: initialCustomerItemsError,
   serviceItemsError: initialServiceItemsError,
+  parentLoading = false,
   onClose,
 }: {
   transaction: TransactionWithService
@@ -30,6 +31,7 @@ export default function ThermalPrintModal({
   serviceItems?: TransactionServiceItem[] | null
   customerItemsError?: string | null
   serviceItemsError?: string | null
+  parentLoading?: boolean
   onClose: () => void
 }) {
   const { settings } = useShopSettings()
@@ -46,12 +48,16 @@ export default function ThermalPrintModal({
   })
 
   // Loaded details state
-  const [customerItems, setCustomerItems] = useState<TransactionCustomerItem[]>(initialCustomerItems ?? [])
-  const [serviceItems, setServiceItems] = useState<TransactionServiceItem[]>(initialServiceItems ?? [])
+  const [loadedCustomerItems, setLoadedCustomerItems] = useState<TransactionCustomerItem[]>(initialCustomerItems ?? [])
+  const [loadedServiceItems, setLoadedServiceItems] = useState<TransactionServiceItem[]>(initialServiceItems ?? [])
   const [loadingDetails, setLoadingDetails] = useState(
     !initialDetailsError && (initialCustomerItems === undefined || initialServiceItems === undefined)
   )
-  const [detailsError, setDetailsError] = useState<string | null>(initialDetailsError)
+  const [loadedDetailsError, setLoadedDetailsError] = useState<string | null>(initialDetailsError)
+  const customerItems = initialCustomerItems !== undefined ? initialCustomerItems ?? [] : loadedCustomerItems
+  const serviceItems = initialServiceItems !== undefined ? initialServiceItems ?? [] : loadedServiceItems
+  const detailsError = initialCustomerItemsError || initialServiceItemsError || loadedDetailsError
+  const isLoadingDetails = parentLoading || loadingDetails
   const [qrSvg, setQrSvg] = useState<string>('')
   const [loadingQr, setLoadingQr] = useState<boolean>(true)
   const [qrError, setQrError] = useState<string | null>(null)
@@ -105,28 +111,32 @@ export default function ThermalPrintModal({
 
   // Fetch missing customerItems or serviceItems from DB if not provided by caller
   useEffect(() => {
+    if (parentLoading) {
+      return
+    }
+
     if (initialCustomerItemsError || initialServiceItemsError || initialCustomerItems === null || initialServiceItems === null) {
       const err =
         initialCustomerItemsError ||
         initialServiceItemsError ||
         (initialCustomerItems === null ? 'Could not load clothing items for this order. Please try again.' : null) ||
         'Could not load service lines for this order. Please try again.'
-      setDetailsError(err)
+      setLoadedDetailsError(err)
       setLoadingDetails(false)
       return
     }
 
     if (initialCustomerItems !== undefined && initialServiceItems !== undefined) {
-      setCustomerItems(initialCustomerItems)
-      setServiceItems(initialServiceItems)
+      setLoadedCustomerItems(initialCustomerItems)
+      setLoadedServiceItems(initialServiceItems)
       setLoadingDetails(false)
-      setDetailsError(null)
+      setLoadedDetailsError(null)
       return
     }
 
     let cancelled = false
     setLoadingDetails(true)
-    setDetailsError(null)
+    setLoadedDetailsError(null)
 
     const fetchDetails = async () => {
       try {
@@ -157,19 +167,19 @@ export default function ThermalPrintModal({
               : custRes.error
               ? 'Could not load clothing items for this order. Please try again.'
               : 'Could not load service lines for this order. Please try again.'
-          setDetailsError(errMsg)
+          setLoadedDetailsError(errMsg)
           return
         }
 
         if (initialCustomerItems === undefined) {
-          setCustomerItems((custRes.data as unknown as TransactionCustomerItem[]) ?? [])
+          setLoadedCustomerItems((custRes.data as unknown as TransactionCustomerItem[]) ?? [])
         }
         if (initialServiceItems === undefined) {
-          setServiceItems((servRes.data as unknown as TransactionServiceItem[]) ?? [])
+          setLoadedServiceItems((servRes.data as unknown as TransactionServiceItem[]) ?? [])
         }
       } catch (err) {
         if (!cancelled) {
-          setDetailsError(err instanceof Error ? err.message : 'Failed to load order details.')
+          setLoadedDetailsError(err instanceof Error ? err.message : 'Failed to load order details.')
         }
       } finally {
         if (!cancelled) setLoadingDetails(false)
@@ -181,9 +191,13 @@ export default function ThermalPrintModal({
     return () => {
       cancelled = true
     }
-  }, [transaction.id, initialCustomerItems, initialServiceItems, initialCustomerItemsError, initialServiceItemsError])
+  }, [transaction.id, initialCustomerItems, initialServiceItems, initialCustomerItemsError, initialServiceItemsError, parentLoading])
 
   const handlePrint = async () => {
+    if (isLoadingDetails) {
+      setError('Order details are still loading. Please wait before printing.')
+      return
+    }
     if (detailsError) {
       setError(detailsError)
       return
@@ -697,7 +711,7 @@ export default function ThermalPrintModal({
 
         {/* Live Preview Area */}
         <div className="flex-1 overflow-y-auto p-4 bg-slate-100 dark:bg-slate-950">
-          {loadingDetails ? (
+          {isLoadingDetails ? (
             <div className="flex flex-col items-center justify-center p-8 text-center text-slate-500">
               <ButtonSpinner />
               <p className="mt-3 text-xs">Loading order clothing items and services…</p>
@@ -741,7 +755,7 @@ export default function ThermalPrintModal({
           <button
             type="button"
             onClick={handlePrint}
-            disabled={printing || loadingDetails || !canPrintDetails(customerItems, serviceItems, detailsError)}
+            disabled={printing || isLoadingDetails || !canPrintDetails(customerItems, serviceItems, detailsError, isLoadingDetails)}
             className="inline-flex items-center gap-2 rounded-xl bg-sky-600 px-5 py-2 text-xs font-bold text-white shadow-sm hover:bg-sky-500 disabled:opacity-60"
           >
             {printing ? (
@@ -753,7 +767,7 @@ export default function ThermalPrintModal({
               <>
                 <UiIcon name="printer" size={16} />
                 <span>
-                  {loadingDetails
+                  {isLoadingDetails
                     ? 'Loading details…'
                     : detailsError
                     ? 'Print Disabled'
