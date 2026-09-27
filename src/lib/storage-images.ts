@@ -22,8 +22,56 @@ export function imageExtension(file: File) {
   return 'jpg'
 }
 
+// Animated PNG (APNG) and animated WebP both decode to a single still frame
+// via createImageBitmap/canvas, so running them through the resize step below
+// would silently discard every frame but one. Detect them up front by
+// walking the container's chunks and skip compression entirely for an
+// animated input — it uploads as-is instead of losing its animation.
+function isAnimatedPng(bytes: Uint8Array): boolean {
+  // PNG: 8-byte signature, then [4-byte length][4-byte type][data][4-byte CRC]
+  // chunks. A valid APNG's 'acTL' chunk always precedes the first 'IDAT'.
+  let offset = 8
+  while (offset + 8 <= bytes.length) {
+    const length =
+      ((bytes[offset] << 24) | (bytes[offset + 1] << 16) | (bytes[offset + 2] << 8) | bytes[offset + 3]) >>> 0
+    const type = String.fromCharCode(bytes[offset + 4], bytes[offset + 5], bytes[offset + 6], bytes[offset + 7])
+    if (type === 'acTL') return true
+    if (type === 'IDAT') return false
+    offset += 8 + length + 4
+  }
+  return false
+}
+
+function isAnimatedWebp(bytes: Uint8Array): boolean {
+  // WebP: 'RIFF'(4) + size(4) + 'WEBP'(4), then [4-byte fourCC][4-byte size]
+  // chunks (data padded to an even length). An animated WebP carries an
+  // 'ANIM' chunk.
+  if (bytes.length < 12) return false
+  let offset = 12
+  while (offset + 8 <= bytes.length) {
+    const fourCC = String.fromCharCode(bytes[offset], bytes[offset + 1], bytes[offset + 2], bytes[offset + 3])
+    if (fourCC === 'ANIM') return true
+    const size = bytes[offset + 4] | (bytes[offset + 5] << 8) | (bytes[offset + 6] << 16) | (bytes[offset + 7] << 24)
+    offset += 8 + size + (size % 2)
+  }
+  return false
+}
+
+async function isAnimatedImage(file: File): Promise<boolean> {
+  if (file.type !== 'image/png' && file.type !== 'image/webp') return false
+  try {
+    const bytes = new Uint8Array(await file.arrayBuffer())
+    return file.type === 'image/png' ? isAnimatedPng(bytes) : isAnimatedWebp(bytes)
+  } catch {
+    // Can't confirm it's a static image — skip compression rather than risk
+    // silently flattening an animation.
+    return true
+  }
+}
+
 export async function compressImageBeforeUpload(file: File, maxDimension = 1600, quality = 0.82): Promise<File> {
   try {
+    if (await isAnimatedImage(file)) return file
     const image = await createImageBitmap(file)
     const scale = Math.min(1, maxDimension / Math.max(image.width, image.height))
     const width = Math.max(1, Math.round(image.width * scale))
