@@ -37,15 +37,16 @@ This roadmap stages the product ideas captured in the September 2026 Antigravity
 
 ### 1B. Public order tracker
 
-**Status: In draft PR #35; blocked on public-data minimization and token/rate-limit design**
+**Status: Security redesign in local review branch; contract and rate-limit plan pending independent review**
 
 - Review transaction-code entropy, status history, grants, RLS, shop settings, and the canonical status rules.
-- Design the RPC response around a minimum public allowlist. Start with order code, current lifecycle status, and shop contact details; add other fields only with an explicit privacy reason.
-- Verify unknown, malformed, cancelled, on-hold, and completed order behavior.
-- Add the public route and QR deep link only after the RPC contract and authorization tests are settled.
-- Apply and verify the migration on Staging, then run anonymous and authenticated browser QA.
+- Replace the anonymous transaction-code RPC with an Edge Function capability flow; keep the 8-character order code separate from authorization to retrieve tracking data.
+- Return only the approved public allowlist (currently order code and current lifecycle status); verify malformed, cancelled, deleted, on-hold, and completed behavior.
+- Issue a high-entropy signed link only after authenticated active-profile and order-access checks; keep the capability out of HTTP paths and referrers.
+- Decide and implement rate limiting, key rotation, and printed-link lifecycle before the security contract is final.
+- No migration or remote database change is part of the current local slice. If later needed, review and verify it on Staging before any separate Production review.
 
-**Exit criteria:** anonymous callers can retrieve only the matching order's approved fields; no cross-order or sensitive-data exposure; lifecycle states display correctly; Staging migration and browser checks pass. Production rollout remains a separate reviewed step.
+**Exit criteria:** anonymous callers can retrieve only the matching order's approved fields using a protected capability; malformed/unknown/cancelled/deleted orders fail closed; rate limits and key-rotation behavior are documented and tested; Edge Functions and UI pass focused tests plus Staging QA. No Production rollout is implied.
 
 ## Phase 2 — SMS pickup notifications
 
@@ -95,3 +96,4 @@ Start with **Phase 0 baseline**, then implement **Phase 1A thermal receipt and b
 |---|---|---|
 | 2026-09-27 | Added this phased roadmap from the Antigravity handoff; no application code or database was changed. | Planning |
 | 2026-09-28 | Antigravity pushed printing and public tracking to draft PR #35. Initial review found public financial/order fields in the anon RPC response and functional QA gaps. No database or production changes. | Blocked pending fixes |
+| 2026-09-28 | Lead started a local-only tracking redesign on `codex/public-tracking-security`; commit `a1b81b0` adds signed-capability helpers and five regression tests. UI and Edge Function integration remain uncommitted; Claude's independent contract review, rate limiting, print integration, and Staging QA are pending. No remote database, deployment, merge, or production change. | In progress; PR #35 remains draft |
