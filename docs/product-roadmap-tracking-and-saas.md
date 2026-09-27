@@ -15,9 +15,9 @@ This roadmap stages the product ideas captured in the September 2026 Antigravity
 **Status: In progress**
 
 - [x] Record the proposed feature sequence and release gates here.
-- [ ] Inspect the exact branch and working-tree changes from Antigravity before importing any code.
-- [ ] Reconcile the handoff's described build errors and package changes with the current source.
-- [ ] Record the baseline build, lint, migration check, and test results for the selected implementation branch.
+- [x] Antigravity pushed the implementation to draft PR #35, based on the current `main` commit.
+- [ ] Independently review and resolve the security and functional findings in PR #35.
+- [ ] Reconcile the handoff's reported build, lint, migration, and test results against CI and the implementation branch.
 
 **Exit criteria:** the implementation starts from a known commit, with no unreviewed local edits or assumptions about Production schema.
 
@@ -25,7 +25,7 @@ This roadmap stages the product ideas captured in the September 2026 Antigravity
 
 ### 1A. Thermal receipt and bag tag
 
-**Status: Planned**
+**Status: In draft PR #35; review blocked**
 
 - Review the current receipt, transaction, add-on, inventory-use, and customer-item types.
 - Implement 58 mm and 80 mm receipt and bag-tag layouts, QR generation, and print preview as an isolated UI slice.
@@ -37,7 +37,7 @@ This roadmap stages the product ideas captured in the September 2026 Antigravity
 
 ### 1B. Public order tracker
 
-**Status: Planned**
+**Status: In draft PR #35; blocked on public-data minimization and token/rate-limit design**
 
 - Review transaction-code entropy, status history, grants, RLS, shop settings, and the canonical status rules.
 - Design the RPC response around a minimum public allowlist. Start with order code, current lifecycle status, and shop contact details; add other fields only with an explicit privacy reason.
@@ -94,3 +94,4 @@ Start with **Phase 0 baseline**, then implement **Phase 1A thermal receipt and b
 | Date | Change | Status |
 |---|---|---|
 | 2026-09-27 | Added this phased roadmap from the Antigravity handoff; no application code or database was changed. | Planning |
+| 2026-09-28 | Antigravity pushed printing and public tracking to draft PR #35. Initial review found public financial/order fields in the anon RPC response and functional QA gaps. No database or production changes. | Blocked pending fixes |
