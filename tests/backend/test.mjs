@@ -740,7 +740,8 @@ try {
   await test('rate limiter enforces its per-key cap and locks same-key checks within the transaction', async () => {
     await admin();
     const definition = await one("select pg_get_functiondef('public.check_rate_limit(text,integer,integer)'::regprocedure) as sql");
-    assert.match(definition.sql, /pg_advisory_xact_lock\(hashtext\(p_key\)\)/);
+    assert.match(definition.sql, /pg_catalog\.pg_advisory_xact_lock\(pg_catalog\.hashtext\(p_key\)\)/);
+    assert.match(definition.sql, /SET search_path TO ''/);
 
     const key = `backend-rate-limit-${crypto.randomUUID()}`;
     const attempts = await Promise.all(

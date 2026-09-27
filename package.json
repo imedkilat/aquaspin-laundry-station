@@ -14,6 +14,7 @@
     "test:receipt": "node --experimental-strip-types --test tests/receipt.test.mjs",
     "test:public-tracking": "node --experimental-strip-types --test tests/public-tracking.test.mjs",
     "test:thermal-receipt": "node --experimental-strip-types --test tests/thermal-receipt.test.mjs",
+    "test:thermal-print-modal": "node --test tests/thermal-print-modal.test.mjs",
     "test:transaction-edit": "node --experimental-strip-types --test tests/transaction-editable.test.mjs",
     "check:migrations": "node scripts/check-migrations.mjs",
     "preview": "vite preview"

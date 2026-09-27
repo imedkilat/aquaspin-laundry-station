@@ -14,21 +14,21 @@ create or replace function public.check_rate_limit(p_key text, p_max_count int, 
 returns boolean
 language plpgsql
 security definer
-set search_path = public, pg_temp
+set search_path = ''
 as $$
 declare
   v_count int;
 begin
-  perform pg_advisory_xact_lock(hashtext(p_key));
+  perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext(p_key));
 
   delete from public.rate_limit_hits
    where rate_key = p_key
-     and created_at < now() - make_interval(secs => p_window_seconds);
+     and created_at < pg_catalog.now() - pg_catalog.make_interval(secs => p_window_seconds);
 
-  select count(*) into v_count
+  select pg_catalog.count(*) into v_count
     from public.rate_limit_hits
    where rate_key = p_key
-     and created_at >= now() - make_interval(secs => p_window_seconds);
+     and created_at >= pg_catalog.now() - pg_catalog.make_interval(secs => p_window_seconds);
 
   if v_count >= p_max_count then
     return false;
