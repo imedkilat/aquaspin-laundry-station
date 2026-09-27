@@ -6,6 +6,7 @@ import {
   writeThermalPrintDocument,
   openThermalPrintWindow,
 } from '../src/lib/thermal-receipt.ts'
+import { issueOrderTrackingLink } from '../src/lib/order-tracking.ts'
 
 const makeTransaction = (overrides = {}) => ({
   id: 'tx-123',
@@ -350,3 +351,197 @@ test('openThermalPrintWindow throws user-friendly error if popup is blocked', as
     }
   )
 })
+
+test('slip output explicitly communicates when tracking QR is omitted and never claims QR is present', () => {
+  const transaction = makeTransaction({
+    transaction_code: 'AQ-CLAIM-8',
+    transaction_no: 888,
+  })
+
+  // 1. Receipt with omitted QR
+  const { receiptHtml, bagTagHtml } = buildThermalReceiptParts({
+    transaction,
+    qrSvg: '', // omitted
+  })
+
+  assert.match(receiptHtml, /\[ Live tracking QR omitted \]/)
+  assert.doesNotMatch(receiptHtml, /Scan to track live order status/)
+  assert.doesNotMatch(receiptHtml, /<svg/i)
+  assert.doesNotMatch(receiptHtml, /\/track\/AQ-CLAIM-8/)
+  assert.doesNotMatch(receiptHtml, /\/track\/888/)
+
+  // 2. Bag tag with omitted QR
+  assert.match(bagTagHtml, /\[ Claim QR code omitted \]/)
+  assert.doesNotMatch(bagTagHtml, /Claim Scan Code/)
+  assert.doesNotMatch(bagTagHtml, /<svg/i)
+  assert.doesNotMatch(bagTagHtml, /\/track\/AQ-CLAIM-8/)
+  assert.doesNotMatch(bagTagHtml, /\/track\/888/)
+})
+
+test('issueOrderTrackingLink calls Edge Function with transaction_id and formats path as origin + /track#v1...', async () => {
+  let invokedEndpoint = ''
+  let invokedBody = null
+
+  const mockClient = {
+    functions: {
+      async invoke(endpoint, options) {
+        invokedEndpoint = endpoint
+        invokedBody = options.body
+        return {
+          data: { path: '/track#v1.550e8400-e29b-41d4-a716-446655440000.VALID_CAPABILITY_SIGNATURE' },
+          error: null,
+        }
+      },
+    },
+  }
+
+  const url = await issueOrderTrackingLink('550e8400-e29b-41d4-a716-446655440000', {
+    origin: 'https://app.aquaspin.ph',
+    supabaseClient: mockClient,
+  })
+
+  assert.equal(invokedEndpoint, 'issue-order-tracking-link')
+  assert.deepEqual(invokedBody, { transaction_id: '550e8400-e29b-41d4-a716-446655440000' })
+  assert.equal(url, 'https://app.aquaspin.ph/track#v1.550e8400-e29b-41d4-a716-446655440000.VALID_CAPABILITY_SIGNATURE')
+
+  // Security invariants:
+  // Capability is strictly in the hash fragment (#v1.), NOT in path or query
+  assert.match(url, /\/track#v1\./)
+  assert.doesNotMatch(url, /\/track\//)
+  assert.doesNotMatch(url, /\?/)
+})
+
+test('issueOrderTrackingLink rejects and throws user-friendly error on Edge Function failure', async () => {
+  const mockClient = {
+    functions: {
+      async invoke() {
+        return {
+          data: null,
+          error: new Error('Rate limit exceeded. Please try again later.'),
+        }
+      },
+    },
+  }
+
+  await assert.rejects(
+    async () => {
+      await issueOrderTrackingLink('tx-uuid-1', {
+        supabaseClient: mockClient,
+      })
+    },
+    {
+      message: /Rate limit exceeded\. Please try again later\./,
+    }
+  )
+})
+
+test('openThermalPrintWindow resolves signed tracking link, builds QR from signed path, and never falls back to code route', async () => {
+  let issuedTxId = ''
+  let writtenHtml = ''
+
+  const mockWindow = {
+    opener: {},
+    document: {
+      open() {},
+      write(content) { writtenHtml = content },
+      close() {},
+    },
+  }
+
+  const transaction = makeTransaction({
+    id: 'tx-uuid-999',
+    transaction_code: 'AQ-CODE-99',
+    transaction_no: 99,
+  })
+
+  await openThermalPrintWindow({
+    transaction,
+    targetWindow: mockWindow,
+    issueTrackingLink: async (txId) => {
+      issuedTxId = txId
+      return `https://app.aquaspin.ph/track#v1.${txId}.TEST_SIGNATURE`
+    },
+  })
+
+  assert.equal(issuedTxId, 'tx-uuid-999')
+  // Document was written with QR SVG containing the signed URL
+  assert.match(writtenHtml, /<svg/)
+  assert.match(writtenHtml, /Scan to track live order status/)
+  // Must NEVER fall back to code-based routes
+  assert.doesNotMatch(writtenHtml, /\/track\/AQ-CODE-99/)
+  assert.doesNotMatch(writtenHtml, /\/track\/99/)
+})
+
+test('openThermalPrintWindow closes target popup window and throws error when link issuer fails', async () => {
+  let closed = false
+  let writtenHtml = ''
+
+  const mockWindow = {
+    opener: {},
+    document: {
+      open() {},
+      write(content) { writtenHtml = content },
+      close() {},
+    },
+    close() {
+      closed = true
+    },
+  }
+
+  const transaction = makeTransaction({
+    id: 'tx-uuid-fail',
+    transaction_code: 'AQ-FAIL-01',
+    transaction_no: 404,
+  })
+
+  await assert.rejects(
+    async () => {
+      await openThermalPrintWindow({
+        transaction,
+        targetWindow: mockWindow,
+        issueTrackingLink: async () => {
+          throw new Error('Edge Function unauthorized: capability could not be issued')
+        },
+      })
+    },
+    {
+      message: /Failed to issue secure tracking link: Edge Function unauthorized/,
+    }
+  )
+
+  // Popup lifecycle: window must be closed to avoid leaving an empty placeholder
+  assert.equal(closed, true)
+  // Must NOT have written unauthenticated fallback
+  assert.equal(writtenHtml, '')
+})
+
+test('openThermalPrintWindow with omitQr=true writes slip with omission notice without calling issuer', async () => {
+  let issuerCalled = false
+  let writtenHtml = ''
+
+  const mockWindow = {
+    opener: {},
+    document: {
+      open() {},
+      write(content) { writtenHtml = content },
+      close() {},
+    },
+  }
+
+  const transaction = makeTransaction()
+
+  await openThermalPrintWindow({
+    transaction,
+    targetWindow: mockWindow,
+    omitQr: true,
+    issueTrackingLink: async () => {
+      issuerCalled = true
+      return 'https://app.aquaspin.ph/track#v1.not-called'
+    },
+  })
+
+  assert.equal(issuerCalled, false)
+  assert.match(writtenHtml, /\[ Live tracking QR omitted \]/)
+  assert.doesNotMatch(writtenHtml, /Scan to track live order status/)
+})
+

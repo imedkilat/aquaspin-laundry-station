@@ -9,6 +9,7 @@ import {
   type ThermalPrintMode,
 } from '../lib/thermal-receipt'
 import { generateQrSvg } from '../lib/qr-code'
+import { issueOrderTrackingLink } from '../lib/order-tracking'
 import { isDropOffTransaction } from '../lib/service-classification'
 import { supabase } from '../lib/supabase'
 import { useShopSettings } from '../lib/shop-settings-context'
@@ -38,21 +39,55 @@ export default function ThermalPrintModal({
   const [loadingDetails, setLoadingDetails] = useState(!initialCustomerItems || !initialServiceItems)
   const [detailsError, setDetailsError] = useState<string | null>(null)
   const [qrSvg, setQrSvg] = useState<string>('')
+  const [loadingQr, setLoadingQr] = useState<boolean>(true)
+  const [qrError, setQrError] = useState<string | null>(null)
 
-  // Pre-generate QR SVG
+  // Pre-generate secure signed tracking QR SVG
   useEffect(() => {
     let cancelled = false
-    const origin = typeof window !== 'undefined' && window.location?.origin ? window.location.origin : ''
-    const trackingUrl = `${origin}/track/${transaction.transaction_code || transaction.transaction_no}`
-    generateQrSvg(trackingUrl).then((svg) => {
-      if (!cancelled) setQrSvg(svg)
-    }).catch(() => {
-      // Ignore QR generation failure in preview
-    })
+    setLoadingQr(true)
+    setQrError(null)
+    setQrSvg('')
+
+    const loadQr = async () => {
+      try {
+        const trackingUrl = await issueOrderTrackingLink(transaction.id)
+        const svg = await generateQrSvg(trackingUrl)
+        if (!cancelled) {
+          setQrSvg(svg)
+          setLoadingQr(false)
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setQrSvg('')
+          setQrError(err instanceof Error ? err.message : 'Could not generate secure tracking QR.')
+          setLoadingQr(false)
+        }
+      }
+    }
+
+    void loadQr()
+
     return () => {
       cancelled = true
     }
-  }, [transaction.transaction_code, transaction.transaction_no])
+  }, [transaction.id])
+
+  const handleRetryQr = async () => {
+    setLoadingQr(true)
+    setQrError(null)
+    setQrSvg('')
+    try {
+      const trackingUrl = await issueOrderTrackingLink(transaction.id)
+      const svg = await generateQrSvg(trackingUrl)
+      setQrSvg(svg)
+    } catch (err) {
+      setQrSvg('')
+      setQrError(err instanceof Error ? err.message : 'Could not generate secure tracking QR.')
+    } finally {
+      setLoadingQr(false)
+    }
+  }
 
   // Fetch missing customerItems or serviceItems from DB if not provided by caller
   useEffect(() => {
@@ -139,6 +174,20 @@ export default function ThermalPrintModal({
     setError(null)
 
     try {
+      let finalQrSvg = qrSvg
+      let omitQr = false
+
+      if (!finalQrSvg) {
+        if (qrError) {
+          // Explicitly omit QR when previous issuance failed and user chooses to print
+          omitQr = true
+        } else {
+          const trackingUrl = await issueOrderTrackingLink(transaction.id)
+          finalQrSvg = await generateQrSvg(trackingUrl)
+          setQrSvg(finalQrSvg)
+        }
+      }
+
       await openThermalPrintWindow({
         transaction,
         customerItems,
@@ -150,7 +199,8 @@ export default function ThermalPrintModal({
         mode,
         paperWidth,
         targetWindow: printWindow,
-        qrSvg,
+        qrSvg: omitQr ? '' : finalQrSvg,
+        omitQr,
       })
     } catch (err) {
       try {
@@ -330,12 +380,20 @@ export default function ThermalPrintModal({
       )}
 
       <div className="border-t border-dashed border-slate-400 pt-2 text-center text-[9px] uppercase tracking-wider text-slate-600 dark:text-slate-400">
-        {qrSvg ? (
-          <div className="w-20 h-20 mx-auto my-1 bg-white p-1 rounded" dangerouslySetInnerHTML={{ __html: qrSvg }} />
+        {loadingQr ? (
+          <div className="py-2 text-[9px] text-slate-500 italic">
+            <span className="inline-block animate-pulse">Generating secure tracking QR…</span>
+          </div>
+        ) : qrSvg ? (
+          <>
+            <div className="w-20 h-20 mx-auto my-1 bg-white p-1 rounded" dangerouslySetInnerHTML={{ __html: qrSvg }} />
+            <div className="text-[8px] mt-0.5">Scan to track live order status</div>
+          </>
         ) : (
-          <div className="py-2 text-[9px]">[ QR Code for Tracking Included ]</div>
+          <div className="py-2 text-[9px] text-amber-700 dark:text-amber-400 font-medium">
+            [ Live tracking QR omitted ]
+          </div>
         )}
-        <div className="text-[8px] mt-0.5">Scan to track live order status</div>
       </div>
 
       <div className="border-t border-dashed border-slate-400 pt-1 text-[8px] text-center text-slate-500 leading-tight">
@@ -474,12 +532,20 @@ export default function ThermalPrintModal({
       )}
 
       <div className="border-t border-dashed border-slate-400 pt-2 text-center text-[9px] uppercase tracking-wider text-slate-600 dark:text-slate-400">
-        {qrSvg ? (
-          <div className="w-18 h-18 mx-auto my-1 bg-white p-1 rounded" dangerouslySetInnerHTML={{ __html: qrSvg }} />
+        {loadingQr ? (
+          <div className="py-2 text-[9px] text-slate-500 italic">
+            <span className="inline-block animate-pulse">Generating claim QR…</span>
+          </div>
+        ) : qrSvg ? (
+          <>
+            <div className="w-18 h-18 mx-auto my-1 bg-white p-1 rounded" dangerouslySetInnerHTML={{ __html: qrSvg }} />
+            <div className="text-[8px] mt-0.5">Claim Scan Code</div>
+          </>
         ) : (
-          <div className="py-2 text-[9px]">[ QR Code Claim Stub Included ]</div>
+          <div className="py-2 text-[9px] text-amber-700 dark:text-amber-400 font-medium">
+            [ Claim QR code omitted ]
+          </div>
         )}
-        <div className="text-[8px] mt-0.5">Claim Scan Code</div>
       </div>
     </div>
   )
@@ -513,6 +579,16 @@ export default function ThermalPrintModal({
         <div className="space-y-4 border-b border-slate-200 bg-slate-50/50 p-4 dark:border-slate-800 dark:bg-slate-900/50">
           {error && <InlineAlert variant="error" title="Print Error">{error}</InlineAlert>}
           {detailsError && <InlineAlert variant="error" title="Data Load Error">{detailsError}</InlineAlert>}
+          {qrError && (
+            <InlineAlert
+              variant="warning"
+              title="Tracking QR Omitted"
+              actionLabel={loadingQr ? 'Retrying…' : 'Retry QR'}
+              onAction={() => void handleRetryQr()}
+            >
+              {qrError} Receipts can still be printed, but the live tracking QR will be omitted.
+            </InlineAlert>
+          )}
 
           <div>
             <label className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">Print Slip Type</label>
@@ -621,8 +697,23 @@ export default function ThermalPrintModal({
             disabled={printing || loadingDetails || Boolean(detailsError)}
             className="inline-flex items-center gap-2 rounded-xl bg-sky-600 px-5 py-2 text-xs font-bold text-white shadow-sm hover:bg-sky-500 disabled:opacity-60"
           >
-            {printing ? <ButtonSpinner /> : <UiIcon name="printer" size={16} />}
-            {printing ? 'Preparing…' : loadingDetails ? 'Loading details…' : `Print ${mode === 'bag_tag' ? 'Bag Tag' : mode === 'both' ? 'Both Slips' : 'Receipt'}`}
+            {printing ? (
+              <>
+                <ButtonSpinner />
+                <span>Preparing…</span>
+              </>
+            ) : (
+              <>
+                <UiIcon name="printer" size={16} />
+                <span>
+                  {loadingDetails
+                    ? 'Loading details…'
+                    : qrError
+                    ? `Print ${mode === 'bag_tag' ? 'Bag Tag' : mode === 'both' ? 'Both Slips' : 'Receipt'} (No QR)`
+                    : `Print ${mode === 'bag_tag' ? 'Bag Tag' : mode === 'both' ? 'Both Slips' : 'Receipt'}`}
+                </span>
+              </>
+            )}
           </button>
         </div>
       </div>

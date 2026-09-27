@@ -1,6 +1,7 @@
 import type { PaymentMethod, TransactionWithService, TransactionCustomerItem, TransactionServiceItem } from '../types/database.ts'
 import { generateQrSvg } from './qr-code.ts'
 import { isDropOffTransaction } from './service-classification.ts'
+import { issueOrderTrackingLink } from './order-tracking.ts'
 
 export type ThermalPrintMode = 'receipt' | 'bag_tag' | 'both'
 export type ThermalPaperWidth = '58mm' | '80mm'
@@ -49,7 +50,9 @@ export type ThermalPrintOptions = {
   mode?: ThermalPrintMode
   paperWidth?: ThermalPaperWidth
   targetWindow?: WindowLike | null
-  qrSvg?: string
+  qrSvg?: string | null
+  omitQr?: boolean
+  issueTrackingLink?: (transactionId: string) => Promise<string>
 }
 
 export function buildThermalReceiptParts({
@@ -219,7 +222,12 @@ export function buildThermalReceiptParts({
           </div>
           <div style="font-size: 8px; margin-top: 2px; text-transform: uppercase; letter-spacing: 0.04em;">Scan to track live order status</div>
         </div>
-      ` : ''}
+      ` : `
+        <div class="divider-dashed"></div>
+        <div style="text-align: center; margin: 6px 0; font-size: 9px; color: #555; text-transform: uppercase;">
+          [ Live tracking QR omitted ]
+        </div>
+      `}
 
       <div class="divider-dashed"></div>
       <div style="font-size: 8px; text-align: center; color: #444; margin-top: 6px; line-height: 1.3;">
@@ -357,7 +365,11 @@ export function buildThermalReceiptParts({
           </div>
           <div style="font-size: 8px; text-transform: uppercase; margin-top: 2px;">Claim Scan Code</div>
         </div>
-      ` : ''}
+      ` : `
+        <div style="text-align: center; margin-top: 6px; border-top: 1px dashed #000; padding-top: 6px; font-size: 9px; color: #555; text-transform: uppercase;">
+          [ Claim QR code omitted ]
+        </div>
+      `}
     </div>
   `
 
@@ -509,7 +521,7 @@ export function writeThermalPrintDocument(printWindow: WindowLike, html: string)
 }
 
 export async function openThermalPrintWindow(options: ThermalPrintOptions) {
-  const { transaction, targetWindow } = options
+  const { transaction, targetWindow, omitQr } = options
 
   // 1. Obtain window synchronously before any await if not already supplied
   const printWindow =
@@ -523,19 +535,32 @@ export async function openThermalPrintWindow(options: ThermalPrintOptions) {
     throw new Error('Popup blocked. Allow popups for Aquaspin to print thermal receipts.')
   }
 
-  // 2. Resolve QR code SVG (either pre-supplied or generated asynchronously)
+  // 2. Resolve QR code SVG (either pre-supplied or generated asynchronously via signed capability)
   let qrSvg = options.qrSvg
-  if (!qrSvg) {
-    const origin = typeof window !== 'undefined' && window.location?.origin ? window.location.origin : ''
-    const trackingUrl = `${origin}/track/${transaction.transaction_code || transaction.transaction_no}`
-    try {
-      qrSvg = await generateQrSvg(trackingUrl)
-    } catch {
+  if (qrSvg === undefined) {
+    if (omitQr) {
       qrSvg = ''
+    } else {
+      try {
+        const issuer = options.issueTrackingLink ?? issueOrderTrackingLink
+        const trackingUrl = await issuer(transaction.id)
+        qrSvg = await generateQrSvg(trackingUrl)
+      } catch (err) {
+        try {
+          printWindow.close?.()
+        } catch {
+          // ignore
+        }
+        throw new Error(
+          err instanceof Error
+            ? `Failed to issue secure tracking link: ${err.message}`
+            : 'Failed to issue secure tracking link.'
+        )
+      }
     }
   }
 
   // 3. Build and write complete HTML into window
-  const html = buildThermalDocumentHtml({ ...options, qrSvg })
+  const html = buildThermalDocumentHtml({ ...options, qrSvg: qrSvg || '' })
   writeThermalPrintDocument(printWindow, html)
 }
