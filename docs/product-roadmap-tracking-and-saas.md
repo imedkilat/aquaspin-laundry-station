@@ -89,7 +89,7 @@ Potential slices, each with its own review and Staging evidence:
 
 ## Immediate next slice
 
-Phase 0 baseline is recorded. Phase 1A print fixes and Phase 1B tracking security are proceeding as separate reviewable workstreams within draft PR #35. Antigravity owns print UI changes; the lead owns the tracker contract and implementation, pending Claude's independent review. Keep both unmerged until focused tests and Staging QA pass. Do not start multi-tenant schema work until Phase 3 decisions are complete.
+Phase 0 baseline is recorded. Phase 1A print fixes and Phase 1B tracking security are proceeding as separate reviewable workstreams within draft PR #35. Antigravity owns print UI changes; the lead owns the tracker contract and implementation, pending Claude's independent review of the new capability contract. Keep both unmerged until focused tests and Staging QA pass. Do not start multi-tenant schema work until Phase 3 decisions are complete.
 
 ## Progress log
 
@@ -97,4 +97,4 @@ Phase 0 baseline is recorded. Phase 1A print fixes and Phase 1B tracking securit
 |---|---|---|
 | 2026-09-27 | Added this phased roadmap from the Antigravity handoff; no application code or database was changed. | Planning |
 | 2026-09-28 | Antigravity pushed printing and public tracking to draft PR #35. Initial review found public financial/order fields in the anon RPC response and functional QA gaps. No database or production changes. | Blocked pending fixes |
-| 2026-09-28 | Lead started a local-only tracking redesign on `codex/public-tracking-security`; commits `a1b81b0` and `e99343e` add signed-capability helpers, a hashed client-address rate limit using the existing service-role limiter, and six regression tests. UI/issuer integration, Deno runtime validation, Claude's contract review, key-rotation decision, print integration, and Staging QA remain pending. No remote database, deployment, merge, or production change. | In progress; PR #35 remains draft |
+| 2026-09-28 | Claude's read-only review of the original PR RPC identified a wrapped-column lookup, missing rate limit, and missing multi-service details. The local candidate removes that RPC, uses a signed capability and ID lookup, and intentionally returns only order code/status, so service-line exposure is removed from the public contract. Commits `a1b81b0` and `e99343e` add helpers, hashed client-address limiting via the existing service-role primitive, and six regression tests. UI/issuer integration, review of the new capability contract, key rotation, Deno runtime validation, print integration, and Staging QA remain pending. No remote database, deployment, merge, or production change. | In progress; PR #35 remains draft |
