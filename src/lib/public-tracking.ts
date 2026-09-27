@@ -69,7 +69,7 @@ export async function createTrackingRateLimitKey(clientAddress: string, secretHe
   return `public-order-tracking:${toBase64Url(digest)}`
 }
 
-export async function verifyPublicTrackingToken(token: string, secretHex: string): Promise<string | null> {
+export async function verifyPublicTrackingToken(token: string, secretHex: string | readonly string[]): Promise<string | null> {
   if (typeof token !== 'string' || token.length > 100) return null
   const [version, transactionId, signature, extra] = token.split('.')
   if (
@@ -77,13 +77,18 @@ export async function verifyPublicTrackingToken(token: string, secretHex: string
     !UUID_PATTERN.test(transactionId ?? '') || !SIGNATURE_PATTERN.test(signature ?? '')
   ) return null
 
-  const key = await importHmacKey(secretHex)
   const signatureBytes = fromBase64Url(signature)
-  if (!key || !signatureBytes) return null
+  if (!signatureBytes) return null
 
   const message = new TextEncoder().encode(`${TOKEN_SCOPE}${transactionId.toLowerCase()}`)
-  const valid = await crypto.subtle.verify('HMAC', key, asArrayBuffer(signatureBytes), asArrayBuffer(message))
-  return valid ? transactionId.toLowerCase() : null
+  const secrets = typeof secretHex === 'string' ? [secretHex] : secretHex
+  for (const candidateSecret of secrets) {
+    const key = await importHmacKey(candidateSecret)
+    if (key && await crypto.subtle.verify('HMAC', key, asArrayBuffer(signatureBytes), asArrayBuffer(message))) {
+      return transactionId.toLowerCase()
+    }
+  }
+  return null
 }
 
 /** Build the only fields that may leave the tracking endpoint. */
@@ -100,7 +105,7 @@ export function toPublicTrackingStatus(row: Record<string, unknown> | null): Pub
 
 export async function lookupPublicTrackingStatus(
   token: string,
-  secretHex: string,
+  secretHex: string | readonly string[],
   readOrder: (transactionId: string) => Promise<Record<string, unknown> | null>,
 ): Promise<PublicTrackingLookupResult> {
   const transactionId = await verifyPublicTrackingToken(token, secretHex)
