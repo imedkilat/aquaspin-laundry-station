@@ -1339,6 +1339,42 @@ try {
     );
     await rejects('delete from transaction_service_items where id = $1', [line.id], '42501');
 
+    await setting('staff_can_create_transactions', true);
+    await setting('staff_can_edit_transactions', false);
+    await asUser(staff);
+    const beforeCreateOnlyReplace = await one(
+      'select customer_name, total_amount, updated_at from transactions where id=$1',
+      [created.id],
+    );
+    const childRowsBeforeCreateOnlyReplace = await q(
+      'select service_id, base_amount from transaction_service_items where transaction_id=$1 order by position',
+      [created.id],
+    );
+    await rejects(
+      'select * from public.replace_transaction_service_items($1,$2,$3::jsonb,$4::jsonb)',
+      [created.id, created.updated_at, JSON.stringify(multiServicePrimary({ customer_name: 'Create-only must not edit', total_amount: 195 })), JSON.stringify([])],
+      '42501',
+    );
+    const afterCreateOnlyReplace = await one(
+      'select customer_name, total_amount, updated_at from transactions where id=$1',
+      [created.id],
+    );
+    const childRowsAfterCreateOnlyReplace = await q(
+      'select service_id, base_amount from transaction_service_items where transaction_id=$1 order by position',
+      [created.id],
+    );
+    assert.deepEqual(afterCreateOnlyReplace, beforeCreateOnlyReplace, 'a rejected replace leaves its parent unchanged');
+    assert.deepEqual(childRowsAfterCreateOnlyReplace, childRowsBeforeCreateOnlyReplace, 'a rejected replace leaves its service lines unchanged');
+
+    const createOnlyOrder = await createWithServices(multiServicePrimary({ total_amount: 195 }), [csdbLine()]);
+    assert.equal(Number(createOnlyOrder.total_amount), 415, 'create-only Staff can still create a multi-service order');
+    await rejects(
+      'update public.transactions set notes = $2 where id = $1',
+      [createOnlyOrder.id, 'create-only direct edit must be denied'],
+      '42501',
+    );
+
+    await setting('staff_can_edit_transactions', true);
     const reduced = await replaceServices(created.id, created.updated_at, multiServicePrimary({ total_amount: 195 }), []);
     assert.equal(Number(reduced.total_amount), 195, 'the authorized RPC removes the line and recalculates the parent total');
     assert.equal((await q('select id from transaction_service_items where transaction_id=$1', [created.id])).length, 0);

@@ -1,6 +1,6 @@
 # PR #29 Production Readiness
 
-**Updated 2026-09-27.** The feature migrations through `20260930060000` are recorded and their Production schema has been verified. A source review then found that authenticated clients could write service-line rows directly, bypassing the RPCs that recompute the order total and payment integrity. The corrective migration `20260930070000_restrict_service_item_writes_to_rpc.sql` is prepared locally and covered by regression tests, but has **not** been applied to Production or Staging. Apply and verify it before promoting the application.
+**Updated 2026-09-27.** The feature migrations through `20260930060000` are recorded and their Production schema has been verified. A source review found that authenticated clients could write service-line rows directly, bypassing RPCs that recompute order totals and payment integrity. The corrective migration `20260930070000_restrict_service_item_writes_to_rpc.sql` is in the PR branch and covered by regression tests, but has **not** been applied to Production or Staging. It also restricts replacement to Owners/edit-enabled Staff and allows create-only Staff to finish the atomic multi-service create flow without granting general edit access. Apply and verify it before promoting the application.
 
 ## Release scope
 
@@ -12,10 +12,10 @@
 
 - Production Supabase ref: `yhckdhidchxsypfeyzxj`.
 - Staging Supabase ref: `wmubrkhgncrtwdlsusea`.
-- PR #29: `feat/multi-service-transactions`, head `836519b0b9f0e412cc930c5b58ea409f63b47089` before the corrective PR commit.
-- The PR Preview was READY at that head and its loaded bundle targeted Staging, not Production.
-- GitHub CI and the Vercel Preview check passed at that head. The new corrective commit must receive fresh CI and Preview checks after it is pushed.
-- `main` is at `0c1a1eb094114eee959c9cd74979d172e24b6088`; the feature branch is one commit behind, with the main-only commit removing Claude delivery artifacts. GitHub reports the PR mergeable. No branch protection or required checks are configured. Repository rulesets have not been independently verified.
+- PR #29: `feat/multi-service-transactions`; the latest pushed head before the follow-up permission fix was `9d9152b2cea5042106668a19cc2b0197363c5f41`.
+- That PR Preview was READY and its loaded bundle targeted Staging, not Production.
+- GitHub Actions CI and Vercel Preview passed at that head. The follow-up permission fix must receive fresh CI and Preview checks after it is pushed.
+- `main` is at `0c1a1eb094114eee959c9cd74979d172e24b6088`; the feature branch is one commit behind, with the main-only commit removing Claude delivery artifacts. GitHub reports the PR mergeable. No branch protection, required checks, or repository rulesets were reported in the independent GitHub API check.
 
 ## Production migration and schema state
 
@@ -55,11 +55,13 @@ The initial migration granted `authenticated` direct `INSERT`, `UPDATE`, and `DE
 
 The service-line completion trigger previously locked inventory rows in service-line order, which could permit a deadlock when concurrent orders referenced the same items in different line orders. The corrective migration adds a BEFORE trigger that locks all primary and additional-service inventory rows in global UUID order before either consumption trigger runs. The PGlite suite verifies the lock ordering is present and that completion and stock validation tests pass. The suite does not simulate multi-session contention, Supabase API/Realtime transport, or external n8n export.
 
-The Production PostgREST exposed-schema configuration has not been independently verified. The app migration assumes the `private` schema is not exposed; confirm the Production API's exposed schemas before release. The tool-backed database checks did not expose that platform setting.
+Claude's read-only Production dashboard check reported that the Data API exposes `graphql_public` and `public`, while `private` is unchecked; the function panel labels `private.replace_transaction_service_items_rows` “Schema not exposed.” This closes the REST/RPC exposure concern for the reported Production configuration. It does not prove direct HTTP behavior, and no endpoint call was made. The helper's authenticated SQL EXECUTE grant remains intentional for calls from the public security-invoker RPCs.
+
+The independent source review also found that the original replace RPC accepted `create_transactions` as edit authorization and did not fail if the parent UPDATE affected zero rows. Migration `300700` now requires Owner or `edit_transactions` for replacement and raises if the parent update is blocked, rolling back child-row changes. Regression coverage verifies create-only Staff cannot replace an existing order and that both parent and child rows remain unchanged. It separately verifies create-only Staff can still create a multi-service order through the atomic create RPC.
 
 ## Local verification for the corrective change
 
-- `node tests/backend/test.mjs`: 74 PASS, 0 FAIL.
+- `node tests/backend/test.mjs`: 74 PASS, 0 FAIL, including create-only create/edit permission coverage.
 - `npm run test:sales-metrics`: 12/12 passed.
 - `npm run test:customer-items`: 8/8 passed.
 - `npm run test:staff-accounts`: 5/5 passed.
