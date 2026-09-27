@@ -88,7 +88,7 @@ Potential slices, each with its own review and Staging evidence:
 
 ## Immediate next slice
 
-Start with **Phase 0 baseline**, then implement **Phase 1A thermal receipt and bag tag** as the first code change because it can be developed without a database migration. Keep public tracking behind its own RPC security review and Staging gate. Do not start multi-tenant schema work until Phase 3 decisions are complete.
+Phase 0 baseline is recorded. Phase 1A print fixes and Phase 1B tracking security are proceeding as separate reviewable workstreams within draft PR #35. Antigravity owns print UI changes; the lead owns the tracker contract and implementation, pending Claude's independent review. Keep both unmerged until focused tests and Staging QA pass. Do not start multi-tenant schema work until Phase 3 decisions are complete.
 
 ## Progress log
 
