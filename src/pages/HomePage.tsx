@@ -134,12 +134,12 @@ export default function HomePage() {
       </div>
 
       <section className="grid grid-cols-2 gap-3 lg:grid-cols-4 xl:grid-cols-5" aria-label="Transaction summaries">
-        <MetricCard label="Today's Sales" value={peso(stats.sales)} hint={`${stats.orders} orders`} icon="money" to={ordersHref({ dateFrom: today, dateTo: today, excludeCancelled: '1' })} />
-        {isOwner && <MetricCard label="Monthly Sales" value={peso(stats.monthlySales)} hint={`Since ${monthStart}`} icon="calendar" to={ordersHref({ dateFrom: monthStart, dateTo: today, excludeCancelled: '1' })} />}
-        <MetricCard label="Cash Collected" value={peso(stats.cashCollected)} hint={isOwner ? `Since ${monthStart} · Cash + GCash` : "Today's paid orders · Cash + GCash"} icon="money" tone="success" to={ordersHref({ dateFrom: isOwner ? monthStart : today, dateTo: today, payment: 'collected', excludeCancelled: '1' })} />
-        <MetricCard label="Laundry Weight" value={`${stats.kg.toFixed(stats.kg % 1 === 0 ? 0 : 1)} kg`} hint="Processed today" icon="wash" to={ordersHref({ dateFrom: today, dateTo: today, excludeCancelled: '1' })} />
-        <MetricCard label="Orders" value={String(stats.orders)} hint="Active transactions" icon="orders" to={ordersHref({ dateFrom: today, dateTo: today, excludeCancelled: '1' })} />
-        <MetricCard label="Outstanding Pay Later" value={peso(stats.outstandingPayLater)} hint="Unpaid balance due" icon="alert" tone={stats.outstandingPayLater > 0 ? 'warning' : 'default'} to={ordersHref({ dateFrom: 'all', dateTo: today, payment: 'pay_later', outstanding: '1', excludeCancelled: '1' })} />
+        <MetricCard label="Today's Sales" value={peso(stats.sales)} hint={`${stats.orders} orders`} icon="money" />
+        {isOwner && <MetricCard label="Monthly Sales" value={peso(stats.monthlySales)} hint={`Since ${monthStart}`} icon="calendar" />}
+        <MetricCard label="Cash Collected" value={peso(stats.cashCollected)} hint={isOwner ? `Since ${monthStart} · Cash + GCash` : "Today's paid orders · Cash + GCash"} icon="money" tone="success" to={dashboardHref({ dateFrom: isOwner ? monthStart : today, dateTo: today, payment: 'collected', excludeCancelled: '1', showTransactions: '1' })} />
+        <MetricCard label="Laundry Weight" value={`${stats.kg.toFixed(stats.kg % 1 === 0 ? 0 : 1)} kg`} hint="Processed today" icon="wash" />
+        <MetricCard label="Orders" value={String(stats.orders)} hint="Active transactions" icon="orders" to={dashboardHref({ dateFrom: today, dateTo: today, excludeCancelled: '1', showTransactions: '1' })} />
+        <MetricCard label="Outstanding Pay Later" value={peso(stats.outstandingPayLater)} hint="Unpaid balance due" icon="alert" tone={stats.outstandingPayLater > 0 ? 'warning' : 'default'} to={dashboardHref({ dateFrom: 'all', dateTo: today, payment: 'pay_later', outstanding: '1', excludeCancelled: '1', showTransactions: '1' })} />
       </section>
 
       <CustomerItemsPendingCard
@@ -376,19 +376,24 @@ function LowStockInventory() {
   )
 }
 
-function ordersHref(params: Record<string, string>) {
-  return `/orders?${new URLSearchParams(params).toString()}`
+function dashboardHref(params: Record<string, string>) {
+  return `/dashboard?${new URLSearchParams(params).toString()}#transactions`
 }
 
-function MetricCard({ label, value, hint, icon, to, tone = 'default' }: { label: string; value: string; hint: string; icon: IconName; to: string; tone?: 'default' | 'warning' | 'success' }) {
-  return (
-    <Link to={to} aria-label={`${label}: ${value}. View matching transactions.`} className={`group block rounded-2xl border bg-white p-4 shadow-[0_1px_2px_rgba(15,23,42,0.04)] transition hover:-translate-y-0.5 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 focus-visible:ring-offset-2 dark:bg-slate-900 ${tone === 'warning' ? 'border-amber-200 hover:border-amber-300 dark:border-amber-900 dark:hover:border-amber-700' : tone === 'success' ? 'border-emerald-200 hover:border-emerald-300 dark:border-emerald-900 dark:hover:border-emerald-700' : 'border-slate-200 hover:border-sky-300 dark:border-slate-800 dark:hover:border-sky-800'}`}>
+function MetricCard({ label, value, hint, icon, to, tone = 'default' }: { label: string; value: string; hint: string; icon: IconName; to?: string; tone?: 'default' | 'warning' | 'success' }) {
+  const card = (
+    <>
       <div className="flex items-center justify-between gap-3"><p className="text-xs font-medium text-slate-500 dark:text-slate-400">{label}</p><span className={`flex h-8 w-8 items-center justify-center rounded-lg ${tone === 'warning' ? 'bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300' : tone === 'success' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300' : 'bg-sky-50 text-sky-700 dark:bg-sky-950 dark:text-sky-300'}`}><UiIcon name={icon} size={17} /></span></div>
       <p className={`mt-3 text-xl font-semibold sm:text-2xl ${tone === 'warning' ? 'text-amber-700 dark:text-amber-300' : tone === 'success' ? 'text-emerald-700 dark:text-emerald-300' : 'text-slate-900 dark:text-slate-100'}`}>{value}</p>
       <p className="mt-1 text-xs text-slate-400">{hint}</p>
-      <span className="mt-3 inline-flex items-center gap-1 text-xs font-semibold text-sky-700 group-hover:underline dark:text-sky-300">View transactions <UiIcon name="arrow-right" size={14} /></span>
-    </Link>
+      {to && <span className="mt-3 inline-flex items-center gap-1 text-xs font-semibold text-sky-700 group-hover:underline dark:text-sky-300">View transactions <UiIcon name="arrow-right" size={14} /></span>}
+    </>
   )
+  const toneClass = tone === 'warning' ? 'border-amber-200 dark:border-amber-900' : tone === 'success' ? 'border-emerald-200 dark:border-emerald-900' : 'border-slate-200 dark:border-slate-800'
+  const baseClass = `block rounded-2xl border bg-white p-4 shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:bg-slate-900 ${toneClass}`
+  return to
+    ? <Link to={to} aria-label={`${label}: ${value}. View matching transactions.`} className={`${baseClass} group transition hover:-translate-y-0.5 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 focus-visible:ring-offset-2`}>{card}</Link>
+    : <div className={baseClass}>{card}</div>
 }
 
 function QuickAction({ to, title, description, icon }: { to: string; title: string; description: string; icon: IconName }) {

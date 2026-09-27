@@ -92,13 +92,15 @@ Deno.serve(async (req: Request) => {
     const dateFrom = String(body.date_from ?? "").trim();
     const dateTo = String(body.date_to ?? "").trim();
     const paymentMethod = String(body.payment_method ?? "all").trim();
+    const excludeCancelled = body.exclude_cancelled === true;
+    const outstandingOnly = body.outstanding_only === true;
     const search = String(body.search ?? "").trim().toLowerCase();
     const outputFormat = body.output_format === "google_sheets" ? "google_sheets" : "csv";
 
     let query = admin
       .from("transactions")
       .select(
-        "transaction_no, transaction_code, transaction_date, customer_name, phone_number, kg, no_of_loads, base_amount, add_ons, add_on_items, total_amount, cash_amount, gcash_amount, gcash_reference, payment_method, pickup_date, pickup_time, notes, created_at, services(code,label)",
+        "transaction_no, transaction_code, transaction_date, customer_name, phone_number, kg, no_of_loads, base_amount, add_ons, add_on_items, total_amount, cash_amount, gcash_amount, gcash_reference, payment_method, order_status, pickup_date, pickup_time, notes, created_at, services(code,label)",
       )
       // Deleted rows are audit history, not accounting/export data.
       .is("deleted_at", null)
@@ -107,7 +109,9 @@ Deno.serve(async (req: Request) => {
 
     if (dateFrom) query = query.gte("transaction_date", dateFrom);
     if (dateTo) query = query.lte("transaction_date", dateTo);
-    if (["paid", "gcash", "pay_later"].includes(paymentMethod)) {
+    if (paymentMethod === "collected") {
+      query = query.in("payment_method", ["paid", "gcash"]);
+    } else if (["paid", "gcash", "pay_later"].includes(paymentMethod)) {
       query = query.eq("payment_method", paymentMethod);
     }
 
@@ -116,15 +120,24 @@ Deno.serve(async (req: Request) => {
       return json({ error: error.message }, 500, corsHeaders);
     }
 
-    const filtered = (data ?? []).filter((row) =>
-      !search || String(row.customer_name ?? "").toLowerCase().includes(search)
-    );
+    const filtered = (data ?? []).filter((row) => {
+      if (search && !String(row.customer_name ?? "").toLowerCase().includes(search)) return false;
+      if (excludeCancelled && row.order_status === "cancelled") return false;
+      if (outstandingOnly) {
+        const total = Math.max(Number(row.total_amount) || 0, 0);
+        const collected = Math.min(total, Math.max(Number(row.cash_amount) || 0, 0) + Math.max(Number(row.gcash_amount) || 0, 0));
+        if (row.payment_method !== "pay_later" || total - collected <= 0) return false;
+      }
+      return true;
+    });
 
     if (filtered.length === 0) {
       return json({ error: "No active transactions match the current export filters." }, 400, corsHeaders);
     }
 
-    const paymentSlug = ["paid", "gcash", "pay_later"].includes(paymentMethod)
+    const paymentSlug = paymentMethod === "collected"
+      ? "cash-gcash"
+      : ["paid", "gcash", "pay_later"].includes(paymentMethod)
       ? paymentMethod.replace("paid", "cash").replace("pay_later", "pay-later")
       : "all";
     const exportName = `aquaspin-${paymentSlug}-${dateFrom || "start"}-to-${dateTo || "today"}`;
@@ -142,6 +155,8 @@ Deno.serve(async (req: Request) => {
           date_from: dateFrom || null,
           date_to: dateTo || null,
           payment_method: paymentMethod,
+          exclude_cancelled: excludeCancelled,
+          outstanding_only: outstandingOnly,
           customer_search: search || null,
         },
         transactions: filtered,

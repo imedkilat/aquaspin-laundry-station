@@ -35,7 +35,7 @@ type PdfReportOptions = {
   rows: TransactionWithService[]
   dateFrom: string
   dateTo: string
-  paymentMethod: PaymentMethod | 'all'
+  paymentMethod: PaymentMethod | 'all' | 'collected'
   search: string
   shopName?: string
   contactPhone?: string | null
@@ -64,7 +64,7 @@ export function openTransactionPdfReport({
     .filter((row) => row.payment_method === 'pay_later')
     .reduce((sum, row) => sum + (row.total_amount || 0), 0)
 
-  const filterLabel = paymentMethod === 'all' ? 'All payments' : paymentLabel(paymentMethod)
+  const filterLabel = paymentMethod === 'all' ? 'All payments' : paymentMethod === 'collected' ? 'Cash + GCash' : paymentLabel(paymentMethod)
   const filename = `aquaspin-report-${dateFrom}-to-${dateTo}`
   const logoUrl = document.querySelector<HTMLImageElement>('header img[alt$=" logo"]')?.src ?? null
 

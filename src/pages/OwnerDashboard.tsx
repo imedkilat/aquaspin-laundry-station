@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Navigate } from 'react-router-dom'
+import { Navigate, useSearchParams } from 'react-router-dom'
 import { useTransactions } from '../hooks/useTransactions'
 import TransactionTable from '../components/TransactionTable'
 import StaffAccountsManager from '../components/StaffAccountsManager'
@@ -19,12 +19,14 @@ import { useAuth } from '../lib/auth-context'
 import { useShopSettings } from '../lib/shop-settings-context'
 import { edgeFunctionErrorMessage } from '../lib/edge-functions'
 import { openTransactionPdfReport } from '../lib/pdf-report'
+import { outstandingPayLaterBalance } from '../lib/sales-metrics'
 import UiIcon, { type IconName } from '../components/UiIcon'
 
 const peso = (n: number) =>
   `₱${n.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 
 type Tab = 'overview' | 'staff' | 'pricing' | 'addons' | 'discounts' | 'inventory' | 'expenses' | 'reports' | 'loyalty' | 'settings'
+type PaymentFilter = PaymentMethod | 'all' | 'collected'
 
 const TAB_ICONS: Record<Tab, IconName> = {
   overview: 'dashboard',
@@ -40,27 +42,42 @@ const TAB_ICONS: Record<Tab, IconName> = {
 }
 
 export default function OwnerDashboard() {
+  const [searchParams] = useSearchParams()
   const { profile } = useAuth()
   const { settings, loading: settingsLoading } = useShopSettings()
   const isOwner = profile?.role === 'owner'
+  const fromQuery = searchParams.get('dateFrom')
+  const toQuery = searchParams.get('dateTo')
+  const hasTransactionDeepLink = searchParams.get('showTransactions') === '1'
 
   const [tab, setTab] = useState<Tab>('overview')
-  const [dateFrom, setDateFrom] = useState(shopDateDaysAgo(6))
-  const [dateTo, setDateTo] = useState(shopDate())
-  const [methodFilter, setMethodFilter] = useState<PaymentMethod | 'all'>('all')
+  const [dateFrom, setDateFrom] = useState(fromQuery === 'all' ? '' : fromQuery || shopDateDaysAgo(6))
+  const [dateTo, setDateTo] = useState(toQuery || shopDate())
+  const [methodFilter, setMethodFilter] = useState<PaymentFilter>(() => {
+    const payment = searchParams.get('payment')
+    return payment === 'paid' || payment === 'gcash' || payment === 'pay_later' || payment === 'collected' ? payment : 'all'
+  })
+  const [excludeCancelled, setExcludeCancelled] = useState(() => searchParams.get('excludeCancelled') === '1')
+  const [outstandingOnly, setOutstandingOnly] = useState(() => searchParams.get('outstanding') === '1')
   const [search, setSearch] = useState('')
   const [exporting, setExporting] = useState(false)
   const [exportMessage, setExportMessage] = useState<string | null>(null)
   const exportingRef = useRef(false)
   const appliedDefaultRangeRef = useRef(false)
+  const didAutoScrollRef = useRef(false)
+  const transactionSectionRef = useRef<HTMLDivElement>(null)
   const [showDeleted, setShowDeleted] = useState(false)
 
   useEffect(() => {
     if (settingsLoading || appliedDefaultRangeRef.current) return
+    if (hasTransactionDeepLink) {
+      appliedDefaultRangeRef.current = true
+      return
+    }
     setDateFrom(shopDateDaysAgo(Math.max(0, settings.default_dashboard_days - 1)))
     setDateTo(shopDate())
     appliedDefaultRangeRef.current = true
-  }, [settings.default_dashboard_days, settingsLoading])
+  }, [hasTransactionDeepLink, settings.default_dashboard_days, settingsLoading])
 
   useEffect(() => {
     if (!isOwner && tab !== 'overview') setTab('overview')
@@ -74,9 +91,10 @@ export default function OwnerDashboard() {
   const effectiveDateTo = todayOnlyForStaff ? shopDate() : dateTo
 
   const { rows, loading, error, realtimeState, reload } = useTransactions({
-    dateFrom: effectiveDateFrom,
+    dateFrom: effectiveDateFrom || undefined,
     dateTo: effectiveDateTo,
     limit: 1000,
+    fetchAll: !effectiveDateFrom,
     includeDeleted: isOwner && showDeleted,
   })
 
@@ -84,11 +102,20 @@ export default function OwnerDashboard() {
 
   const filtered = useMemo(() => {
     return rows.filter((r) => {
-      if (methodFilter !== 'all' && r.payment_method !== methodFilter) return false
+      if (excludeCancelled && r.order_status === 'cancelled') return false
+      if (methodFilter === 'collected' && r.payment_method !== 'paid' && r.payment_method !== 'gcash') return false
+      if (methodFilter !== 'all' && methodFilter !== 'collected' && r.payment_method !== methodFilter) return false
+      if (outstandingOnly && outstandingPayLaterBalance(r) <= 0) return false
       if (search && !r.customer_name.toLowerCase().includes(search.toLowerCase())) return false
       return true
     })
-  }, [rows, methodFilter, search])
+  }, [rows, methodFilter, excludeCancelled, outstandingOnly, search])
+
+  useEffect(() => {
+    if (!hasTransactionDeepLink || loading || didAutoScrollRef.current) return
+    didAutoScrollRef.current = true
+    requestAnimationFrame(() => transactionSectionRef.current?.scrollIntoView({ block: 'start' }))
+  }, [hasTransactionDeepLink, loading])
 
   const stats = useMemo(() => {
     const today = shopDate()
@@ -130,6 +157,8 @@ export default function OwnerDashboard() {
           date_from: dateFrom,
           date_to: dateTo,
           payment_method: methodFilter,
+          exclude_cancelled: excludeCancelled,
+          outstanding_only: outstandingOnly,
           search,
           output_format: outputFormat,
         },
@@ -262,11 +291,11 @@ export default function OwnerDashboard() {
             <PaymentFilterCard label="Pay Later" value={peso(stats.payLaterTotal)} hint={`${stats.payLaterCount} accounts · click to view`} icon="alert" active={methodFilter === 'pay_later'} onClick={() => setMethodFilter('pay_later')} />
           </div>
 
-          <div className="bg-white rounded-2xl border border-slate-200 p-5 space-y-4 shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:bg-slate-900 dark:border-slate-800">
+          <div id="transactions" ref={transactionSectionRef} className="scroll-mt-4 bg-white rounded-2xl border border-slate-200 p-5 space-y-4 shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:bg-slate-900 dark:border-slate-800">
             <div className="flex items-center justify-between gap-3 flex-wrap">
               <div>
                 <h2 className="font-semibold text-slate-900 dark:text-slate-100">Transactions</h2>
-                <p className="text-xs text-slate-400 mt-0.5">Click a payment card above to drill into Cash, GCash, or Pay Later accounts.</p>
+                <p className="text-xs text-slate-400 mt-0.5">Review the transactions matching the selected filters.</p>
               </div>
               <div className="flex items-center gap-2 flex-wrap">
                 {isOwner && (
@@ -293,6 +322,19 @@ export default function OwnerDashboard() {
               </label>
             )}
 
+            <div className="flex flex-wrap gap-x-4 gap-y-2 text-xs text-slate-500 dark:text-slate-400">
+              <label className="flex items-center gap-2">
+                <input type="checkbox" checked={excludeCancelled} onChange={(event) => setExcludeCancelled(event.target.checked)} className="h-3.5 w-3.5" />
+                Exclude cancelled
+              </label>
+              {methodFilter === 'pay_later' && (
+                <label className="flex items-center gap-2">
+                  <input type="checkbox" checked={outstandingOnly} onChange={(event) => setOutstandingOnly(event.target.checked)} className="h-3.5 w-3.5" />
+                  Balance due only
+                </label>
+              )}
+            </div>
+
             {exportMessage && (
               <InlineAlert variant={exportLooksLikeError ? 'error' : 'success'} title={exportLooksLikeError ? 'Export could not finish' : 'Export ready'}>
                 {exportMessage}
@@ -315,8 +357,8 @@ export default function OwnerDashboard() {
             <div className="flex flex-wrap items-end gap-3">
               <div>
                 <label className="block text-xs font-medium text-slate-600 mb-1 dark:text-slate-400">Payment</label>
-                <select value={methodFilter} onChange={(e) => setMethodFilter(e.target.value as PaymentMethod | 'all')} className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm dark:border-slate-700 dark:bg-slate-950">
-                  <option value="all">All</option><option value="paid">Cash</option><option value="gcash">GCash</option><option value="pay_later">Pay Later</option>
+                <select value={methodFilter} onChange={(e) => setMethodFilter(e.target.value as PaymentFilter)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm dark:border-slate-700 dark:bg-slate-950">
+                  <option value="all">All</option><option value="collected">Cash + GCash</option><option value="paid">Cash</option><option value="gcash">GCash</option><option value="pay_later">Pay Later</option>
                 </select>
               </div>
               <div className="flex-1 min-w-[160px]">
