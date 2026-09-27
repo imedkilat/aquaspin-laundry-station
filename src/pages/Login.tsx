@@ -1,4 +1,5 @@
-import { useState, type FormEvent } from 'react'
+import { useRef, useState, type FormEvent } from 'react'
+import { Link } from 'react-router-dom'
 import { supabase, SHOP_NAME } from '../lib/supabase'
 import { useAuth } from '../lib/auth-context'
 import ThemeToggle from '../components/ThemeToggle'
@@ -17,10 +18,31 @@ export default function Login() {
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  const [cooldownUntil, setCooldownUntil] = useState(0)
+  const attempts = useRef<number[]>([])
   const { accessNotice } = useAuth()
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault()
+    const form = e.currentTarget as HTMLFormElement
+    const honeypot = form.elements.namedItem('website') as HTMLInputElement | null
+    if (honeypot?.value.trim()) return
+
+    const now = Date.now()
+    if (now < cooldownUntil) {
+      setError(`Too many sign-in attempts. Please wait ${Math.ceil((cooldownUntil - now) / 1000)} seconds and try again.`)
+      return
+    }
+    attempts.current = attempts.current.filter((time) => now - time < 30_000)
+    if (attempts.current.length >= 5) {
+      const nextCooldown = now + 20_000
+      setCooldownUntil(nextCooldown)
+      attempts.current = []
+      setError('Too many sign-in attempts. Please wait 20 seconds and try again.')
+      return
+    }
+    // Supabase Auth also rate-limits sign-in server-side; this is defense-in-depth.
+    attempts.current.push(now)
     setError(null)
     setSubmitting(true)
     try {
@@ -42,6 +64,10 @@ export default function Login() {
         <p className="text-sm text-slate-500 text-center mt-1 mb-6">Staff &amp; owner sign in</p>
 
         <form onSubmit={handleSubmit} className="space-y-4">
+          <div aria-hidden="true" className="absolute -left-[10000px] top-auto h-px w-px overflow-hidden">
+            <label htmlFor="website">Leave this field empty</label>
+            <input id="website" name="website" type="text" tabIndex={-1} autoComplete="off" />
+          </div>
           <div>
             <label className="block text-sm font-medium text-slate-700 mb-1 dark:text-slate-300">Email</label>
             <input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100" placeholder="you@aquaspin.ph" />
@@ -60,6 +86,10 @@ export default function Login() {
         </form>
 
         <p className="text-xs text-slate-400 text-center mt-6">Accounts are created by the shop owner. Ask them if you need one.</p>
+        <footer className="mt-4 flex justify-center gap-4 text-xs text-slate-500 dark:text-slate-400">
+          <Link className="hover:text-sky-700 dark:hover:text-sky-300" to="/privacy">Privacy</Link>
+          <Link className="hover:text-sky-700 dark:hover:text-sky-300" to="/terms">Terms</Link>
+        </footer>
       </div>
     </div>
   )

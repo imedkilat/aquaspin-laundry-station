@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { NavLink } from 'react-router-dom'
+import { Link, NavLink } from 'react-router-dom'
 import { useAuth } from '../lib/auth-context'
 import { useShopSettings } from '../lib/shop-settings-context'
 import { getShopLogoUrl } from '../lib/storage-images'
@@ -80,6 +80,11 @@ export default function Layout({ children }: { children: ReactNode }) {
       </header>
 
       <main className="mx-auto max-w-7xl px-4 py-5 pb-24 sm:py-6 md:pb-8">{children}</main>
+
+      <footer className="mx-auto hidden max-w-7xl justify-end gap-4 px-4 pb-5 text-xs text-slate-500 dark:text-slate-400 md:flex">
+        <Link className="hover:text-sky-700 dark:hover:text-sky-300" to="/privacy">Privacy</Link>
+        <Link className="hover:text-sky-700 dark:hover:text-sky-300" to="/terms">Terms</Link>
+      </footer>
 
       <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-slate-200 bg-white/95 px-2 pb-[max(env(safe-area-inset-bottom),0.35rem)] pt-1.5 backdrop-blur dark:border-slate-800 dark:bg-slate-900/95 md:hidden" aria-label="Mobile navigation">
         <div className="mx-auto flex max-w-lg items-stretch justify-around gap-1">

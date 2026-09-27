@@ -4,6 +4,7 @@ import { useShopSettings } from '../lib/shop-settings-context'
 import { supabase } from '../lib/supabase'
 import {
   PROFILE_AVATARS_BUCKET,
+  compressImageBeforeUpload,
   createAvatarSignedUrl,
   imageExtension,
   validateProfileImage,
@@ -95,10 +96,11 @@ export default function ProfilePage() {
 
     const previousPath = profile.avatar_path
     const path = `${profile.id}/avatar-${Date.now()}.${imageExtension(file)}`
+    const uploadFile = await compressImageBeforeUpload(file)
 
     const { error: uploadError } = await supabase.storage
       .from(PROFILE_AVATARS_BUCKET)
-      .upload(path, file, { cacheControl: '3600', upsert: false, contentType: file.type })
+      .upload(path, uploadFile, { cacheControl: '3600', upsert: false, contentType: file.type })
 
     if (uploadError) {
       setUploading(false)

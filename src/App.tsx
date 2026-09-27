@@ -11,7 +11,11 @@ import OwnerDashboard from './pages/OwnerDashboard'
 import ProfilePage from './pages/ProfilePage'
 import CustomersPage from './pages/CustomersPage'
 import CustomerDetailPage from './pages/CustomerDetailPage'
+import PrivacyPolicyPage from './pages/PrivacyPolicyPage'
+import TermsPage from './pages/TermsPage'
+import NotFoundPage from './pages/NotFoundPage'
 import Layout from './components/Layout'
+import AnalyticsConsent from './components/AnalyticsConsent'
 import GlobalErrorBoundary from './components/GlobalErrorBoundary'
 import { InlineAlert, LoadingPanel } from './components/UiFeedback'
 
@@ -42,6 +46,8 @@ function AppRoutes() {
   return (
     <Routes>
       <Route path="/login" element={!loading && session && !accessNotice ? <Navigate to="/" replace /> : <Login />} />
+      <Route path="/privacy" element={<PrivacyPolicyPage />} />
+      <Route path="/terms" element={<TermsPage />} />
       <Route path="/" element={<Gate><HomePage /></Gate>} />
       <Route path="/new" element={<Gate><NewOrderPage /></Gate>} />
       <Route path="/orders" element={<Gate><OrdersPage /></Gate>} />
@@ -51,7 +57,7 @@ function AppRoutes() {
       <Route path="/dashboard" element={<Gate><OwnerDashboard /></Gate>} />
       <Route path="/profile" element={<Gate><ProfilePage /></Gate>} />
       <Route path="/add" element={<Navigate to="/new" replace />} />
-      <Route path="*" element={<Navigate to="/" replace />} />
+      <Route path="*" element={<NotFoundPage />} />
     </Routes>
   )
 }
@@ -75,6 +81,7 @@ export default function App() {
         <AuthProvider>
           <ShopSettingsProvider>
             <AppRoutes />
+            <AnalyticsConsent />
           </ShopSettingsProvider>
         </AuthProvider>
       </BrowserRouter>
