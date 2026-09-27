@@ -407,6 +407,7 @@ export default function TransactionDetailPage() {
         <ThermalPrintModal
           transaction={transaction}
           customerItems={customerItems}
+          serviceItems={serviceItems}
           onClose={() => setShowThermalModal(false)}
         />
       )}
