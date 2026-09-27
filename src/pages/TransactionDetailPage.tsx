@@ -13,6 +13,7 @@ import { useAuth } from '../lib/auth-context'
 import { makeRealtimeTopic } from '../lib/realtime'
 import { useShopSettings } from '../lib/shop-settings-context'
 import { isDropOffTransaction } from '../lib/service-classification'
+import { requestOrderTrackingPath } from '../lib/tracking-links'
 import { supabase } from '../lib/supabase'
 import type { TransactionCustomerItem, TransactionServiceItem, TransactionWithService } from '../types/database'
 
@@ -60,6 +61,28 @@ export default function TransactionDetailPage() {
   const [deleting, setDeleting] = useState(false)
   const [restoring, setRestoring] = useState(false)
   const [showThermalModal, setShowThermalModal] = useState(false)
+  const [openingTracking, setOpeningTracking] = useState(false)
+  const [trackingError, setTrackingError] = useState<string | null>(null)
+
+  const openTracking = async () => {
+    if (!transaction || transaction.deleted_at || transaction.order_status === 'cancelled') return
+    const trackingWindow = window.open('about:blank', '_blank')
+    if (!trackingWindow) {
+      setTrackingError('Your browser blocked the tracking window. Allow pop-ups and try again.')
+      return
+    }
+    trackingWindow.opener = null
+    setOpeningTracking(true)
+    setTrackingError(null)
+    try {
+      trackingWindow.location.replace(await requestOrderTrackingPath(transaction.id))
+    } catch (err) {
+      trackingWindow.close()
+      setTrackingError(err instanceof Error ? err.message : 'Could not create a secure tracking link.')
+    } finally {
+      setOpeningTracking(false)
+    }
+  }
 
   const reload = useCallback(async () => {
     if (!id) return
@@ -213,14 +236,16 @@ export default function TransactionDetailPage() {
                   <UiIcon name="printer" size={16} />
                   Print Receipt / Bag Tag
                 </button>
-                <Link
-                  to={`/track/${transaction.transaction_code || transaction.transaction_no}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 rounded-xl border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
-                >
-                  Track ↗
-                </Link>
+                {transaction.order_status !== 'cancelled' && (
+                  <button
+                    type="button"
+                    onClick={() => void openTracking()}
+                    disabled={openingTracking}
+                    className="inline-flex items-center gap-1 rounded-xl border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-60 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+                  >
+                    {openingTracking ? 'Preparing…' : 'Track ↗'}
+                  </button>
+                )}
               </>
             )}
             {!transaction.deleted_at && canEdit && !isTerminalOrder && (
@@ -235,6 +260,7 @@ export default function TransactionDetailPage() {
               </button>
             )}
           </div>
+          {trackingError && <p className="mt-2 text-sm font-medium text-red-600 dark:text-red-400">{trackingError}</p>}
         </div>
 
         {error && <InlineAlert variant="error" title="Order action did not finish" actionLabel="Refresh" onAction={() => void reload()}>{error}</InlineAlert>}

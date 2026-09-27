@@ -947,10 +947,6 @@ export type Database = {
         }
         Returns: Transaction
       }
-      get_public_order_status: {
-        Args: { p_code: string }
-        Returns: Record<string, unknown>
-      }
     }
     Enums: { [_ in never]: never }
     CompositeTypes: { [_ in never]: never }
