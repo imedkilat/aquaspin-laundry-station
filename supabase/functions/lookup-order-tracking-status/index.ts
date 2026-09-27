@@ -27,6 +27,10 @@ Deno.serve(async (request: Request) => {
   }
 
   try {
+    // During rotation, keep the previous key configured until legacy printed
+    // links should stop working. Issuance always uses the current key.
+    const verificationSecrets = [secret, Deno.env.get('TRACKING_TOKEN_PREVIOUS_SECRET_HEX')]
+      .filter((value): value is string => Boolean(value))
     // Supabase's gateway provides the client address in X-Forwarded-For.
     // Store only an HMAC of it in rate_limit_hits, never the raw address.
     const forwardedFor = request.headers.get('x-forwarded-for')
@@ -53,7 +57,7 @@ Deno.serve(async (request: Request) => {
 
     // The privileged client is used only after validating the signed capability.
     // Its selected columns and response are deliberately restricted to the public allowlist.
-    const result = await lookupPublicTrackingStatus(token, secret, async (transactionId) => {
+    const result = await lookupPublicTrackingStatus(token, verificationSecrets, async (transactionId) => {
       const { data: row, error } = await admin
         .from('transactions')
         .select('transaction_code, order_status, deleted_at')

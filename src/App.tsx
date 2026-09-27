@@ -51,7 +51,7 @@ function AppRoutes() {
       <Route path="/customers/:id" element={<Gate><CustomerDetailPage /></Gate>} />
       <Route path="/dashboard" element={<Gate><OwnerDashboard /></Gate>} />
       <Route path="/profile" element={<Gate><ProfilePage /></Gate>} />
-      <Route path="/track/:code" element={<PublicOrderTrackerPage />} />
+      <Route path="/track" element={<PublicOrderTrackerPage />} />
       <Route path="/add" element={<Navigate to="/new" replace />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
