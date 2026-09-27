@@ -43,7 +43,8 @@ This roadmap stages the product ideas captured in the September 2026 Antigravity
 - Replace the anonymous transaction-code RPC with an Edge Function capability flow; keep the 8-character order code separate from authorization to retrieve tracking data.
 - Return only the approved public allowlist (currently order code and current lifecycle status); verify malformed, cancelled, deleted, on-hold, and completed behavior.
 - Issue a high-entropy signed link only after authenticated active-profile and order-access checks; keep the capability out of HTTP paths and referrers.
-- Decide and implement rate limiting, key rotation, and printed-link lifecycle before the security contract is final.
+- Review the local per-IP rate limit (60 requests/minute through the existing service-role `check_rate_limit` function); decide whether its limits and behavior are sufficient.
+- Finalize key rotation and printed-link lifecycle before the security contract is final.
 - No migration or remote database change is part of the current local slice. If later needed, review and verify it on Staging before any separate Production review.
 
 **Exit criteria:** anonymous callers can retrieve only the matching order's approved fields using a protected capability; malformed/unknown/cancelled/deleted orders fail closed; rate limits and key-rotation behavior are documented and tested; Edge Functions and UI pass focused tests plus Staging QA. No Production rollout is implied.
@@ -96,4 +97,4 @@ Phase 0 baseline is recorded. Phase 1A print fixes and Phase 1B tracking securit
 |---|---|---|
 | 2026-09-27 | Added this phased roadmap from the Antigravity handoff; no application code or database was changed. | Planning |
 | 2026-09-28 | Antigravity pushed printing and public tracking to draft PR #35. Initial review found public financial/order fields in the anon RPC response and functional QA gaps. No database or production changes. | Blocked pending fixes |
-| 2026-09-28 | Lead started a local-only tracking redesign on `codex/public-tracking-security`; commit `a1b81b0` adds signed-capability helpers and five regression tests. UI and Edge Function integration remain uncommitted; Claude's independent contract review, rate limiting, print integration, and Staging QA are pending. No remote database, deployment, merge, or production change. | In progress; PR #35 remains draft |
+| 2026-09-28 | Lead started a local-only tracking redesign on `codex/public-tracking-security`; commits `a1b81b0` and `e99343e` add signed-capability helpers, a hashed client-address rate limit using the existing service-role limiter, and six regression tests. UI/issuer integration, Deno runtime validation, Claude's contract review, key-rotation decision, print integration, and Staging QA remain pending. No remote database, deployment, merge, or production change. | In progress; PR #35 remains draft |
