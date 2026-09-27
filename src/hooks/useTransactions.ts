@@ -14,6 +14,11 @@ interface Options {
   paymentMethod?: PaymentMethod
   orderStatuses?: readonly OrderStatus[]
   includeCustomerItemCoverage?: boolean
+  // Attach each row's additional-service-lines kg total (serviceItemsKg) via
+  // a batch fetch, the same way includeCustomerItemCoverage attaches
+  // hasCustomerItems. Opt-in so pages that don't need it (most of them)
+  // don't pay for an extra query.
+  includeServiceItemsWeight?: boolean
 }
 
 const SELECT = `*, services ( code, label ),
@@ -31,6 +36,7 @@ export function useTransactions(options: Options = {}) {
     paymentMethod,
     orderStatuses,
     includeCustomerItemCoverage = false,
+    includeServiceItemsWeight = false,
   } = options
   const [rows, setRows] = useState<TransactionWithService[]>([])
   const [loading, setLoading] = useState(true)
@@ -83,9 +89,29 @@ export function useTransactions(options: Options = {}) {
       return nextRows.map((row) => ({ ...row, hasCustomerItems: coveredIds.has(row.id) }))
     }
 
+    const attachServiceItemsWeight = async (nextRows: TransactionWithService[]) => {
+      if (!includeServiceItemsWeight || nextRows.length === 0) return nextRows
+
+      const transactionIds = nextRows.map((row) => row.id)
+      const { data, error: weightError } = await supabase
+        .from('transaction_service_items')
+        .select('transaction_id, kg')
+        .in('transaction_id', transactionIds)
+
+      if (weightError) throw weightError
+
+      const kgByTransaction = new Map<string, number>()
+      for (const item of (data ?? []) as Array<{ transaction_id: string; kg: number | null }>) {
+        if (item.kg == null) continue
+        kgByTransaction.set(item.transaction_id, (kgByTransaction.get(item.transaction_id) ?? 0) + Number(item.kg))
+      }
+
+      return nextRows.map((row) => ({ ...row, serviceItemsKg: kgByTransaction.get(row.id) ?? 0 }))
+    }
+
     const finish = async (nextRows: TransactionWithService[], coverageMessage: string) => {
       try {
-        setRows(await attachCustomerItemCoverage(nextRows))
+        setRows(await attachServiceItemsWeight(await attachCustomerItemCoverage(nextRows)))
       } catch {
         setRows(nextRows)
         setError(coverageMessage)
@@ -127,7 +153,7 @@ export function useTransactions(options: Options = {}) {
     }
 
     await finish(allRows, 'Could not load customer item coverage. Check the internet connection and try again.')
-  }, [dateFrom, dateTo, limit, includeDeleted, fetchAll, paymentMethod, orderStatuses, includeCustomerItemCoverage])
+  }, [dateFrom, dateTo, limit, includeDeleted, fetchAll, paymentMethod, orderStatuses, includeCustomerItemCoverage, includeServiceItemsWeight])
 
   useEffect(() => {
     void reload()
@@ -150,6 +176,13 @@ export function useTransactions(options: Options = {}) {
         () => void reload(),
       )
     }
+    if (includeServiceItemsWeight) {
+      channel.on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'transaction_service_items' },
+        () => void reload(),
+      )
+    }
 
     channel.subscribe((status) => {
       if (status === 'SUBSCRIBED') {
@@ -164,7 +197,7 @@ export function useTransactions(options: Options = {}) {
     return () => {
       void supabase.removeChannel(channel)
     }
-  }, [reload, includeCustomerItemCoverage])
+  }, [reload, includeCustomerItemCoverage, includeServiceItemsWeight])
 
   return { rows, loading, error, realtimeState, reload }
 }

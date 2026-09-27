@@ -6,11 +6,19 @@ import { useDiscountPromos } from '../hooks/useDiscountPromos'
 import { useCustomers } from '../hooks/useCustomers'
 import { useAuth } from '../lib/auth-context'
 import { useShopSettings } from '../lib/shop-settings-context'
-import type { DiscountPromo, PaymentMethod, TransactionAddOnItem } from '../types/database'
+import type { DiscountPromo, NewTransactionWithServicesPayload, PaymentMethod, TransactionAddOnItem } from '../types/database'
 import { shopDate } from '../lib/date'
 import { toTitleCaseName } from '../lib/text'
 import { ButtonSpinner, InlineAlert, LoadingPanel } from './UiFeedback'
 import InventoryUsageFields from './InventoryUsageFields'
+import ServiceLineItemsEditor from './ServiceLineItemsEditor'
+import {
+  draftToServiceItemInput,
+  lineTotal,
+  serviceLineDraftHasInventoryGap,
+  serviceLineDraftIsComplete,
+  type ServiceLineDraft,
+} from '../lib/service-line-items'
 import {
   emptyInventoryUsageDraft,
   OTHER_INVENTORY_SOURCE,
@@ -63,6 +71,7 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
 
   const [form, setForm] = useState<TransactionFormState>(() => makeEmptyForm(settings.default_payment_method))
   const [selectedAddOns, setSelectedAddOns] = useState<Record<string, number>>({})
+  const [serviceLines, setServiceLines] = useState<ServiceLineDraft[]>([])
   const [selectedPromoId, setSelectedPromoId] = useState('')
   const [inventoryUsage, setInventoryUsage] = useState<InventoryUsageDraft>(() => emptyInventoryUsageDraft())
   const [totalTouched, setTotalTouched] = useState(false)
@@ -129,7 +138,15 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
     selectedService.max_kg_per_load != null &&
     selectedService.max_kg_per_load > 0
 
-  const totalAmount = parseFloat(form.total_amount) || 0
+  const primaryTotalAmount = parseFloat(form.total_amount) || 0
+  const serviceLinesTotal = useMemo(
+    () => serviceLines.reduce((sum, line) => sum + lineTotal(line, addOns), 0),
+    [serviceLines, addOns]
+  )
+  // The grand total for the whole order (primary service + every additional
+  // service line). Every downstream payment check (cash/GCash sufficiency,
+  // change due) uses this, not just the primary service's own subtotal.
+  const totalAmount = primaryTotalAmount + serviceLinesTotal
   const cashReceived = parseFloat(form.cash_amount) || 0
   const gcashReceived = parseFloat(form.gcash_amount) || 0
   const isCashPayment = form.payment_method === 'paid'
@@ -257,6 +274,7 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
   const resetForm = () => {
     setForm(makeEmptyForm(settings.default_payment_method))
     setSelectedAddOns({})
+    setServiceLines([])
     setSelectedPromoId('')
     setInventoryUsage(emptyInventoryUsageDraft())
     setTotalTouched(false)
@@ -299,6 +317,14 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
       }
       if (!inventoryUsageIsComplete(inventoryUsage)) {
         setError('Complete both inventory usage details. If the customer supplied a product, select Other and enter the reason.')
+        return
+      }
+      if (serviceLines.some((line) => !serviceLineDraftIsComplete(line))) {
+        setError('Select a service for each additional service line, and complete its inventory details if you started filling them in.')
+        return
+      }
+      if (serviceLines.some((line) => serviceLineDraftHasInventoryGap(line))) {
+        setError('Complete both inventory usage details for each additional service. If the customer supplied a product, select Other and enter the reason.')
         return
       }
       if (selectedPromoId && !selectedPromo) {
@@ -345,7 +371,13 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
       const detergentCustomerSupplied = inventoryUsage.detergent_item_id === OTHER_INVENTORY_SOURCE
       const conditionerCustomerSupplied = inventoryUsage.fabric_conditioner_item_id === OTHER_INVENTORY_SOURCE
 
-      const { error: insertError } = await supabase.from('transactions').insert({
+      // total_amount here is the PRIMARY service's own subtotal (after its
+      // own discount) - exactly what a plain single-service insert always
+      // sent. Additional service lines, when present, are recorded via the
+      // create_transaction_with_service_items RPC, which adds each line's
+      // own total on top to arrive at the true grand total (see totalAmount
+      // above and the migration's design note).
+      const transactionPayload: NewTransactionWithServicesPayload = {
         customer_id: form.customer_id || null,
         customer_name: normalizedCustomerName,
         phone_number: form.phone_number.trim() || null,
@@ -378,9 +410,16 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
         pickup_date: form.pickup_date || null,
         pickup_time: form.pickup_date && form.pickup_time ? form.pickup_time : null,
         notes: form.notes.trim() || null,
-        created_by: profile?.id ?? null,
         client_request_id: clientRequestId,
-      })
+      }
+
+      const { error: insertError } =
+        serviceLines.length === 0
+          ? await supabase.from('transactions').insert({ ...transactionPayload, created_by: profile?.id ?? null })
+          : await supabase.rpc('create_transaction_with_service_items', {
+              p_transaction: transactionPayload,
+              p_service_items: serviceLines.map((line) => draftToServiceItemInput(line, addOns)),
+            })
 
       setSubmitting(false)
 
@@ -405,7 +444,8 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
       const gcashMessage = form.payment_method === 'gcash' ? ` · GCash #${form.gcash_reference.trim()}` : ''
       const addOnMessage = selectedAddOnItems.length > 0 ? ` · Add-ons ${peso(addOnsTotal)}` : ''
       const discountMessage = discountAmount > 0 && selectedPromo ? ` · ${selectedPromo.name} -${peso(discountAmount)}` : ''
-      setSuccess(`Added — ${normalizedCustomerName}${addOnMessage}${discountMessage}${changeMessage}${gcashMessage}`)
+      const servicesMessage = serviceLines.length > 0 ? ` · +${serviceLines.length} service${serviceLines.length === 1 ? '' : 's'} (${peso(totalAmount)} total)` : ''
+      setSuccess(`Added — ${normalizedCustomerName}${addOnMessage}${discountMessage}${servicesMessage}${changeMessage}${gcashMessage}`)
       resetForm()
       onAdded?.()
       setTimeout(() => setSuccess(null), 4000)
@@ -576,6 +616,15 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
         )}
       </section>
 
+      <ServiceLineItemsEditor
+        lines={serviceLines}
+        onChange={setServiceLines}
+        services={services}
+        addOns={addOns}
+        detergentItems={detergentItems}
+        fabricConditionerItems={fabricConditionerItems}
+      />
+
       <section className="rounded-xl border border-violet-200 bg-violet-50/50 p-4 dark:border-violet-900/60 dark:bg-violet-950/20">
         <div className="flex items-center justify-between gap-3 mb-3">
           <div>
@@ -598,7 +647,7 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div>
-          <label className={labelClass}>Total (₱){settings.allow_manual_total_override ? '' : ' · Auto'}</label>
+          <label className={labelClass}>{serviceLines.length > 0 ? 'Primary Service Total (₱)' : 'Total (₱)'}{settings.allow_manual_total_override ? '' : ' · Auto'}</label>
           <input
             type="number"
             step="0.01"
@@ -612,6 +661,11 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
             className={settings.allow_manual_total_override ? inputClass : autoInputClass}
           />
           {!settings.allow_manual_total_override && <p className="mt-1 text-xs text-slate-500">Locked by Owner settings: Base Amount + Add-ons - Discount / Promo.</p>}
+          {serviceLines.length > 0 && (
+            <div className="mt-2 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-800 dark:border-sky-900/60 dark:bg-sky-950/40 dark:text-sky-300">
+              Order Grand Total ({serviceLines.length + 1} services): <strong>{peso(totalAmount)}</strong>
+            </div>
+          )}
         </div>
         <div>
           <label className={labelClass}>Payment Method *</label>

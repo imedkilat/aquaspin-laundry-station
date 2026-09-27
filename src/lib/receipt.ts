@@ -1,4 +1,4 @@
-import type { PaymentMethod, TransactionWithService } from '../types/database'
+import type { PaymentMethod, TransactionServiceItem, TransactionWithService } from '../types/database'
 
 const escapeHtml = (value: unknown) =>
   String(value ?? '')
@@ -22,6 +22,11 @@ const paymentLabel = (method: PaymentMethod) => {
 
 type ReceiptOptions = {
   transaction: TransactionWithService
+  // Additional services availed in the same order ("Add New Service"). When
+  // present, each prints as its own line (with its own add-ons) below the
+  // primary service, and transaction.total_amount is already the grand
+  // total across all of them.
+  serviceItems?: TransactionServiceItem[]
   shopName?: string
   address?: string | null
   contactPhone?: string | null
@@ -32,29 +37,38 @@ type ReceiptOptions = {
 const recordedLabel = (value: string) =>
   new Date(value).toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' })
 
-export function openTransactionReceipt({
+function buildReceiptHtml({
   transaction,
+  serviceItems = [],
   shopName = import.meta.env.VITE_SHOP_NAME || 'Aquaspin Laundry Station',
   address,
   contactPhone,
   logoUrl,
   reportFooter,
-}: ReceiptOptions) {
+}: ReceiptOptions): string {
   const serviceName = transaction.service_label_snapshot || transaction.services?.label || transaction.service_code_snapshot || transaction.services?.code || 'Laundry service'
   const addOnRows = transaction.add_on_items?.map((item) => `
     <tr>
       <td>${escapeHtml(item.name)} <span class="muted">(${escapeHtml(item.quantity)} × ${escapeHtml(item.unit_type)})</span></td>
       <td class="num">${escapeHtml(peso(item.line_total))}</td>
     </tr>`).join('') ?? ''
+  const additionalServiceRows = serviceItems.map((item, index) => {
+    const name = item.service_label_snapshot || item.service_code_snapshot || `Additional service ${index + 1}`
+    const weightLabel = item.kg != null ? ` <span class="muted">(${escapeHtml(item.kg)} kg)</span>` : ''
+    const itemAddOnRows = (item.add_on_items ?? []).map((addOnItem) => `
+    <tr>
+      <td class="muted">— ${escapeHtml(addOnItem.name)} <span class="muted">(${escapeHtml(addOnItem.quantity)} × ${escapeHtml(addOnItem.unit_type)})</span></td>
+      <td class="num">${escapeHtml(peso(addOnItem.line_total))}</td>
+    </tr>`).join('')
+    return `
+    <tr>
+      <td>${escapeHtml(name)}${weightLabel}</td>
+      <td class="num">${escapeHtml(peso(item.base_amount))}</td>
+    </tr>${itemAddOnRows}`
+  }).join('')
   const receiptTitle = `receipt-${transaction.transaction_code || transaction.transaction_no}`
-  const receiptWindow = window.open('', '_blank', 'width=480,height=760')
 
-  if (!receiptWindow) {
-    throw new Error('Popup blocked. Allow popups for Aquaspin, then try Print Receipt again.')
-  }
-  receiptWindow.opener = null
-
-  receiptWindow.document.write(`<!doctype html>
+  return `<!doctype html>
 <html>
 <head>
   <meta charset="utf-8" />
@@ -101,6 +115,7 @@ export function openTransactionReceipt({
     <tbody>
       <tr><td>${escapeHtml(serviceName)}</td><td class="num">${escapeHtml(peso(transaction.base_amount))}</td></tr>
       ${addOnRows || '<tr><td class="muted">No add-ons</td><td class="num">—</td></tr>'}
+      ${additionalServiceRows}
     </tbody>
   </table>
 
@@ -109,7 +124,7 @@ export function openTransactionReceipt({
     <div class="row"><strong>Loads</strong><span>${escapeHtml(transaction.no_of_loads ?? '—')}</span></div>
     <div class="row"><strong>Payment</strong><span>${escapeHtml(paymentLabel(transaction.payment_method))}</span></div>
     ${transaction.payment_method === 'gcash' ? `<div class="row"><strong>GCash reference</strong><span>${escapeHtml(transaction.gcash_reference || '—')}</span></div>` : ''}
-    <div class="row total"><span>Total</span><span>${escapeHtml(peso(transaction.total_amount))}</span></div>
+    <div class="row total"><span>Total${serviceItems.length > 0 ? ` (${serviceItems.length + 1} services)` : ''}</span><span>${escapeHtml(peso(transaction.total_amount))}</span></div>
   </div>
 
   <div class="muted">Recorded ${escapeHtml(recordedLabel(transaction.created_at))}</div>
@@ -118,7 +133,26 @@ export function openTransactionReceipt({
     window.addEventListener('load', () => setTimeout(() => window.print(), 250))
   </script>
 </body>
-</html>`)
+</html>`
+}
+
+// Writes a receipt into an already-open window. Use this when the window
+// must be opened synchronously in direct response to a user gesture (to
+// avoid popup blockers) but the receipt's data — e.g. additional service
+// lines — is only available after an async fetch.
+export function writeReceiptDocument(receiptWindow: Window, options: ReceiptOptions) {
+  receiptWindow.opener = null
+  receiptWindow.document.write(buildReceiptHtml(options))
   receiptWindow.document.close()
+}
+
+export function openTransactionReceipt(options: ReceiptOptions) {
+  const receiptWindow = window.open('', '_blank', 'width=480,height=760')
+
+  if (!receiptWindow) {
+    throw new Error('Popup blocked. Allow popups for Aquaspin, then try Print Receipt again.')
+  }
+
+  writeReceiptDocument(receiptWindow, options)
 }
 

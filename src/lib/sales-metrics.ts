@@ -11,6 +11,11 @@ export type SalesMetricRow = {
   order_status: OrderStatus
   deleted_at: string | null
   kg?: number | null
+  // Sum of kg across this order's additional "Add New Service" lines (see
+  // transaction_service_items) — attached by useTransactions when
+  // includeServiceItemsWeight is set. transactions.kg intentionally keeps
+  // its primary-service-only meaning, so "kg processed" needs both.
+  serviceItemsKg?: number | null
 }
 
 export type SalesMetrics = {
@@ -58,6 +63,6 @@ export function calculateSalesMetrics(rows: SalesMetricRow[], shopDate: string, 
       .reduce((sum, row) => sum + outstandingPayLaterBalance(row), 0),
     todaySales: todayRows.reduce((sum, row) => sum + Number(row.total_amount), 0),
     todayOrders: todayRows.length,
-    todayWeight: todayRows.reduce((sum, row) => sum + finiteNonNegative(row.kg), 0),
+    todayWeight: todayRows.reduce((sum, row) => sum + finiteNonNegative(row.kg) + finiteNonNegative(row.serviceItemsKg), 0),
   }
 }

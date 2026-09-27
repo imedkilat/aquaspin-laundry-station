@@ -1,9 +1,14 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 
-const ALLOWED_ORIGINS = new Set([
-  "https://aquaspin-laundry-station.vercel.app",
+const PRODUCTION_ORIGIN = "https://aquaspin-laundry-station.vercel.app";
+const STAGING_PROJECT_REF = "wmubrkhgncrtwdlsusea";
+const STAGING_PREVIEW_ORIGINS = new Set([
+  "https://aquaspin-laundry-station-gh4od4053-imedkilat-8586s-projects.vercel.app",
+  "https://aquaspin-laundry-station-git-fi-76760e-imedkilat-8586s-projects.vercel.app",
+  "https://aquaspin-laundry-station-nq6gi90yn-imedkilat-8586s-projects.vercel.app",
 ]);
+const STAGING_PREVIEW_HOST = /^aquaspin-laundry-station-[a-z0-9-]+-imedkilat-8586s-projects\.vercel\.app$/;
 
 // Keep in sync with manage-staff-user and the browser forms.
 const PASSWORD_MIN_LENGTH = 8;
@@ -12,11 +17,26 @@ const PASSWORD_MAX_BYTES = 72;
 
 function corsHeadersFor(req: Request): Record<string, string> {
   const origin = req.headers.get("Origin") ?? "";
+  const projectRef = Deno.env.get("SUPABASE_URL")?.match(/^https:\/\/([a-z0-9]+)\.supabase\.co\/?$/)?.[1];
+  const isAllowedOrigin = origin === PRODUCTION_ORIGIN || (
+    projectRef === STAGING_PROJECT_REF &&
+    (STAGING_PREVIEW_ORIGINS.has(origin) || isStagingPreviewOrigin(origin))
+  );
   return {
-    "Access-Control-Allow-Origin": ALLOWED_ORIGINS.has(origin) ? origin : "https://aquaspin-laundry-station.vercel.app",
+    "Access-Control-Allow-Origin": isAllowedOrigin ? origin : PRODUCTION_ORIGIN,
     "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
     "Vary": "Origin",
   };
+}
+
+function isStagingPreviewOrigin(origin: string): boolean {
+  try {
+    const url = new URL(origin);
+    return url.protocol === "https:" && url.origin === origin && STAGING_PREVIEW_HOST.test(url.hostname);
+  } catch {
+    return false;
+  }
 }
 
 Deno.serve(async (req: Request) => {

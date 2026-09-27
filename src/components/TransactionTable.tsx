@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import type { TransactionWithService } from '../types/database'
+import type { TransactionServiceItem, TransactionWithService } from '../types/database'
 import type { OrderStatus } from '../types/customer-status'
 import { supabase } from '../lib/supabase'
 import { useShopSettings } from '../lib/shop-settings-context'
@@ -8,10 +8,11 @@ import PaymentBadge from './PaymentBadge'
 import EditTransactionModal from './EditTransactionModal'
 import DeleteTransactionModal from './DeleteTransactionModal'
 import { ButtonSpinner, EmptyState, InlineAlert, LoadingPanel } from './UiFeedback'
-import { openTransactionReceipt } from '../lib/receipt'
+import { writeReceiptDocument } from '../lib/receipt'
 import { getShopLogoUrl } from '../lib/storage-images'
 import { customerItemsHref, isCustomerItemsPending } from '../lib/customer-items-pending'
 import UiIcon from './UiIcon'
+import { canEditTransaction } from '../lib/transaction-edit'
 
 const peso = (n: number) =>
   `₱${n.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
@@ -82,7 +83,7 @@ export default function TransactionTable({ rows, loading, isOwner = false, onEdi
   }
 
   const openEdit = (transaction: TransactionWithService) => {
-    if (!canEdit) return
+    if (!canEdit || !canEditTransaction(transaction.order_status, Boolean(transaction.deleted_at))) return
     if (onEdit) return onEdit(transaction)
     setEditingTransaction(transaction)
   }
@@ -94,18 +95,37 @@ export default function TransactionTable({ rows, loading, isOwner = false, onEdi
   }
 
   const printReceipt = (transaction: TransactionWithService) => {
-    try {
-      openTransactionReceipt({
-        transaction,
-        shopName: settings.shop_display_name,
-        address: settings.address,
-        contactPhone: settings.contact_phone,
-        logoUrl: getShopLogoUrl(settings.logo_path),
-        reportFooter: settings.report_footer,
-      })
-    } catch {
+    // The window must open synchronously, in direct response to this click,
+    // or popup blockers (Safari especially) will silently swallow it. The
+    // transaction's additional service lines are only known after an async
+    // fetch, so the window opens first (blank) and is filled in once ready.
+    const receiptWindow = window.open('', '_blank', 'width=480,height=760')
+    if (!receiptWindow) {
       setRestoreError('Could not open the receipt preview. Allow popups for Aquaspin, then try again.')
+      return
     }
+
+    void supabase
+      .from('transaction_service_items')
+      .select('*')
+      .eq('transaction_id', transaction.id)
+      .order('position', { ascending: true })
+      .then(({ data, error: fetchError }) => {
+        const serviceItems = fetchError ? [] : ((data as unknown as TransactionServiceItem[]) ?? [])
+        try {
+          writeReceiptDocument(receiptWindow, {
+            transaction,
+            serviceItems,
+            shopName: settings.shop_display_name,
+            address: settings.address,
+            contactPhone: settings.contact_phone,
+            logoUrl: getShopLogoUrl(settings.logo_path),
+            reportFooter: settings.report_footer,
+          })
+        } catch {
+          setRestoreError('Could not open the receipt preview. Allow popups for Aquaspin, then try again.')
+        }
+      })
   }
 
   if (loading) {
@@ -165,7 +185,7 @@ export default function TransactionTable({ rows, loading, isOwner = false, onEdi
                         <>
                           <button type="button" onClick={(event) => { event.preventDefault(); event.stopPropagation(); printReceipt(r) }} className="text-slate-600 hover:text-slate-800 text-xs font-medium dark:text-slate-300 dark:hover:text-slate-100">Print Receipt</button>
                           {canEdit && isCustomerItemsPending(r) && <Link to={customerItemsHref(r.id)} className="inline-flex items-center gap-1 text-amber-700 hover:text-amber-800 text-xs font-semibold dark:text-amber-300 dark:hover:text-amber-200"><UiIcon name="plus" size={14} />Add Items</Link>}
-                          {canEdit && <button type="button" onClick={(event) => { event.preventDefault(); event.stopPropagation(); openEdit(r) }} className="text-sky-600 hover:text-sky-700 text-xs font-medium">Edit</button>}
+                          {canEdit && canEditTransaction(r.order_status, isDeleted) && <button type="button" onClick={(event) => { event.preventDefault(); event.stopPropagation(); openEdit(r) }} className="text-sky-600 hover:text-sky-700 text-xs font-medium">Edit</button>}
                           {canDelete && <button type="button" onClick={(event) => { event.preventDefault(); event.stopPropagation(); openDelete(r) }} className="text-red-600 hover:text-red-700 text-xs font-medium">Delete</button>}
                         </>
                       )}

@@ -316,6 +316,140 @@ export type TransactionWithService = Transaction & {
   updated_by_profile: Pick<Profile, 'full_name'> | null
   deleted_by_profile: Pick<Profile, 'full_name'> | null
   hasCustomerItems?: boolean
+  // Sum of kg across this order's additional service lines (see
+  // transaction_service_items) — attached client-side by useTransactions
+  // when includeServiceItemsWeight is set. transactions.kg intentionally
+  // keeps its primary-service-only meaning, so "total kg processed" figures
+  // need both.
+  serviceItemsKg?: number
+}
+
+// "Add New Service" — additional service lines on one order, beyond the
+// primary service recorded directly on the transaction. See the
+// transaction_service_items migration for the full design rationale.
+export type TransactionServiceItem = {
+  id: string
+  transaction_id: string
+  position: number
+  service_id: string
+  service_code_snapshot: string | null
+  service_label_snapshot: string | null
+  kg: number | null
+  no_of_loads: number | null
+  base_amount: number
+  add_ons: number
+  add_on_items: TransactionAddOnItem[]
+  total_amount: number
+  // Optional per line (unlike the primary service, where a choice is
+  // required): both null means "shares the primary service's wash".
+  detergent_source: InventoryUsageSource | null
+  detergent_item_id: string | null
+  detergent_quantity: number | null
+  detergent_other_reason: string | null
+  fabric_conditioner_source: InventoryUsageSource | null
+  fabric_conditioner_item_id: string | null
+  fabric_conditioner_quantity: number | null
+  fabric_conditioner_other_reason: string | null
+  created_at: string
+  created_by: string | null
+}
+
+// The jsonb shape sent for one line to both create_transaction_with_service_items
+// and replace_transaction_service_items (matches private.replace_transaction_service_items_rows'
+// jsonb_to_recordset column list exactly).
+export type TransactionServiceItemInput = {
+  service_id: string
+  kg: number | null
+  no_of_loads: number | null
+  base_amount: number
+  add_on_items: TransactionAddOnItem[]
+  detergent_source: InventoryUsageSource | null
+  detergent_item_id: string | null
+  detergent_quantity: number | null
+  detergent_other_reason: string | null
+  fabric_conditioner_source: InventoryUsageSource | null
+  fabric_conditioner_item_id: string | null
+  fabric_conditioner_quantity: number | null
+  fabric_conditioner_other_reason: string | null
+}
+
+// The jsonb shape for p_transaction on create_transaction_with_service_items.
+// Mirrors the plain `transactions` Insert shape below field-for-field, minus
+// the columns the RPC never reads (id/transaction_no/transaction_code/
+// service_code_snapshot/service_label_snapshot/created_by/created_at/
+// updated_at/updated_by/deleted_*) — created_by is set server-side from
+// auth.uid() instead.
+export type NewTransactionWithServicesPayload = {
+  customer_id?: string | null
+  customer_name: string
+  phone_number?: string | null
+  transaction_date?: string
+  service_id?: string | null
+  detergent_source?: InventoryUsageSource | null
+  detergent_item_id?: string | null
+  detergent_quantity?: number | null
+  detergent_other_reason?: string | null
+  fabric_conditioner_source?: InventoryUsageSource | null
+  fabric_conditioner_item_id?: string | null
+  fabric_conditioner_quantity?: number | null
+  fabric_conditioner_other_reason?: string | null
+  kg?: number | null
+  no_of_loads?: number | null
+  base_amount?: number
+  add_ons?: number
+  add_on_items?: TransactionAddOnItem[]
+  discount_promo_id?: string | null
+  discount_promo_name_snapshot?: string | null
+  discount_promo_kind_snapshot?: DiscountPromoKind | null
+  discount_type_snapshot?: DiscountType | null
+  discount_value_snapshot?: number | null
+  discount_amount?: number
+  // The PRIMARY service's own subtotal (after its own discount) - NOT the
+  // grand total. create_transaction_with_service_items() adds every
+  // additional line's own total on top of this to compute the real
+  // total_amount for the whole order.
+  total_amount?: number
+  cash_amount?: number
+  gcash_amount?: number
+  gcash_reference?: string | null
+  payment_method?: PaymentMethod
+  pickup_date?: string | null
+  pickup_time?: string | null
+  notes?: string | null
+  client_request_id?: string | null
+}
+
+// The jsonb shape for p_primary on replace_transaction_service_items. Mirrors
+// exactly the field set EditTransactionModal's plain `.update()` already
+// sends today (no customer_id or discount_* fields - those are not editable
+// from that screen). total_amount is the PRIMARY service's own subtotal,
+// same convention as NewTransactionWithServicesPayload above.
+export type TransactionPrimaryUpdatePayload = {
+  customer_name: string
+  phone_number?: string | null
+  transaction_date: string
+  service_id?: string | null
+  detergent_source?: InventoryUsageSource | null
+  detergent_item_id?: string | null
+  detergent_quantity?: number | null
+  detergent_other_reason?: string | null
+  fabric_conditioner_source?: InventoryUsageSource | null
+  fabric_conditioner_item_id?: string | null
+  fabric_conditioner_quantity?: number | null
+  fabric_conditioner_other_reason?: string | null
+  kg?: number | null
+  no_of_loads?: number | null
+  base_amount?: number
+  add_ons?: number
+  add_on_items?: TransactionAddOnItem[]
+  total_amount?: number
+  cash_amount?: number
+  gcash_amount?: number
+  gcash_reference?: string | null
+  payment_method?: PaymentMethod
+  pickup_date?: string | null
+  pickup_time?: string | null
+  notes?: string | null
 }
 
 // Minimal Database type so supabase-js typed queries work without the
@@ -331,6 +465,15 @@ export type Database = {
       }
       transaction_status_history: {
         Row: TransactionStatusHistory
+        Insert: { [key: string]: never }
+        Update: { [key: string]: never }
+        Relationships: []
+      }
+      transaction_service_items: {
+        Row: TransactionServiceItem
+        // Writes only via create_transaction_with_service_items /
+        // replace_transaction_service_items, mirroring the
+        // transaction_status_history pattern above.
         Insert: { [key: string]: never }
         Update: { [key: string]: never }
         Relationships: []
@@ -787,6 +930,22 @@ export type Database = {
       redeem_loyalty_reward: {
         Args: { p_customer_id: string; p_notes?: string | null }
         Returns: LoyaltyRedemption
+      }
+      create_transaction_with_service_items: {
+        Args: {
+          p_transaction: NewTransactionWithServicesPayload
+          p_service_items: TransactionServiceItemInput[]
+        }
+        Returns: Transaction
+      }
+      replace_transaction_service_items: {
+        Args: {
+          p_transaction_id: string
+          p_expected_updated_at: string
+          p_primary: TransactionPrimaryUpdatePayload
+          p_items: TransactionServiceItemInput[]
+        }
+        Returns: Transaction
       }
     }
     Enums: { [_ in never]: never }
