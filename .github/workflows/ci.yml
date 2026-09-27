@@ -40,6 +40,12 @@ jobs:
       - name: Run receipt tests
         run: npm run test:receipt
 
+      - name: Run public tracking tests
+        run: npm run test:public-tracking
+
+      - name: Run thermal receipt tests
+        run: npm run test:thermal-receipt
+
       - name: Run transaction edit tests
         run: npm run test:transaction-edit
 
