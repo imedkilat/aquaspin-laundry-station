@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { DEFAULT_LOYALTY_SETTINGS } from '../lib/loyalty-settings'
 import { supabase } from '../lib/supabase'
 import { ButtonSpinner, EmptyState, InlineAlert, LoadingPanel } from './UiFeedback'
@@ -105,7 +106,7 @@ export default function LoyaltyManager() {
                 <div key={customer.customer_id} className="p-4 sm:p-5">
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div>
-                      <div className="flex flex-wrap items-center gap-2"><h3 className="font-semibold text-slate-900 dark:text-slate-100">{customer.full_name}</h3><span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600 dark:bg-slate-800 dark:text-slate-300">{customer.customer_code}</span>{!customer.active && <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs text-amber-700 dark:bg-amber-950 dark:text-amber-300">Inactive</span>}</div>
+                      <div className="flex flex-wrap items-center gap-2"><h3 className="font-semibold text-slate-900 dark:text-slate-100"><Link to={`/customers/${customer.customer_id}`} className="hover:underline hover:text-sky-700 dark:hover:text-sky-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 rounded">{customer.full_name}</Link></h3><span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600 dark:bg-slate-800 dark:text-slate-300">{customer.customer_code}</span>{!customer.active && <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs text-amber-700 dark:bg-amber-950 dark:text-amber-300">Inactive</span>}</div>
                       <p className="mt-1 text-sm text-slate-500">{points(balance)} points · {canRedeem ? 'Reward available' : `${points(Math.max(required - balance, 0))} more needed`}</p>
                     </div>
                     <button type="button" disabled={!canRedeem || redeemingCustomerId !== null} onClick={() => void redeem(customer)} className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 disabled:cursor-not-allowed disabled:opacity-50">
