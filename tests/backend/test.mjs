@@ -1447,5 +1447,85 @@ try {
     assert.equal(Number(balance.balance), 21, '5 (single-service order) + 16 (multi-service order) on the ledger');
   });
 
+  await test('owner reassignment audits terminal transactions and transfers earned loyalty balance with signed corrections', async () => {
+    await asUser(owner);
+    await q('update loyalty_settings set points_per_kg = 1 where id = 1');
+    const oldCustomer = await one(
+      "insert into customers(full_name, phone_number) values ('Reassignment Source Customer', '09170002221') returning *",
+    );
+    const newCustomer = await one(
+      "insert into customers(full_name, phone_number) values ('Reassignment Destination Customer', '09170002222') returning *",
+    );
+    const inactiveCustomer = await one(
+      "insert into customers(full_name, phone_number, active) values ('Inactive Reassignment Destination', '09170002223', false) returning *",
+    );
+    const testOrder = await transaction({
+      customer_id: oldCustomer.id, customer_name: oldCustomer.full_name, phone_number: null,
+      service_id: wdfId, base_amount: 195, total_amount: 195, kg: 7, no_of_loads: 1, payment_method: 'pay_later',
+    });
+    await customerItems(testOrder, [{ item_type: 'towels', quantity: 1 }]);
+    let completed = await status(testOrder, 'washing');
+    completed = await status(completed, 'drying');
+    completed = await status(completed, 'ready_for_pickup');
+    completed = await status(completed, 'completed');
+
+    const earnedBefore = await one(
+      "select id, customer_id, kg, points_earned, event_type from loyalty_point_events where transaction_id=$1 and event_type='earned'",
+      [completed.id],
+    );
+    assert.equal(earnedBefore.customer_id, oldCustomer.id);
+    assert.equal(Number(earnedBefore.points_earned), 7);
+
+    await asUser(staff);
+    await rejects(
+      'select * from public.reassign_transaction_customer($1,$2,$3)',
+      [completed.id, newCustomer.id, 'Staff must not reassign customers'],
+      '42501',
+    );
+    await asUser(owner);
+    await assert.rejects(
+      q('select * from public.reassign_transaction_customer($1,$2,$3)', [completed.id, newCustomer.id, '   ']),
+      /A correction reason is required/,
+    );
+    await assert.rejects(
+      q('select * from public.reassign_transaction_customer($1,$2,$3)', [completed.id, inactiveCustomer.id, 'Inactive destination must be rejected']),
+      /The new customer must be active/,
+    );
+    assert.equal((await fresh(completed.id)).customer_id, oldCustomer.id, 'validation failures leave the transaction unchanged');
+    assert.equal((await one('select count(*)::int as count from transaction_customer_corrections where transaction_id=$1', [completed.id])).count, 0);
+
+    const correction = await one(
+      'select * from public.reassign_transaction_customer($1,$2,$3)',
+      [completed.id, newCustomer.id, 'Owner-confirmed duplicate customer link'],
+    );
+    assert.equal(correction.old_customer_id, oldCustomer.id);
+    assert.equal(correction.new_customer_id, newCustomer.id);
+    assert.equal(correction.corrected_by, owner);
+    assert.equal(correction.reason, 'Owner-confirmed duplicate customer link');
+    assert.equal((await fresh(completed.id)).customer_id, newCustomer.id, 'completed transaction is reassigned');
+
+    const events = await q(
+      'select customer_id, points_earned, event_type from loyalty_point_events where transaction_id=$1 order by event_type, customer_id',
+      [completed.id],
+    );
+    assert.equal(events.length, 3, 'original earned event remains and two correction events are appended');
+    assert.equal(events.filter((event) => event.event_type === 'earned').length, 1);
+    assert.equal(events.filter((event) => event.event_type === 'correction').length, 2);
+    assert.ok(events.some((event) => event.customer_id === oldCustomer.id && event.event_type === 'correction' && Number(event.points_earned) === -7));
+    assert.ok(events.some((event) => event.customer_id === newCustomer.id && event.event_type === 'correction' && Number(event.points_earned) === 7));
+    const [oldBalance, newBalance] = await Promise.all([
+      one('select private.calculate_loyalty_balance($1) as balance', [oldCustomer.id]),
+      one('select private.calculate_loyalty_balance($1) as balance', [newCustomer.id]),
+    ]);
+    assert.equal(Number(oldBalance.balance), 0, 'old customer no longer retains the order points');
+    assert.equal(Number(newBalance.balance), 7, 'new customer receives the original order points');
+
+    await asUser(staff);
+    await rejects('update public.transaction_customer_corrections set reason=$2 where id=$1', [correction.id, 'rewrite'], '42501');
+    await rejects('delete from public.transaction_customer_corrections where id=$1', [correction.id], '42501');
+    await asUser(owner);
+    assert.equal((await one('select reason from transaction_customer_corrections where id=$1', [correction.id])).reason, 'Owner-confirmed duplicate customer link');
+  });
+
   console.log(`\n${passed} PASS; 0 FAIL. NOT RUN: multi-session contention, Supabase API/Realtime transport, external n8n export.`);
 } finally { await db.close(); }

@@ -59,10 +59,18 @@ export default function LoyaltyManager() {
   }
 
   const ledgerByCustomer = useMemo(() => {
-    const result = new Map<string, Array<{ kind: 'earned' | 'redeemed'; date: string; detail: string }>>()
+    const result = new Map<string, Array<{ kind: 'earned' | 'correction' | 'redeemed'; date: string; detail: string }>>()
     for (const event of events) {
       const ledger = result.get(event.customer_id) ?? []
-      ledger.push({ kind: 'earned', date: event.created_at, detail: `+${points(event.points_earned)} points · ${points(event.kg)} kg · transaction ${event.transaction_id.slice(0, 8)}` })
+      const correction = event.event_type === 'correction'
+      const amount = Number(event.points_earned)
+      ledger.push({
+        kind: correction ? 'correction' : 'earned',
+        date: event.created_at,
+        detail: correction
+          ? `Correction · ${amount > 0 ? '+' : ''}${points(amount)} points · transaction ${event.transaction_id.slice(0, 8)}`
+          : `+${points(amount)} points · ${points(event.kg)} kg · transaction ${event.transaction_id.slice(0, 8)}`,
+      })
       result.set(event.customer_id, ledger)
     }
     for (const redemption of redemptions) {
@@ -106,7 +114,7 @@ export default function LoyaltyManager() {
                   </div>
                   <details className="mt-3">
                     <summary className="cursor-pointer text-xs font-medium text-sky-700 dark:text-sky-300">View auditable ledger ({ledger.length} entr{ledger.length === 1 ? 'y' : 'ies'})</summary>
-                    {ledger.length === 0 ? <p className="mt-2 text-xs text-slate-500">No points or redemptions yet.</p> : <div className="mt-2 space-y-1.5 rounded-xl bg-slate-50 p-3 dark:bg-slate-950">{ledger.map((entry, index) => <div key={`${entry.date}-${index}`} className="flex flex-wrap justify-between gap-2 text-xs"><span className={entry.kind === 'earned' ? 'text-emerald-700 dark:text-emerald-300' : 'text-violet-700 dark:text-violet-300'}>{entry.detail}</span><time className="text-slate-500" dateTime={entry.date}>{new Date(entry.date).toLocaleString('en-PH')}</time></div>)}</div>}
+                    {ledger.length === 0 ? <p className="mt-2 text-xs text-slate-500">No points or redemptions yet.</p> : <div className="mt-2 space-y-1.5 rounded-xl bg-slate-50 p-3 dark:bg-slate-950">{ledger.map((entry, index) => <div key={`${entry.date}-${index}`} className="flex flex-wrap justify-between gap-2 text-xs"><span className={entry.kind === 'earned' ? 'text-emerald-700 dark:text-emerald-300' : entry.kind === 'correction' ? 'text-amber-700 dark:text-amber-300' : 'text-violet-700 dark:text-violet-300'}>{entry.detail}</span><time className="text-slate-500" dateTime={entry.date}>{new Date(entry.date).toLocaleString('en-PH')}</time></div>)}</div>}
                   </details>
                 </div>
               )

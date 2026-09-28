@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import ActionErrorBoundary from '../components/ActionErrorBoundary'
 import CustomerItemsCard from '../components/CustomerItemsCard'
@@ -16,7 +16,8 @@ import { useShopSettings } from '../lib/shop-settings-context'
 import { isDropOffTransaction } from '../lib/service-classification'
 import { issueOrderTrackingLink } from '../lib/order-tracking'
 import { supabase } from '../lib/supabase'
-import type { TransactionCustomerItem, TransactionServiceItem, TransactionWithService } from '../types/database'
+import type { TransactionCustomerCorrection, TransactionCustomerItem, TransactionServiceItem, TransactionWithService } from '../types/database'
+import type { Customer } from '../types/customer-status'
 
 const SELECT = `*, services ( code, label ),
   created_by_profile:profiles!transactions_created_by_fkey ( full_name ),
@@ -24,6 +25,16 @@ const SELECT = `*, services ( code, label ),
   deleted_by_profile:profiles!transactions_deleted_by_fkey ( full_name )`
 
 const HISTORY_SELECT = `*, changed_by_profile:profiles!transaction_status_history_changed_by_fkey ( full_name )`
+const CUSTOMER_CORRECTION_SELECT = `*,
+  old_customer:customers!transaction_customer_corrections_old_customer_id_fkey ( id, customer_code, full_name ),
+  new_customer:customers!transaction_customer_corrections_new_customer_id_fkey ( id, customer_code, full_name ),
+  corrected_by_profile:profiles!transaction_customer_corrections_corrected_by_fkey ( full_name )`
+
+type CustomerCorrectionWithLabels = TransactionCustomerCorrection & {
+  old_customer: Pick<Customer, 'id' | 'customer_code' | 'full_name'> | null
+  new_customer: Pick<Customer, 'id' | 'customer_code' | 'full_name'> | null
+  corrected_by_profile: { full_name: string } | null
+}
 
 const peso = (value: number) =>
   `₱${Number(value || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
@@ -66,6 +77,61 @@ export default function TransactionDetailPage() {
   const [showThermalModal, setShowThermalModal] = useState(false)
   const [openingTracking, setOpeningTracking] = useState(false)
   const [trackingError, setTrackingError] = useState<string | null>(null)
+  const [customers, setCustomers] = useState<Customer[]>([])
+  const [customerCorrections, setCustomerCorrections] = useState<CustomerCorrectionWithLabels[]>([])
+  const [customerCorrectionError, setCustomerCorrectionError] = useState<string | null>(null)
+  const [showCustomerCorrection, setShowCustomerCorrection] = useState(false)
+  const [newCustomerId, setNewCustomerId] = useState('')
+  const [customerCorrectionReason, setCustomerCorrectionReason] = useState('')
+  const [savingCustomerCorrection, setSavingCustomerCorrection] = useState(false)
+  const [customerCorrectionMessage, setCustomerCorrectionMessage] = useState<string | null>(null)
+
+  const reloadCustomerCorrections = useCallback(async (transactionId: string) => {
+    if (!isOwner) return
+    setCustomerCorrectionError(null)
+    const [customersResult, correctionsResult] = await Promise.all([
+      supabase.from('customers').select('*').order('full_name'),
+      supabase.from('transaction_customer_corrections')
+        .select(CUSTOMER_CORRECTION_SELECT)
+        .eq('transaction_id', transactionId)
+        .order('corrected_at', { ascending: false }),
+    ])
+    if (customersResult.error || correctionsResult.error) {
+      setCustomerCorrectionError('Customer assignment details could not be loaded. Refresh the order to try again.')
+      return
+    }
+    setCustomers((customersResult.data as Customer[]) ?? [])
+    setCustomerCorrections((correctionsResult.data as unknown as CustomerCorrectionWithLabels[]) ?? [])
+  }, [isOwner])
+
+  const reassignCustomer = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (!transaction || !isOwner || !newCustomerId || !customerCorrectionReason.trim()) return
+    const oldCustomer = customers.find((customer) => customer.id === transaction.customer_id)
+    const newCustomer = customers.find((customer) => customer.id === newCustomerId)
+    if (!newCustomer?.active || newCustomer.id === transaction.customer_id) return
+    const oldLabel = oldCustomer?.full_name || transaction.customer_name
+    if (!window.confirm(`Reassign ${transaction.transaction_code || `#${transaction.transaction_no}`} from ${oldLabel} to ${newCustomer.full_name}? The customer’s transaction history and any earned loyalty points will be corrected, with an audit record.\n\nReason: ${customerCorrectionReason.trim()}`)) return
+
+    setSavingCustomerCorrection(true)
+    setCustomerCorrectionError(null)
+    setCustomerCorrectionMessage(null)
+    const { error: correctionError } = await supabase.rpc('reassign_transaction_customer', {
+      p_transaction_id: transaction.id,
+      p_new_customer_id: newCustomer.id,
+      p_reason: customerCorrectionReason.trim(),
+    })
+    setSavingCustomerCorrection(false)
+    if (correctionError) {
+      setCustomerCorrectionError(correctionError.message)
+      return
+    }
+    setCustomerCorrectionMessage(`Customer link updated from ${oldLabel} to ${newCustomer.full_name}.`)
+    setNewCustomerId('')
+    setCustomerCorrectionReason('')
+    setShowCustomerCorrection(false)
+    await reload()
+  }
 
   const openTracking = async () => {
     if (!transaction || transaction.deleted_at || transaction.order_status === 'cancelled') return
@@ -109,7 +175,9 @@ export default function TransactionDetailPage() {
       return
     }
 
-    setTransaction((transactionResult.data as unknown as TransactionWithService | null) ?? null)
+    const loadedTransaction = (transactionResult.data as unknown as TransactionWithService | null) ?? null
+    setTransaction(loadedTransaction)
+    if (loadedTransaction && isOwner) void reloadCustomerCorrections(loadedTransaction.id)
 
     const printDetails = resolvePrintDetails(
       {
@@ -138,7 +206,7 @@ export default function TransactionDetailPage() {
       setHistory((historyResult.data as unknown as TransactionStatusHistoryWithActor[]) ?? [])
     }
     setLoading(false)
-  }, [id])
+  }, [id, isOwner, reloadCustomerCorrections])
 
   useEffect(() => {
     void reload()
@@ -415,6 +483,67 @@ export default function TransactionDetailPage() {
             {transaction.payment_method === 'pay_later' && <DetailRow label="Balance Due" value={peso(transaction.total_amount)} />}
           </DetailCard>
         </section>
+
+        {isOwner && (
+          <DetailCard title="Customer assignment">
+            {customerCorrectionError && <InlineAlert variant="error" title="Customer assignment could not be refreshed">{customerCorrectionError}</InlineAlert>}
+            {customerCorrectionMessage && <InlineAlert variant="success" title="Customer assignment corrected">{customerCorrectionMessage}</InlineAlert>}
+            <DetailRow
+              label="Linked customer"
+              value={customers.find((customer) => customer.id === transaction.customer_id)?.full_name || transaction.customer_name}
+            />
+            {transaction.customer_id && (
+              <p className="-mt-2 text-right text-xs text-slate-500">
+                {customers.find((customer) => customer.id === transaction.customer_id)?.customer_code || transaction.customer_id.slice(0, 8)}
+              </p>
+            )}
+            {!transaction.customer_id ? (
+              <p className="text-sm text-slate-500">This transaction has no linked customer to reassign.</p>
+            ) : !showCustomerCorrection ? (
+              <button type="button" onClick={() => { setCustomerCorrectionMessage(null); setShowCustomerCorrection(true) }} className="rounded-lg border border-sky-300 px-3 py-2 text-sm font-medium text-sky-700 hover:bg-sky-50 dark:border-sky-800 dark:text-sky-300 dark:hover:bg-slate-800">
+                Reassign customer
+              </button>
+            ) : (
+              <form className="space-y-3 border-t border-slate-200 pt-3 dark:border-slate-800" onSubmit={(event) => void reassignCustomer(event)}>
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">
+                  New customer
+                  <select required value={newCustomerId} onChange={(event) => setNewCustomerId(event.target.value)} className="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950">
+                    <option value="">Choose an active customer</option>
+                    {customers.filter((customer) => customer.active && customer.id !== transaction.customer_id).map((customer) => (
+                      <option key={customer.id} value={customer.id}>{customer.full_name} · {customer.customer_code}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">
+                  Correction reason
+                  <textarea required maxLength={500} value={customerCorrectionReason} onChange={(event) => setCustomerCorrectionReason(event.target.value)} rows={3} className="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950" placeholder="Explain why this transaction is linked to a different customer." />
+                </label>
+                <div className="flex flex-wrap gap-2">
+                  <button type="submit" disabled={savingCustomerCorrection || !newCustomerId || !customerCorrectionReason.trim()} className="inline-flex items-center gap-2 rounded-lg bg-sky-600 px-3 py-2 text-sm font-semibold text-white hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-50">
+                    {savingCustomerCorrection && <ButtonSpinner />}{savingCustomerCorrection ? 'Saving…' : 'Confirm reassignment'}
+                  </button>
+                  <button type="button" disabled={savingCustomerCorrection} onClick={() => setShowCustomerCorrection(false)} className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">Cancel</button>
+                </div>
+              </form>
+            )}
+            <div className="border-t border-slate-200 pt-3 dark:border-slate-800">
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Reassignment history</p>
+              {customerCorrections.length === 0 ? <p className="mt-2 text-sm text-slate-500">No customer corrections recorded.</p> : (
+                <ul className="mt-2 space-y-3">
+                  {customerCorrections.map((correction) => (
+                    <li key={correction.id} className="rounded-lg bg-slate-50 p-3 text-sm dark:bg-slate-950">
+                      <p className="font-medium text-slate-800 dark:text-slate-200">
+                        {correction.old_customer?.full_name || correction.old_customer_id.slice(0, 8)} → {correction.new_customer?.full_name || correction.new_customer_id.slice(0, 8)}
+                      </p>
+                      <p className="mt-1 text-slate-600 dark:text-slate-400">Reason: {correction.reason}</p>
+                      <p className="mt-1 text-xs text-slate-500">{correction.corrected_by_profile?.full_name || correction.corrected_by.slice(0, 8)} · {formatDateTime(correction.corrected_at)}</p>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </DetailCard>
+        )}
 
         {isOwner && (
           <DetailCard title="Audit">

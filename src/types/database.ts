@@ -75,7 +75,18 @@ export type LoyaltyPointEvent = {
   transaction_id: string
   kg: number
   points_earned: number
+  event_type: 'earned' | 'correction' | null
   created_at: string
+}
+
+export type TransactionCustomerCorrection = {
+  id: string
+  transaction_id: string
+  old_customer_id: string
+  new_customer_id: string
+  reason: string
+  corrected_by: string
+  corrected_at: string
 }
 
 export type LoyaltyRedemption = {
@@ -594,6 +605,17 @@ export type Database = {
         Update: { [key: string]: never }
         Relationships: []
       }
+      transaction_customer_corrections: {
+        Row: TransactionCustomerCorrection
+        Insert: { [key: string]: never }
+        Update: { [key: string]: never }
+        Relationships: [
+          { foreignKeyName: 'transaction_customer_corrections_transaction_id_fkey'; columns: ['transaction_id']; isOneToOne: false; referencedRelation: 'transactions'; referencedColumns: ['id'] },
+          { foreignKeyName: 'transaction_customer_corrections_old_customer_id_fkey'; columns: ['old_customer_id']; isOneToOne: false; referencedRelation: 'customers'; referencedColumns: ['id'] },
+          { foreignKeyName: 'transaction_customer_corrections_new_customer_id_fkey'; columns: ['new_customer_id']; isOneToOne: false; referencedRelation: 'customers'; referencedColumns: ['id'] },
+          { foreignKeyName: 'transaction_customer_corrections_corrected_by_fkey'; columns: ['corrected_by']; isOneToOne: false; referencedRelation: 'profiles'; referencedColumns: ['id'] },
+        ]
+      }
       loyalty_redemptions: {
         Row: LoyaltyRedemption
         Insert: { [key: string]: never }
@@ -930,6 +952,10 @@ export type Database = {
       redeem_loyalty_reward: {
         Args: { p_customer_id: string; p_notes?: string | null }
         Returns: LoyaltyRedemption
+      }
+      reassign_transaction_customer: {
+        Args: { p_transaction_id: string; p_new_customer_id: string; p_reason: string }
+        Returns: TransactionCustomerCorrection
       }
       create_transaction_with_service_items: {
         Args: {
