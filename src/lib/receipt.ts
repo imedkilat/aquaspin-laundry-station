@@ -124,6 +124,7 @@ function buildReceiptHtml({
     <div class="row"><strong>Loads</strong><span>${escapeHtml(transaction.no_of_loads ?? '—')}</span></div>
     <div class="row"><strong>Payment</strong><span>${escapeHtml(paymentLabel(transaction.payment_method))}</span></div>
     ${transaction.payment_method === 'gcash' ? `<div class="row"><strong>GCash reference</strong><span>${escapeHtml(transaction.gcash_reference || '—')}</span></div>` : ''}
+    ${transaction.discount_amount > 0 ? `<div class="row"><strong>Discount (${escapeHtml(transaction.discount_promo_name_snapshot || 'Promo')})</strong><span>-${escapeHtml(peso(transaction.discount_amount))}</span></div>` : ''}
     <div class="row total"><span>Total${serviceItems.length > 0 ? ` (${serviceItems.length + 1} services)` : ''}</span><span>${escapeHtml(peso(transaction.total_amount))}</span></div>
   </div>
 

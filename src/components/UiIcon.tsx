@@ -21,6 +21,7 @@ export type IconName =
   | 'staff'
   | 'tag'
   | 'download'
+  | 'printer'
 
 const PATHS: Record<IconName, ReactNode> = {
   home: <><path d="m3 10 9-7 9 7" /><path d="M5 9.5V21h14V9.5" /><path d="M9 21v-6h6v6" /></>,
@@ -43,6 +44,7 @@ const PATHS: Record<IconName, ReactNode> = {
   staff: <><circle cx="9" cy="8" r="3" /><path d="M3.5 20c.6-3 2.5-4.5 5.5-4.5s4.9 1.5 5.5 4.5" /><path d="M16 5.5a3 3 0 0 1 0 5.8M16 15.5c2.4.3 3.9 1.7 4.5 4.5" /></>,
   tag: <><path d="M4 5v6l9 9 7-7-9-9H4Z" /><circle cx="8" cy="8" r="1" /></>,
   download: <><path d="M12 3v12" /><path d="m7 10 5 5 5-5M4 20h16" /></>,
+  printer: <><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2" /><path d="M6 9V3a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v6" /><rect x="6" y="14" width="12" height="8" rx="1" /></>,
 }
 
 export default function UiIcon({ name, size = 20, strokeWidth = 1.9, ...props }: { name: IconName; size?: number; strokeWidth?: number } & Omit<SVGProps<SVGSVGElement>, 'width' | 'height'>) {

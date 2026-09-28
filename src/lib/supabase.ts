@@ -1,9 +1,10 @@
 import { createClient } from '@supabase/supabase-js'
 import type { Database } from '../types/database'
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined
+const env = (typeof import.meta !== 'undefined' && import.meta.env) ? import.meta.env : (typeof process !== 'undefined' && process.env ? process.env : {})
+const supabaseUrl = env.VITE_SUPABASE_URL as string | undefined
 const supabasePublishableKey = (
-  import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ?? import.meta.env.VITE_SUPABASE_ANON_KEY
+  env.VITE_SUPABASE_PUBLISHABLE_KEY ?? env.VITE_SUPABASE_ANON_KEY
 ) as string | undefined
 
 export const supabaseConfigError =
@@ -11,7 +12,7 @@ export const supabaseConfigError =
     ? 'Missing Supabase configuration. Set VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY in Vercel.'
     : null
 
-if (supabaseConfigError) {
+if (supabaseConfigError && typeof console !== 'undefined' && console.error && (typeof process === 'undefined' || process.env?.NODE_ENV !== 'test')) {
   // eslint-disable-next-line no-console
   console.error(supabaseConfigError)
 }
@@ -23,4 +24,4 @@ export const supabase = createClient<Database>(
   supabasePublishableKey || 'invalid-key'
 )
 
-export const SHOP_NAME = (import.meta.env.VITE_SHOP_NAME as string) || 'Laundry Dashboard'
+export const SHOP_NAME = (env.VITE_SHOP_NAME as string) || 'Laundry Dashboard'

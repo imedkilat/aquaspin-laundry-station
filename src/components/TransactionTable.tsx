@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import type { TransactionServiceItem, TransactionWithService } from '../types/database'
+import type { TransactionWithService } from '../types/database'
 import type { OrderStatus } from '../types/customer-status'
 import { supabase } from '../lib/supabase'
 import { useShopSettings } from '../lib/shop-settings-context'
@@ -8,9 +8,8 @@ import PaymentBadge from './PaymentBadge'
 import EditTransactionModal from './EditTransactionModal'
 import DeleteTransactionModal from './DeleteTransactionModal'
 import { ButtonSpinner, EmptyState, InlineAlert, LoadingPanel } from './UiFeedback'
-import { writeReceiptDocument } from '../lib/receipt'
-import { getShopLogoUrl } from '../lib/storage-images'
 import { customerItemsHref, isCustomerItemsPending } from '../lib/customer-items-pending'
+import ThermalPrintModal from './ThermalPrintModal'
 import UiIcon from './UiIcon'
 import { canEditTransaction } from '../lib/transaction-edit'
 
@@ -62,6 +61,7 @@ export default function TransactionTable({ rows, loading, isOwner = false, onEdi
   const { settings } = useShopSettings()
   const [editingTransaction, setEditingTransaction] = useState<TransactionWithService | null>(null)
   const [deletingTransaction, setDeletingTransaction] = useState<TransactionWithService | null>(null)
+  const [printingTransaction, setPrintingTransaction] = useState<TransactionWithService | null>(null)
   const [restoringId, setRestoringId] = useState<string | null>(null)
   const [restoreError, setRestoreError] = useState<string | null>(null)
 
@@ -92,40 +92,6 @@ export default function TransactionTable({ rows, loading, isOwner = false, onEdi
     if (!canDelete) return
     if (onDelete) return onDelete(transaction)
     setDeletingTransaction(transaction)
-  }
-
-  const printReceipt = (transaction: TransactionWithService) => {
-    // The window must open synchronously, in direct response to this click,
-    // or popup blockers (Safari especially) will silently swallow it. The
-    // transaction's additional service lines are only known after an async
-    // fetch, so the window opens first (blank) and is filled in once ready.
-    const receiptWindow = window.open('', '_blank', 'width=480,height=760')
-    if (!receiptWindow) {
-      setRestoreError('Could not open the receipt preview. Allow popups for Aquaspin, then try again.')
-      return
-    }
-
-    void supabase
-      .from('transaction_service_items')
-      .select('*')
-      .eq('transaction_id', transaction.id)
-      .order('position', { ascending: true })
-      .then(({ data, error: fetchError }) => {
-        const serviceItems = fetchError ? [] : ((data as unknown as TransactionServiceItem[]) ?? [])
-        try {
-          writeReceiptDocument(receiptWindow, {
-            transaction,
-            serviceItems,
-            shopName: settings.shop_display_name,
-            address: settings.address,
-            contactPhone: settings.contact_phone,
-            logoUrl: getShopLogoUrl(settings.logo_path),
-            reportFooter: settings.report_footer,
-          })
-        } catch {
-          setRestoreError('Could not open the receipt preview. Allow popups for Aquaspin, then try again.')
-        }
-      })
   }
 
   if (loading) {
@@ -183,7 +149,7 @@ export default function TransactionTable({ rows, loading, isOwner = false, onEdi
                         isOwner ? <button type="button" onClick={(event) => { event.preventDefault(); event.stopPropagation(); void restore(r.id) }} disabled={restoringId === r.id} className="inline-flex items-center gap-1.5 text-emerald-600 hover:text-emerald-700 text-xs font-medium disabled:opacity-50">{restoringId === r.id && <ButtonSpinner />}{restoringId === r.id ? 'Restoring…' : '↺ Restore'}</button> : <span className="text-xs text-slate-400">Owner only</span>
                       ) : (
                         <>
-                          <button type="button" onClick={(event) => { event.preventDefault(); event.stopPropagation(); printReceipt(r) }} className="text-slate-600 hover:text-slate-800 text-xs font-medium dark:text-slate-300 dark:hover:text-slate-100">Print Receipt</button>
+                          <button type="button" onClick={(event) => { event.preventDefault(); event.stopPropagation(); setPrintingTransaction(r) }} className="text-slate-600 hover:text-slate-800 text-xs font-medium dark:text-slate-300 dark:hover:text-slate-100">Print</button>
                           {canEdit && isCustomerItemsPending(r) && <Link to={customerItemsHref(r.id)} className="inline-flex items-center gap-1 text-amber-700 hover:text-amber-800 text-xs font-semibold dark:text-amber-300 dark:hover:text-amber-200"><UiIcon name="plus" size={14} />Add Items</Link>}
                           {canEdit && canEditTransaction(r.order_status, isDeleted) && <button type="button" onClick={(event) => { event.preventDefault(); event.stopPropagation(); openEdit(r) }} className="text-sky-600 hover:text-sky-700 text-xs font-medium">Edit</button>}
                           {canDelete && <button type="button" onClick={(event) => { event.preventDefault(); event.stopPropagation(); openDelete(r) }} className="text-red-600 hover:text-red-700 text-xs font-medium">Delete</button>}
@@ -201,6 +167,7 @@ export default function TransactionTable({ rows, loading, isOwner = false, onEdi
 
       {!onEdit && editingTransaction && canEdit && <EditTransactionModal transaction={editingTransaction} onClose={() => setEditingTransaction(null)} />}
       {!onDelete && deletingTransaction && canDelete && <DeleteTransactionModal transaction={deletingTransaction} onClose={() => setDeletingTransaction(null)} />}
+      {printingTransaction && <ThermalPrintModal transaction={printingTransaction} onClose={() => setPrintingTransaction(null)} />}
     </>
   )
 }

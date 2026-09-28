@@ -6,13 +6,15 @@ import DeleteTransactionModal from '../components/DeleteTransactionModal'
 import EditTransactionModal from '../components/EditTransactionModal'
 import PaymentBadge from '../components/PaymentBadge'
 import TransactionStatusPanel, { StatusBadge, type TransactionStatusHistoryWithActor } from '../components/TransactionStatusPanel'
+import ThermalPrintModal from '../components/ThermalPrintModal'
+import UiIcon from '../components/UiIcon'
 import { ButtonSpinner, EmptyState, InlineAlert, LoadingPanel } from '../components/UiFeedback'
 import { useAuth } from '../lib/auth-context'
 import { makeRealtimeTopic } from '../lib/realtime'
-import { openTransactionReceipt } from '../lib/receipt'
+import { canPrintDetails, resolvePrintDetails } from '../lib/print-details-state'
 import { useShopSettings } from '../lib/shop-settings-context'
-import { getShopLogoUrl } from '../lib/storage-images'
 import { isDropOffTransaction } from '../lib/service-classification'
+import { issueOrderTrackingLink } from '../lib/order-tracking'
 import { supabase } from '../lib/supabase'
 import type { TransactionCustomerItem, TransactionServiceItem, TransactionWithService } from '../types/database'
 
@@ -51,19 +53,46 @@ export default function TransactionDetailPage() {
 
   const [transaction, setTransaction] = useState<TransactionWithService | null>(null)
   const isTerminalOrder = ['completed', 'cancelled'].includes(transaction?.order_status ?? '')
-  const [customerItems, setCustomerItems] = useState<TransactionCustomerItem[]>([])
-  const [serviceItems, setServiceItems] = useState<TransactionServiceItem[]>([])
+  const [customerItems, setCustomerItems] = useState<TransactionCustomerItem[] | null>(null)
+  const [serviceItems, setServiceItems] = useState<TransactionServiceItem[] | null>(null)
+  const [customerItemsError, setCustomerItemsError] = useState<string | null>(null)
+  const [serviceItemsError, setServiceItemsError] = useState<string | null>(null)
   const [history, setHistory] = useState<TransactionStatusHistoryWithActor[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [editing, setEditing] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [restoring, setRestoring] = useState(false)
+  const [showThermalModal, setShowThermalModal] = useState(false)
+  const [openingTracking, setOpeningTracking] = useState(false)
+  const [trackingError, setTrackingError] = useState<string | null>(null)
+
+  const openTracking = async () => {
+    if (!transaction || transaction.deleted_at || transaction.order_status === 'cancelled') return
+    const trackingWindow = window.open('about:blank', '_blank')
+    if (!trackingWindow) {
+      setTrackingError('Your browser blocked the tracking window. Allow pop-ups and try again.')
+      return
+    }
+    trackingWindow.opener = null
+    setOpeningTracking(true)
+    setTrackingError(null)
+    try {
+      trackingWindow.location.replace(await issueOrderTrackingLink(transaction.id))
+    } catch (err) {
+      trackingWindow.close()
+      setTrackingError(err instanceof Error ? err.message : 'Could not create a secure tracking link.')
+    } finally {
+      setOpeningTracking(false)
+    }
+  }
 
   const reload = useCallback(async () => {
     if (!id) return
     setLoading(true)
     setError(null)
+    setCustomerItemsError(null)
+    setServiceItemsError(null)
 
     const [transactionResult, historyResult, customerItemsResult, serviceItemsResult] = await Promise.all([
       supabase.from('transactions').select(SELECT).eq('id', id).maybeSingle(),
@@ -74,16 +103,37 @@ export default function TransactionDetailPage() {
 
     if (transactionResult.error) {
       setError('Could not load this order. Check your connection and try again.')
+      setCustomerItems(null)
+      setServiceItems(null)
       setLoading(false)
       return
     }
 
     setTransaction((transactionResult.data as unknown as TransactionWithService | null) ?? null)
-    setCustomerItems(customerItemsResult.error ? [] : (customerItemsResult.data as unknown as TransactionCustomerItem[]) ?? [])
-    setServiceItems(serviceItemsResult.error ? [] : (serviceItemsResult.data as unknown as TransactionServiceItem[]) ?? [])
+
+    const printDetails = resolvePrintDetails(
+      {
+        data: customerItemsResult.data as unknown as TransactionCustomerItem[] | null,
+        error: customerItemsResult.error,
+      },
+      {
+        data: serviceItemsResult.data as unknown as TransactionServiceItem[] | null,
+        error: serviceItemsResult.error,
+      },
+    )
+    setCustomerItems(printDetails.customerItems)
+    setCustomerItemsError(printDetails.customerItemsError)
+    setServiceItems(printDetails.serviceItems)
+    setServiceItemsError(printDetails.serviceItemsError)
+
+    if (printDetails.customerItemsError) setError(printDetails.customerItemsError)
+    if (printDetails.serviceItemsError) {
+      setError((prev) => prev ? `${prev} Also, additional service lines could not be loaded.` : printDetails.serviceItemsError)
+    }
+
     if (historyResult.error) {
       setHistory([])
-      setError('The order opened, but its status history could not be loaded. Refresh and try again.')
+      setError((prev) => prev || 'The order opened, but its status history could not be loaded. Refresh and try again.')
     } else {
       setHistory((historyResult.data as unknown as TransactionStatusHistoryWithActor[]) ?? [])
     }
@@ -185,21 +235,6 @@ export default function TransactionDetailPage() {
   const cashChange = transaction.payment_method === 'paid'
     ? Math.max(Number(transaction.cash_amount || 0) - Number(transaction.total_amount || 0), 0)
     : 0
-  const printReceipt = () => {
-    try {
-      openTransactionReceipt({
-        transaction,
-        serviceItems,
-        shopName: settings.shop_display_name,
-        address: settings.address,
-        contactPhone: settings.contact_phone,
-        logoUrl: getShopLogoUrl(settings.logo_path),
-        reportFooter: settings.report_footer,
-      })
-    } catch (printError) {
-      setError(printError instanceof Error ? printError.message : 'Could not open the receipt preview.')
-    }
-  }
 
   return (
     <>
@@ -217,7 +252,30 @@ export default function TransactionDetailPage() {
           </div>
 
           <div className="flex flex-wrap gap-2">
-            {!transaction.deleted_at && <button type="button" onClick={printReceipt} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">Print Receipt</button>}
+            {!transaction.deleted_at && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setShowThermalModal(true)}
+                  disabled={loading || !canPrintDetails(customerItems, serviceItems, customerItemsError || serviceItemsError, loading)}
+                  title={customerItemsError || serviceItemsError ? 'Cannot print while order details failed to load' : undefined}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-sky-300 bg-sky-50 px-4 py-2 text-sm font-semibold text-sky-700 hover:bg-sky-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-sky-800 dark:bg-sky-950 dark:text-sky-300 dark:hover:bg-sky-900"
+                >
+                  <UiIcon name="printer" size={16} />
+                  Print Receipt / Bag Tag
+                </button>
+                {transaction.order_status !== 'cancelled' && (
+                  <button
+                    type="button"
+                    onClick={() => void openTracking()}
+                    disabled={openingTracking}
+                    className="inline-flex items-center gap-1 rounded-xl border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-60 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+                  >
+                    {openingTracking ? 'Preparing…' : 'Track ↗'}
+                  </button>
+                )}
+              </>
+            )}
             {!transaction.deleted_at && canEdit && !isTerminalOrder && (
               <button type="button" onClick={() => setEditing(true)} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">Edit</button>
             )}
@@ -230,9 +288,19 @@ export default function TransactionDetailPage() {
               </button>
             )}
           </div>
+          {trackingError && <p className="mt-2 text-sm font-medium text-red-600 dark:text-red-400">{trackingError}</p>}
         </div>
 
-        {error && <InlineAlert variant="error" title="Order action did not finish" actionLabel="Refresh" onAction={() => void reload()}>{error}</InlineAlert>}
+        {error && (
+          <InlineAlert
+            variant="error"
+            title={customerItemsError || serviceItemsError ? 'Order details incomplete' : 'Order action did not finish'}
+            actionLabel="Refresh"
+            onAction={() => void reload()}
+          >
+            {error}
+          </InlineAlert>
+        )}
 
         {transaction.deleted_at && (
           <InlineAlert variant="warning" title="This transaction is soft-deleted">
@@ -242,7 +310,7 @@ export default function TransactionDetailPage() {
 
         <TransactionStatusPanel
           transaction={transaction}
-          hasCustomerItems={customerItems.length > 0 && customerItems.some((item) => item.quantity > 0)}
+          hasCustomerItems={Boolean(customerItems && customerItems.length > 0 && customerItems.some((item) => item.quantity > 0))}
           history={history}
           canEdit={canEdit && !transaction.deleted_at}
           isOwner={isOwner}
@@ -252,8 +320,8 @@ export default function TransactionDetailPage() {
         {isDropOffTransaction(transaction) && (
           <CustomerItemsCard
             transactionId={transaction.id}
-            items={customerItems}
-            canEdit={canEdit && !transaction.deleted_at && !['completed', 'cancelled'].includes(transaction.order_status)}
+            items={customerItems ?? []}
+            canEdit={canEdit && !transaction.deleted_at && !['completed', 'cancelled'].includes(transaction.order_status) && !customerItemsError}
             onSaved={reload}
           />
         )}
@@ -265,7 +333,7 @@ export default function TransactionDetailPage() {
             <DetailRow label="Notes" value={transaction.notes || '—'} multiline />
           </DetailCard>
 
-          <DetailCard title={serviceItems.length > 0 ? 'Primary Service' : 'Laundry'}>
+          <DetailCard title={(serviceItems && serviceItems.length > 0) ? 'Primary Service' : 'Laundry'}>
             <DetailRow label="Service" value={transaction.service_label_snapshot || transaction.service_code_snapshot || transaction.services?.label || transaction.services?.code || '—'} />
             <DetailRow label="Weight" value={transaction.kg != null ? `${transaction.kg} kg` : '—'} />
             <DetailRow label="Loads" value={transaction.no_of_loads != null ? String(transaction.no_of_loads) : '—'} />
@@ -279,7 +347,7 @@ export default function TransactionDetailPage() {
           </DetailCard>
         </section>
 
-        {serviceItems.length > 0 && (
+        {(serviceItems && serviceItems.length > 0) && (
           <section className="space-y-3">
             <h2 className="font-semibold text-slate-900 dark:text-slate-100">Additional Services ({serviceItems.length})</h2>
             <div className="grid gap-4 lg:grid-cols-2">
@@ -309,7 +377,7 @@ export default function TransactionDetailPage() {
         )}
 
         <section className="grid gap-4 lg:grid-cols-[1.3fr_1fr]">
-          <DetailCard title={serviceItems.length > 0 ? 'Primary Service Add-ons' : 'Add-ons'}>
+          <DetailCard title={(serviceItems && serviceItems.length > 0) ? 'Primary Service Add-ons' : 'Add-ons'}>
             {transaction.add_on_items?.length ? (
               <div className="space-y-2">
                 {transaction.add_on_items.map((item, index) => (
@@ -333,7 +401,7 @@ export default function TransactionDetailPage() {
 
           <DetailCard title="Payment">
             <DetailRow label="Total" value={peso(transaction.total_amount)} strong />
-            {serviceItems.length > 0 && (
+            {(serviceItems && serviceItems.length > 0) && (
               <p className="text-xs text-slate-500">Grand total across the primary service and {serviceItems.length} additional service{serviceItems.length === 1 ? '' : 's'}.</p>
             )}
             {transaction.payment_method === 'paid' && <>
@@ -370,6 +438,18 @@ export default function TransactionDetailPage() {
         <ActionErrorBoundary key={`detail-delete-${transaction.id}-${transaction.updated_at}`} onClose={() => setDeleting(false)}>
           <DeleteTransactionModal transaction={transaction} onClose={() => { setDeleting(false); void reload() }} />
         </ActionErrorBoundary>
+      )}
+
+      {showThermalModal && (
+        <ThermalPrintModal
+          transaction={transaction}
+          customerItems={customerItems}
+          serviceItems={serviceItems}
+          customerItemsError={customerItemsError}
+          serviceItemsError={serviceItemsError}
+          parentLoading={loading}
+          onClose={() => setShowThermalModal(false)}
+        />
       )}
     </>
   )

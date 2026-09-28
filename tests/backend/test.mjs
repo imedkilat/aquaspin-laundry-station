@@ -737,6 +737,22 @@ try {
     assert.ok((await one("select to_regprocedure('public.check_rate_limit(text,integer,integer)') is not null ok")).ok);
     assert.equal((await one("select has_function_privilege('service_role','public.check_rate_limit(text,integer,integer)','execute') ok")).ok, true);
   });
+  await test('rate limiter enforces its per-key cap and locks same-key checks within the transaction', async () => {
+    await admin();
+    const definition = await one("select pg_get_functiondef('public.check_rate_limit(text,integer,integer)'::regprocedure) as sql");
+    assert.match(definition.sql, /pg_catalog\.pg_advisory_xact_lock\(pg_catalog\.hashtext\(p_key\)\)/);
+    assert.match(definition.sql, /SET search_path TO ''/);
+
+    const key = `backend-rate-limit-${crypto.randomUUID()}`;
+    const attempts = await Promise.all(
+      Array.from({ length: 5 }, () => one('select public.check_rate_limit($1, 3, 60) as allowed', [key])),
+    );
+    assert.equal(attempts.filter((attempt) => attempt.allowed).length, 3);
+    await asUser(owner);
+  });
+  await test('legacy anonymous order-tracking RPC is absent', async () => {
+    assert.equal((await one("select to_regprocedure('public.get_public_order_status(text)') is null as absent")).absent, true);
+  });
   await test('staff account UI/function wiring (source contract; behaviour is covered by the database and Edge tests)', async () => {
     const edgeFunction = await read('supabase/functions/manage-staff-user/index.ts');
     const manager = await read('src/components/StaffAccountsManager.tsx');
