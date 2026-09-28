@@ -1,5 +1,6 @@
-import type { ChangeEvent } from 'react'
+import { useId, type ChangeEvent } from 'react'
 import type { InventoryItem } from '../types/database'
+import { getUnitQuantityValidationError } from '../lib/inventory-quantity'
 import {
   OTHER_INVENTORY_SOURCE,
   type InventoryUsageDraft,
@@ -45,8 +46,12 @@ function UsageSide({
   reasonField: 'detergent_other_reason' | 'fabric_conditioner_other_reason'
   onChange: (field: keyof InventoryUsageDraft, value: string) => void
 }) {
+  const quantityErrorId = useId()
   const selectedItem = items.find((item) => item.id === itemId)
   const isOther = itemId === OTHER_INVENTORY_SOURCE
+  const quantityError = selectedItem
+    ? getUnitQuantityValidationError(quantity, selectedItem.unit_label, 'Quantity')
+    : null
 
   return (
     <div>
@@ -87,12 +92,15 @@ function UsageSide({
             type="number"
             min="0.001"
             step={selectedItem ? stepFor(selectedItem.unit_label) : '0.001'}
+            aria-invalid={Boolean(quantityError)}
+            aria-describedby={quantityError ? quantityErrorId : undefined}
             disabled={!selectedItem || disabled}
             value={quantity}
             onChange={(event: ChangeEvent<HTMLInputElement>) => onChange(quantityField, event.target.value)}
             className={inputClass + ' disabled:cursor-not-allowed disabled:opacity-60'}
             placeholder={selectedItem ? 'Quantity in ' + selectedItem.unit_label : 'Select an item first'}
           />
+          {quantityError && <p id={quantityErrorId} role="alert" className="mt-1 text-xs text-rose-700 dark:text-rose-300">{quantityError}</p>}
         </>
       )}
     </div>

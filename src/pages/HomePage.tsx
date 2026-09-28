@@ -15,6 +15,7 @@ import { useShopSettings } from '../lib/shop-settings-context'
 import { calculateSalesMetrics } from '../lib/sales-metrics'
 import { canEditCustomerItems, isCustomerItemsPending, PENDING_CUSTOMER_ITEM_STATUSES } from '../lib/customer-items-pending'
 import type { InventoryItemSummary } from '../types/database'
+import { getUnitQuantityValidationError } from '../lib/inventory-quantity'
 
 const peso = (value: number) =>
   `₱${value.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
@@ -254,7 +255,12 @@ function LowStockInventory() {
     const nextQuantity = Number(quantity)
     const nextUnitCost = unitCost.trim() ? Number(unitCost) : null
     const nextReason = reason.trim()
+    const quantityError = getUnitQuantityValidationError(quantity, restockItem.unit_label, 'Restock quantity')
 
+    if (quantityError) {
+      setNotice({ type: 'error', text: quantityError })
+      return
+    }
     if (!Number.isFinite(nextQuantity) || nextQuantity <= 0) {
       setNotice({ type: 'error', text: 'Restock quantity must be greater than zero.' })
       return
@@ -359,7 +365,7 @@ function LowStockInventory() {
             </div>
 
             <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <label className="block text-xs font-medium text-slate-600 dark:text-slate-400">Quantity to add *<input autoFocus required type="number" min="0.001" step={restockItem.unit_label === 'pcs' ? '1' : '0.001'} value={quantity} onChange={(event) => setQuantity(event.target.value)} placeholder="Enter quantity" className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100" /></label>
+              <label className="block text-xs font-medium text-slate-600 dark:text-slate-400">Quantity to add *<input autoFocus required type="number" min="0.001" step={restockItem.unit_label === 'pcs' ? '1' : '0.001'} aria-invalid={Boolean(getUnitQuantityValidationError(quantity, restockItem.unit_label, 'Restock quantity'))} value={quantity} onChange={(event) => setQuantity(event.target.value)} placeholder="Enter quantity" className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100" />{getUnitQuantityValidationError(quantity, restockItem.unit_label, 'Restock quantity') && <span role="alert" className="mt-1 block text-xs text-rose-700 dark:text-rose-300">{getUnitQuantityValidationError(quantity, restockItem.unit_label, 'Restock quantity')}</span>}</label>
               <label className="block text-xs font-medium text-slate-600 dark:text-slate-400">Unit cost (₱)<input type="number" min="0" step="0.01" value={unitCost} onChange={(event) => setUnitCost(event.target.value)} placeholder="Optional" className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100" /></label>
             </div>
 

@@ -25,6 +25,7 @@ import UiIcon from './UiIcon'
 import {
   emptyInventoryUsageDraft,
   OTHER_INVENTORY_SOURCE,
+  inventoryUsageQuantityError,
   inventoryUsageIsComplete,
   useInventoryConsumables,
   type InventoryUsageDraft,
@@ -320,15 +321,28 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
         setError('Inventory items could not be loaded. Refresh the page before saving the transaction.')
         return
       }
-      if (!inventoryUsageIsComplete(inventoryUsage)) {
+      const quantityError = inventoryUsageQuantityError(inventoryUsage, detergentItems, fabricConditionerItems)
+      if (quantityError) {
+        setError(quantityError)
+        return
+      }
+      const additionalQuantityError = serviceLines
+        .filter((line) => line.useOwnInventory)
+        .map((line) => inventoryUsageQuantityError(line.inventoryUsage, detergentItems, fabricConditionerItems))
+        .find(Boolean)
+      if (additionalQuantityError) {
+        setError(`Additional service: ${additionalQuantityError}`)
+        return
+      }
+      if (!inventoryUsageIsComplete(inventoryUsage, detergentItems, fabricConditionerItems)) {
         setError('Complete both inventory usage details. If the customer supplied a product, select Other and enter the reason.')
         return
       }
-      if (serviceLines.some((line) => !serviceLineDraftIsComplete(line))) {
+      if (serviceLines.some((line) => !serviceLineDraftIsComplete(line, detergentItems, fabricConditionerItems))) {
         setError('Select a service for each additional service line, and complete its inventory details if you started filling them in.')
         return
       }
-      if (serviceLines.some((line) => serviceLineDraftHasInventoryGap(line))) {
+      if (serviceLines.some((line) => serviceLineDraftHasInventoryGap(line, detergentItems, fabricConditionerItems))) {
         setError('Complete both inventory usage details for each additional service. If the customer supplied a product, select Other and enter the reason.')
         return
       }
@@ -432,7 +446,7 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
       } else {
         const res = await supabase.rpc('create_transaction_with_service_items', {
           p_transaction: transactionPayload,
-          p_service_items: serviceLines.map((line) => draftToServiceItemInput(line, addOns)),
+          p_service_items: serviceLines.map((line) => draftToServiceItemInput(line, addOns, detergentItems, fabricConditionerItems)),
         })
         insertedData = res.data
         insertError = res.error
