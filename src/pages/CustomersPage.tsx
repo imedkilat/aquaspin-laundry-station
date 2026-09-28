@@ -33,7 +33,17 @@ export default function CustomersPage() {
   const visibleSort = !isOwner && sort === 'redeemed' ? 'name' : sort
   const filtered = useMemo(() => getCustomerDirectoryRows(rows, { search, activity, sort: visibleSort }), [activity, rows, search, visibleSort])
   const pageData = useMemo(() => paginateCustomerRows(filtered, page, PAGE_SIZE), [filtered, page])
-  const totalOutstanding = rows.reduce((sum, row) => sum + Number(row.outstanding_balance || 0), 0)
+  const newestCount = useMemo(() => {
+    const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000
+    return rows.filter((row) => {
+      const value = row.first_visit ?? row.created_at
+      const parsed = value ? Date.parse(value) : NaN
+      return !Number.isNaN(parsed) && parsed >= cutoff
+    }).length
+  }, [rows])
+  const topVisits = useMemo(() => rows.reduce((max, row) => Math.max(max, Number(row.total_transactions || 0)), 0), [rows])
+  const redeemedCount = useMemo(() => rows.filter((row) => row.has_redeemed_reward === true).length, [rows])
+  const redeemedDisabled = Boolean(directoryDataWarning?.includes('Reward redemption data'))
 
   return (
     <div className="space-y-5">
@@ -45,7 +55,13 @@ export default function CustomersPage() {
       {error && <InlineAlert variant="error" title="Customers could not be refreshed" actionLabel="Try again" onAction={() => void reload()}>{error}</InlineAlert>}
       {!error && (realtimeState === 'error' || realtimeState === 'disconnected') && <InlineAlert variant="warning" title="Live customer sync is temporarily offline" actionLabel="Refresh now" onAction={() => void reload()}>Existing rows remain visible until the connection recovers.</InlineAlert>}
       {directoryDataWarning && <InlineAlert variant="warning" title="Some directory filters may be limited">{directoryDataWarning}</InlineAlert>}
-      <section className="grid grid-cols-2 gap-3 lg:grid-cols-4"><Summary label="Customers" value={String(rows.length)} icon="customers" /><Summary label="Active" value={String(rows.filter((row) => row.active).length)} icon="profile" /><Summary label="Visits" value={String(rows.reduce((sum, row) => sum + Number(row.total_transactions || 0), 0))} icon="orders" /><Summary label="Outstanding" value={peso(totalOutstanding)} icon="money" warning={totalOutstanding > 0} /></section>
+      <section className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+        <Summary label="Customers" value={String(rows.length)} icon="customers" />
+        <Summary label="Visits" value={String(rows.reduce((sum, row) => sum + Number(row.total_transactions || 0), 0))} icon="orders" />
+        <Summary label="Newest" value={String(newestCount)} icon="profile" active={visibleSort === 'newest'} onClick={() => { setSort('newest'); setPage(1) }} />
+        <Summary label="Most visits" value={String(topVisits)} icon="orders" active={visibleSort === 'most_visits'} onClick={() => { setSort('most_visits'); setPage(1) }} />
+        {isOwner && <Summary label="Already redeemed" value={String(redeemedCount)} icon="gift" active={visibleSort === 'redeemed'} disabled={redeemedDisabled} onClick={() => { setSort('redeemed'); setPage(1) }} />}
+      </section>
       <BentoCard title="Find a customer" description="Search by name, phone number, or canonical customer ID." icon="search">
         <div className="grid gap-3 sm:grid-cols-3">
           <label className="text-xs font-medium text-slate-600 dark:text-slate-400">Search<input value={search} onChange={(event) => { setSearch(event.target.value); setPage(1) }} className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-100 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:focus:ring-sky-950" placeholder="Name, phone, or CUS-ID" /></label>
@@ -71,4 +87,16 @@ export default function CustomersPage() {
   )
 }
 
-function Summary({ label, value, icon, warning = false }: { label: string; value: string; icon: IconName; warning?: boolean }) { return <div className={`rounded-2xl border p-4 shadow-[0_1px_2px_rgba(15,23,42,0.04)] ${warning ? 'border-amber-200 bg-amber-50 dark:border-amber-900/60 dark:bg-amber-950/20' : 'border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900'}`}><span className={`mb-3 flex h-9 w-9 items-center justify-center rounded-xl ${warning ? 'bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300' : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'}`}><UiIcon name={icon} size={18} /></span><p className="text-xs font-medium uppercase tracking-wide text-slate-500">{label}</p><p className="mt-1 text-xl font-semibold text-slate-900 dark:text-slate-100">{value}</p></div> }
+function Summary({ label, value, icon, warning = false, onClick, active = false, disabled = false }: { label: string; value: string; icon: IconName; warning?: boolean; onClick?: () => void; active?: boolean; disabled?: boolean }) {
+  const className = `rounded-2xl border p-4 text-left shadow-[0_1px_2px_rgba(15,23,42,0.04)] ${warning ? 'border-amber-200 bg-amber-50 dark:border-amber-900/60 dark:bg-amber-950/20' : active ? 'border-sky-400 bg-sky-50 dark:border-sky-700 dark:bg-sky-950/30' : 'border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900'} ${onClick ? 'w-full transition hover:border-sky-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 disabled:cursor-not-allowed disabled:opacity-50' : ''}`
+  const content = (
+    <>
+      <span className={`mb-3 flex h-9 w-9 items-center justify-center rounded-xl ${warning ? 'bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300' : active ? 'bg-sky-100 text-sky-700 dark:bg-sky-900 dark:text-sky-300' : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'}`}><UiIcon name={icon} size={18} /></span>
+      <p className="text-xs font-medium uppercase tracking-wide text-slate-500">{label}</p>
+      <p className="mt-1 text-xl font-semibold text-slate-900 dark:text-slate-100">{value}</p>
+    </>
+  )
+  return onClick
+    ? <button type="button" onClick={onClick} disabled={disabled} className={className}>{content}</button>
+    : <div className={className}>{content}</div>
+}
