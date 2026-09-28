@@ -16,12 +16,14 @@ export function useCustomers({ includeRedemptions = false }: { includeRedemption
   const [rows, setRows] = useState<CustomerListRow[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [customerDirectoryError, setCustomerDirectoryError] = useState<string | null>(null)
   const [realtimeState, setRealtimeState] = useState<'connecting' | 'connected' | 'disconnected' | 'error'>('connecting')
   const [directoryDataWarning, setDirectoryDataWarning] = useState<string | null>(null)
 
   const reload = useCallback(async () => {
     setLoading(true)
     setError(null)
+    setCustomerDirectoryError(null)
 
     const [customersResult, summaryResult, loyaltyResult, historyResult, redemptionResult] = await Promise.all([
       supabase.from('customers').select('*').order('active', { ascending: false }).order('full_name'),
@@ -44,7 +46,9 @@ export function useCustomers({ includeRedemptions = false }: { includeRedemption
     ].filter(Boolean).join(' ') || null)
 
     if (customersResult.error) {
-      setError('Could not load customers. Check the connection and try again.')
+      const message = 'Could not load customers. Check the connection and try again.'
+      setError(message)
+      setCustomerDirectoryError(message)
       setLoading(false)
       return
     }
@@ -113,7 +117,7 @@ export function useCustomers({ includeRedemptions = false }: { includeRedemption
     }
   }, [reload])
 
-  return { rows, loading, error, realtimeState, directoryDataWarning, reload }
+  return { rows, loading, error, customerDirectoryError, realtimeState, directoryDataWarning, reload }
 }
 
 export function useCustomerDetail(id: string | undefined) {
