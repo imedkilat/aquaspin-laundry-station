@@ -23,6 +23,7 @@ const { default: TransactionForm } =
 const {
   findPhoneCustomerNameMismatch,
   isPhoneCustomerMatchSubmitAllowed,
+  getPhoneCustomerDirectoryBlockMessage,
   PhoneCustomerMatchWarning,
 } = TransactionForm
 
@@ -90,6 +91,33 @@ test('an explicitly selected customer allows submit without a phone-name warning
     phone_number: existingCustomer.phone_number,
   })
 
+  assert.equal(result.allowed, true)
+  assert.equal(result.submitted, true)
+  assert.equal(result.warningCustomer, null)
+})
+
+test('a summary-query failure does not block an unmatched order when the customer directory loaded', () => {
+  const useCustomersResult = {
+    loading: false,
+    error: 'Customers loaded, but their summaries could not be refreshed. Try again.',
+    customerDirectoryError: null,
+  }
+  const input = {
+    customer_id: '',
+    customer_name: 'New Customer',
+    phone_number: '09170000000',
+  }
+
+  assert.ok(useCustomersResult.error, 'the unrelated summary query failed')
+  assert.equal(
+    getPhoneCustomerDirectoryBlockMessage(useCustomersResult.loading, useCustomersResult.customerDirectoryError),
+    null,
+  )
+  assert.equal(
+    getPhoneCustomerDirectoryBlockMessage(false, 'Could not load customers. Check the connection and try again.'),
+    'Could not verify this phone number against customer records. Refresh the customer list before saving.',
+  )
+  const result = checkSubmit(input, [])
   assert.equal(result.allowed, true)
   assert.equal(result.submitted, true)
   assert.equal(result.warningCustomer, null)

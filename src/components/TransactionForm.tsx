@@ -95,6 +95,12 @@ function isPhoneCustomerMatchSubmitAllowed(
   return false
 }
 
+function getPhoneCustomerDirectoryBlockMessage(loading: boolean, directoryError: string | null): string | null {
+  if (loading) return 'Customer records are still loading. Wait a moment and try again.'
+  if (directoryError) return 'Could not verify this phone number against customer records. Refresh the customer list before saving.'
+  return null
+}
+
 function PhoneCustomerMatchWarning({
   customer,
   onUseCustomer,
@@ -134,7 +140,7 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
   const { services, loading: servicesLoading, error: servicesError } = useServices()
   const { addOns, loading: addOnsLoading, error: addOnsError } = useAddOns()
   const { promos: discountPromos, loading: discountPromosLoading, error: discountPromosError, realtimeState: discountRealtimeState } = useDiscountPromos()
-  const { rows: customers, loading: customersLoading, error: customersError } = useCustomers()
+  const { rows: customers, loading: customersLoading, error: customersError, customerDirectoryError } = useCustomers()
   const { profile } = useAuth()
   const { settings } = useShopSettings()
   const { detergentItems, fabricConditionerItems, loading: inventoryLoading, error: inventoryError } = useInventoryConsumables()
@@ -380,12 +386,9 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
         return
       }
       if (!form.customer_id && form.phone_number.trim()) {
-        if (customersLoading) {
-          setError('Customer records are still loading. Wait a moment and try again.')
-          return
-        }
-        if (customersError) {
-          setError('Could not verify this phone number against customer records. Refresh the customer list before saving.')
+        const customerDirectoryBlockMessage = getPhoneCustomerDirectoryBlockMessage(customersLoading, customerDirectoryError)
+        if (customerDirectoryBlockMessage) {
+          setError(customerDirectoryBlockMessage)
           return
         }
         if (!isPhoneCustomerMatchSubmitAllowed(form, customers, setPhoneCustomerWarning)) return
@@ -907,5 +910,6 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
 Object.assign(TransactionForm, {
   findPhoneCustomerNameMismatch,
   isPhoneCustomerMatchSubmitAllowed,
+  getPhoneCustomerDirectoryBlockMessage,
   PhoneCustomerMatchWarning,
 })
