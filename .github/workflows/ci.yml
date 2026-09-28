@@ -31,6 +31,9 @@ jobs:
       - name: Run customer item tests
         run: npm run test:customer-items
 
+      - name: Run customer phone match tests
+        run: npm run test:customer-phone-match
+
       - name: Run sales metrics tests
         run: npm run test:sales-metrics
 
