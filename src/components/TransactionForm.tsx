@@ -3,7 +3,7 @@ import { supabase } from '../lib/supabase'
 import { useServices } from '../hooks/useServices'
 import { useAddOns } from '../hooks/useAddOns'
 import { useDiscountPromos } from '../hooks/useDiscountPromos'
-import { useCustomers } from '../hooks/useCustomers'
+import { useCustomers, type CustomerListRow } from '../hooks/useCustomers'
 import { useAuth } from '../lib/auth-context'
 import { useShopSettings } from '../lib/shop-settings-context'
 import { Link } from 'react-router-dom'
@@ -53,6 +53,68 @@ const makeEmptyForm = (defaultPaymentMethod: PaymentMethod) => ({
 
 type TransactionFormState = ReturnType<typeof makeEmptyForm>
 
+type PhoneCustomerMatchInput = Pick<TransactionFormState, 'customer_id' | 'customer_name' | 'phone_number'>
+type PhoneCustomerMatchCandidate = Pick<CustomerListRow, 'id' | 'customer_code' | 'full_name' | 'phone_number' | 'normalized_phone' | 'active'>
+
+function normalizePhoneForCustomerMatch(phoneNumber: string): string | null {
+  const digits = phoneNumber.replace(/[\s()+.-]/g, '')
+  if (/^09[0-9]{9}$/.test(digits)) return `+63${digits.slice(1)}`
+  if (/^639[0-9]{9}$/.test(digits)) return `+${digits}`
+  return null
+}
+
+function findPhoneCustomerNameMismatch(
+  input: PhoneCustomerMatchInput,
+  customers: PhoneCustomerMatchCandidate[],
+): PhoneCustomerMatchCandidate | null {
+  if (input.customer_id || !input.phone_number.trim()) return null
+  const normalizedPhone = normalizePhoneForCustomerMatch(input.phone_number)
+  if (!normalizedPhone) return null
+
+  const match = customers.find((customer) =>
+    customer.active && customer.normalized_phone === normalizedPhone,
+  )
+  if (!match || match.full_name.trim().toLowerCase() === input.customer_name.trim().toLowerCase()) return null
+  return match
+}
+
+function isPhoneCustomerMatchSubmitAllowed(
+  input: PhoneCustomerMatchInput,
+  customers: PhoneCustomerMatchCandidate[],
+  onMismatch: (customer: PhoneCustomerMatchCandidate) => void,
+): boolean {
+  const mismatch = findPhoneCustomerNameMismatch(input, customers)
+  if (!mismatch) return true
+  onMismatch(mismatch)
+  return false
+}
+
+function PhoneCustomerMatchWarning({
+  customer,
+  onUseCustomer,
+  onDismiss,
+}: {
+  customer: PhoneCustomerMatchCandidate
+  onUseCustomer: () => void
+  onDismiss: () => void
+}) {
+  return (
+    <div role="alert" className="mt-2 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-100">
+      <p>
+        This phone number is already registered to <strong>{customer.full_name}</strong> ({customer.customer_code}). Attach this order to {customer.full_name} instead, or use a different phone number if this is someone else.
+      </p>
+      <div className="mt-2 flex flex-wrap gap-2">
+        <button type="button" onClick={onUseCustomer} className="rounded-md bg-amber-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-800">
+          Use {customer.full_name}
+        </button>
+        <button type="button" onClick={onDismiss} className="rounded-md border border-amber-500 px-3 py-1.5 text-xs font-semibold hover:bg-amber-100 dark:hover:bg-amber-900">
+          Dismiss
+        </button>
+      </div>
+    </div>
+  )
+}
+
 const peso = (n: number) =>
   `₱${n.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 
@@ -81,6 +143,7 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
   const [totalTouched, setTotalTouched] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [phoneCustomerWarning, setPhoneCustomerWarning] = useState<PhoneCustomerMatchCandidate | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
   const [createdTransaction, setCreatedTransaction] = useState<TransactionWithService | null>(null)
   const [showThermalModal, setShowThermalModal] = useState(false)
@@ -284,6 +347,7 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
     setSelectedPromoId('')
     setInventoryUsage(emptyInventoryUsageDraft())
     setTotalTouched(false)
+    setPhoneCustomerWarning(null)
     setClientRequestId(crypto.randomUUID())
   }
 
@@ -309,6 +373,18 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
         setError('Phone number is required by the Owner settings.')
         return
       }
+      if (!form.customer_id && form.phone_number.trim()) {
+        if (customersLoading) {
+          setError('Customer records are still loading. Wait a moment and try again.')
+          return
+        }
+        if (customersError) {
+          setError('Could not verify this phone number against customer records. Refresh the customer list before saving.')
+          return
+        }
+        if (!isPhoneCustomerMatchSubmitAllowed(form, customers, setPhoneCustomerWarning)) return
+      }
+      setPhoneCustomerWarning(null)
       if (!form.service_id) {
         setError('Select a service before entering Kg and saving the transaction.')
         return
@@ -565,6 +641,7 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
                 customer_name: customer?.full_name ?? current.customer_name,
                 phone_number: customer?.phone_number ?? current.phone_number,
               }))
+              setPhoneCustomerWarning(null)
             }}
             disabled={customersLoading}
             className={`${inputClass} disabled:opacity-60`}
@@ -580,11 +657,35 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
         </div>
         <div>
           <label className={labelClass}>Customer Name *</label>
-          <input required value={form.customer_name} onChange={(e) => setForm((current) => ({ ...current, customer_id: '', customer_name: e.target.value }))} onBlur={() => setForm((f) => ({ ...f, customer_name: toTitleCaseName(f.customer_name) }))} className={inputClass} placeholder="Earl Dela Cruz" />
+          <input required value={form.customer_name} onChange={(e) => {
+            setForm((current) => ({ ...current, customer_id: '', customer_name: e.target.value }))
+            setPhoneCustomerWarning(null)
+          }} onBlur={() => setForm((f) => ({ ...f, customer_name: toTitleCaseName(f.customer_name) }))} className={inputClass} placeholder="Earl Dela Cruz" />
         </div>
         <div>
           <label className={labelClass}>Phone Number{settings.require_phone_number ? ' *' : ''}</label>
-          <input required={settings.require_phone_number} value={form.phone_number} onChange={(e) => setForm((current) => ({ ...current, customer_id: '', phone_number: e.target.value }))} className={inputClass} placeholder="09xxxxxxxxx" />
+          <input required={settings.require_phone_number} value={form.phone_number} onChange={(e) => {
+            setForm((current) => ({ ...current, customer_id: '', phone_number: e.target.value }))
+            setPhoneCustomerWarning(null)
+          }} onBlur={() => {
+            if (customersLoading || customersError) return
+            setPhoneCustomerWarning(findPhoneCustomerNameMismatch(form, customers))
+          }} className={inputClass} placeholder="09xxxxxxxxx" />
+          {phoneCustomerWarning && (
+            <PhoneCustomerMatchWarning
+              customer={phoneCustomerWarning}
+              onUseCustomer={() => {
+                setForm((current) => ({
+                  ...current,
+                  customer_id: phoneCustomerWarning.id,
+                  customer_name: phoneCustomerWarning.full_name,
+                  phone_number: phoneCustomerWarning.phone_number ?? current.phone_number,
+                }))
+                setPhoneCustomerWarning(null)
+              }}
+              onDismiss={() => setPhoneCustomerWarning(null)}
+            />
+          )}
         </div>
 
         <div>
@@ -794,3 +895,11 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
   </>
   )
 }
+
+// Keep the component module's public exports component-only for React Fast Refresh.
+// The helpers are exposed as statics so focused Vite SSR tests exercise the exact guard.
+Object.assign(TransactionForm, {
+  findPhoneCustomerNameMismatch,
+  isPhoneCustomerMatchSubmitAllowed,
+  PhoneCustomerMatchWarning,
+})
