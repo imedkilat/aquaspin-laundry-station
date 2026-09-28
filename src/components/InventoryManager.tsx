@@ -23,6 +23,8 @@ const MOVEMENT_TYPES: Array<{ value: InventoryMovementType; label: string; hint:
   { value: 'wastage', label: 'Wastage', hint: 'Record damaged or discarded stock. Use a negative quantity.' },
   { value: 'correction', label: 'Correction', hint: 'Record an audited correction with a clear reason.' },
 ]
+const MOVEMENT_PAGE_SIZE = 10
+const MOVEMENT_FETCH_LIMIT = 200
 const peso = (n: number) => `₱${n.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 const dateTime = (value: string) => new Date(value).toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' })
 type Notice = { type: 'error' | 'success'; text: string } | null
@@ -33,6 +35,7 @@ export default function InventoryManager() {
   const [items, setItems] = useState<InventoryItem[]>([])
   const [summaries, setSummaries] = useState<InventoryItemSummary[]>([])
   const [movements, setMovements] = useState<InventoryStockMovement[]>([])
+  const [movementPage, setMovementPage] = useState(1)
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -51,12 +54,13 @@ export default function InventoryManager() {
     if (quiet) setRefreshing(true)
     else setLoading(true)
     setError(null)
+    setMovementPage(1)
 
     const [categoryResult, itemResult, summaryResult, movementResult] = await Promise.all([
       supabase.from('inventory_categories').select('*').order('name'),
       supabase.from('inventory_items').select('*').order('item_name'),
       supabase.from('inventory_item_summary').select('*').order('item_name'),
-      supabase.from('inventory_stock_movements').select('*').order('created_at', { ascending: false }).limit(30),
+      supabase.from('inventory_stock_movements').select('*').order('created_at', { ascending: false }).limit(MOVEMENT_FETCH_LIMIT),
     ])
     const firstError = [categoryResult.error, itemResult.error, summaryResult.error, movementResult.error].find(Boolean)
 
@@ -145,6 +149,9 @@ export default function InventoryManager() {
   const itemNameMap = useMemo(() => new Map(items.map((item) => [item.id, item.item_name])), [items])
   const lowStockCount = summaries.filter((summary) => summary.reorder_threshold > 0 && summary.current_quantity <= summary.reorder_threshold && summary.active).length
   const totalStockValue = summaries.reduce((total, summary) => total + Number(summary.stock_value || 0), 0)
+  const movementPageCount = Math.max(1, Math.ceil(movements.length / MOVEMENT_PAGE_SIZE))
+  const currentMovementPage = Math.min(movementPage, movementPageCount)
+  const visibleMovements = movements.slice((currentMovementPage - 1) * MOVEMENT_PAGE_SIZE, currentMovementPage * MOVEMENT_PAGE_SIZE)
 
   return (
     <div className="space-y-5">
@@ -200,8 +207,14 @@ export default function InventoryManager() {
       </section>
 
       <section className="rounded-2xl border border-slate-200 bg-white p-5 space-y-4 dark:border-slate-800 dark:bg-slate-900">
-        <div><h2 className="font-semibold text-slate-900 dark:text-slate-100">Recent Stock Movement Ledger</h2><p className="mt-1 text-sm text-slate-500">Movement rows are append-only. Corrections should include a clear explanation.</p></div>
-        {movements.length === 0 ? <EmptyState title="No movements yet" description="Record stock in, consumption, wastage, or an adjustment from an item above." /> : <div className="overflow-x-auto"><table className="w-full min-w-[680px] text-left text-sm"><thead><tr className="border-b border-slate-200 text-xs text-slate-500 dark:border-slate-700"><th className="py-2 pr-4">Date</th><th className="py-2 pr-4">Item</th><th className="py-2 pr-4">Type</th><th className="py-2 pr-4">Quantity</th><th className="py-2 pr-4">Reason</th><th className="py-2">Unit cost</th></tr></thead><tbody>{movements.map((movement) => <tr key={movement.id} className="border-b border-slate-100 last:border-0 dark:border-slate-800"><td className="py-2 pr-4 whitespace-nowrap text-slate-500">{dateTime(movement.created_at)}</td><td className="py-2 pr-4">{itemNameMap.get(movement.item_id) ?? 'Unknown item'}</td><td className="py-2 pr-4 capitalize">{movement.movement_type.replace('_', ' ')}</td><td className={`py-2 pr-4 font-medium ${movement.quantity_delta < 0 ? 'text-rose-600' : 'text-emerald-600'}`}>{movement.quantity_delta > 0 ? '+' : ''}{movement.quantity_delta}</td><td className="max-w-xs py-2 pr-4 text-slate-500">{movement.reason}</td><td className="py-2">{movement.unit_cost == null ? '—' : peso(movement.unit_cost)}</td></tr>)}</tbody></table></div>}
+        <div><h2 className="font-semibold text-slate-900 dark:text-slate-100">Recent Stock Movement Ledger</h2><p className="mt-1 text-sm text-slate-500">Showing up to {MOVEMENT_FETCH_LIMIT} most recent movements, 10 per page. Movement rows are append-only; corrections should include a clear explanation.</p></div>
+        {movements.length === 0 ? <EmptyState title="No movements yet" description="Record stock in, consumption, wastage, or an adjustment from an item above." /> : <>
+          <div className="overflow-x-auto"><table className="w-full min-w-[680px] text-left text-sm"><thead><tr className="border-b border-slate-200 text-xs text-slate-500 dark:border-slate-700"><th className="py-2 pr-4">Date</th><th className="py-2 pr-4">Item</th><th className="py-2 pr-4">Type</th><th className="py-2 pr-4">Quantity</th><th className="py-2 pr-4">Reason</th><th className="py-2">Unit cost</th></tr></thead><tbody>{visibleMovements.map((movement) => <tr key={movement.id} className="border-b border-slate-100 last:border-0 dark:border-slate-800"><td className="py-2 pr-4 whitespace-nowrap text-slate-500">{dateTime(movement.created_at)}</td><td className="py-2 pr-4">{itemNameMap.get(movement.item_id) ?? 'Unknown item'}</td><td className="py-2 pr-4 capitalize">{movement.movement_type.replace('_', ' ')}</td><td className={`py-2 pr-4 font-medium ${movement.quantity_delta < 0 ? 'text-rose-600' : 'text-emerald-600'}`}>{movement.quantity_delta > 0 ? '+' : ''}{movement.quantity_delta}</td><td className="max-w-xs py-2 pr-4 text-slate-500">{movement.reason}</td><td className="py-2">{movement.unit_cost == null ? '—' : peso(movement.unit_cost)}</td></tr>)}</tbody></table></div>
+          <div className="flex flex-col gap-3 border-t border-slate-200 pt-3 dark:border-slate-800 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-sm text-slate-500">Showing {(currentMovementPage - 1) * MOVEMENT_PAGE_SIZE + 1}–{Math.min(currentMovementPage * MOVEMENT_PAGE_SIZE, movements.length)} of {movements.length} recent movements</p>
+            <div className="flex items-center justify-between gap-3 sm:justify-end"><button type="button" disabled={currentMovementPage <= 1} onClick={() => setMovementPage(currentMovementPage - 1)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800">Previous</button><span aria-live="polite" className="min-w-20 text-center text-sm text-slate-600 dark:text-slate-300">Page {currentMovementPage} of {movementPageCount}</span><button type="button" disabled={currentMovementPage >= movementPageCount} onClick={() => setMovementPage(currentMovementPage + 1)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800">Next</button></div>
+          </div>
+        </>}
       </section>
     </div>
   )

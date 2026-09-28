@@ -10,7 +10,7 @@ import { useShopSettings } from '../lib/shop-settings-context'
 import { getCustomerDirectoryRows, paginateCustomerRows, type CustomerActivityFilter, type CustomerDirectorySort } from '../lib/customer-directory'
 import type { Customer } from '../types/customer-status'
 
-const PAGE_SIZE = 20
+const PAGE_SIZE = 10
 const peso = (value: number) => `₱${Number(value || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 const visitDate = (value: string | null) => {
   if (!value) return '—'
@@ -56,7 +56,13 @@ export default function CustomersPage() {
       {!error && (realtimeState === 'error' || realtimeState === 'disconnected') && <InlineAlert variant="warning" title="Live customer sync is temporarily offline" actionLabel="Refresh now" onAction={() => void reload()}>Existing rows remain visible until the connection recovers.</InlineAlert>}
       {directoryDataWarning && <InlineAlert variant="warning" title="Some directory filters may be limited">{directoryDataWarning}</InlineAlert>}
       <section className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-        <Summary label="Customers" value={String(rows.length)} icon="customers" />
+        <Summary
+          label="Customers"
+          value={String(rows.length)}
+          icon="customers"
+          active={search === '' && activity === 'all' && visibleSort === 'name'}
+          onClick={() => { setSearch(''); setSort('name'); setActivity('all'); setPage(1) }}
+        />
         <Summary label="Visits" value={String(rows.reduce((sum, row) => sum + Number(row.total_transactions || 0), 0))} icon="orders" />
         <Summary label="Newest" value={String(newestCount)} icon="profile" active={visibleSort === 'newest'} onClick={() => { setSort('newest'); setPage(1) }} />
         <Summary label="Most visits" value={String(topVisits)} icon="orders" active={visibleSort === 'most_visits'} onClick={() => { setSort('most_visits'); setPage(1) }} />
