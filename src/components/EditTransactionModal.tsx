@@ -19,6 +19,7 @@ import {
 import {
   emptyInventoryUsageDraft,
   OTHER_INVENTORY_SOURCE,
+  inventoryUsageQuantityError,
   inventoryUsageIsComplete,
   inventoryUsageHasAnyValue,
   useInventoryConsumables,
@@ -126,6 +127,7 @@ export default function EditTransactionModal({ transaction, onClose }: { transac
   const initialInventoryUsage = useMemo(() => inventoryUsageFromTransaction(transaction), [transaction])
   const [inventoryUsage, setInventoryUsage] = useState<InventoryUsageDraft>(() => inventoryUsageFromTransaction(transaction))
   const [serviceLines, setServiceLines] = useState<ServiceLineDraft[]>([])
+  const initialServiceInventoryUsageRef = useRef(new Map<string, InventoryUsageDraft>())
   const [serviceLinesLoadedForTransaction, setServiceLinesLoadedForTransaction] = useState<string | null>(null)
   const [serviceLinesError, setServiceLinesError] = useState<string | null>(null)
   const serviceLinesLoading = serviceLinesLoadedForTransaction !== transaction.id
@@ -166,7 +168,11 @@ export default function EditTransactionModal({ transaction, onClose }: { transac
             ? { ...current, total_amount: primaryTotal }
             : current)
         }
-        setServiceLines(rows.map(serviceItemToDraft))
+        const drafts = rows.map(serviceItemToDraft)
+        initialServiceInventoryUsageRef.current = new Map(
+          drafts.map((line) => [line.localId, line.inventoryUsage]),
+        )
+        setServiceLines(drafts)
         setServiceLinesError(null)
         setServiceLinesLoadedForTransaction(transaction.id)
       })
@@ -376,6 +382,14 @@ export default function EditTransactionModal({ transaction, onClose }: { transac
         setError('Inventory items could not be loaded. Refresh the page before saving the transaction.')
         return
       }
+      const primaryInventoryChanged = !inventoryUsageEquals(inventoryUsage, initialInventoryUsage)
+      const quantityError = primaryInventoryChanged
+        ? inventoryUsageQuantityError(inventoryUsage, detergentItems, fabricConditionerItems)
+        : null
+      if (quantityError) {
+        setError(quantityError)
+        return
+      }
       // Legacy orders may legitimately have no inventory fields. Do not make
       // an unrelated edit impossible just because this newer feature was not
       // present when the order was created. If the user starts editing the
@@ -383,7 +397,11 @@ export default function EditTransactionModal({ transaction, onClose }: { transac
       if (
         transaction.order_status !== 'completed' &&
         inventoryUsageHasAnyValue(inventoryUsage) &&
-        !inventoryUsageIsComplete(inventoryUsage)
+        !inventoryUsageIsComplete(
+          inventoryUsage,
+          primaryInventoryChanged ? detergentItems : [],
+          primaryInventoryChanged ? fabricConditionerItems : [],
+        )
       ) {
         setError('Complete both inventory usage details. If the customer supplied a product, select Other and enter the reason.')
         return
@@ -392,11 +410,39 @@ export default function EditTransactionModal({ transaction, onClose }: { transac
         setError('Additional services could not be loaded. Refresh before saving so existing lines are not lost.')
         return
       }
-      if (serviceLines.some((line) => !serviceLineDraftIsComplete(line))) {
+      const additionalQuantityError = serviceLines
+        .filter((line) => line.useOwnInventory)
+        .filter((line) => {
+          const initialUsage = initialServiceInventoryUsageRef.current.get(line.localId)
+          return !initialUsage || !inventoryUsageEquals(line.inventoryUsage, initialUsage)
+        })
+        .map((line) => inventoryUsageQuantityError(line.inventoryUsage, detergentItems, fabricConditionerItems))
+        .find(Boolean)
+      if (additionalQuantityError) {
+        setError(`Additional service: ${additionalQuantityError}`)
+        return
+      }
+      if (serviceLines.some((line) => {
+        const initialUsage = initialServiceInventoryUsageRef.current.get(line.localId)
+        const inventoryChanged = !initialUsage || !inventoryUsageEquals(line.inventoryUsage, initialUsage)
+        return !serviceLineDraftIsComplete(
+          line,
+          inventoryChanged ? detergentItems : [],
+          inventoryChanged ? fabricConditionerItems : [],
+        )
+      })) {
         setError('Select a service for each additional service line, and complete its inventory details if you started filling them in.')
         return
       }
-      if (serviceLines.some((line) => serviceLineDraftHasInventoryGap(line))) {
+      if (serviceLines.some((line) => {
+        const initialUsage = initialServiceInventoryUsageRef.current.get(line.localId)
+        const inventoryChanged = !initialUsage || !inventoryUsageEquals(line.inventoryUsage, initialUsage)
+        return serviceLineDraftHasInventoryGap(
+          line,
+          inventoryChanged ? detergentItems : [],
+          inventoryChanged ? fabricConditionerItems : [],
+        )
+      })) {
         setError('Complete both inventory usage details for each additional service. If the customer supplied a product, select Other and enter the reason.')
         return
       }
@@ -503,7 +549,16 @@ export default function EditTransactionModal({ transaction, onClose }: { transac
           p_transaction_id: transaction.id,
           p_expected_updated_at: expectedUpdatedAtRef.current,
           p_primary: primaryPayload,
-          p_items: serviceLines.map((line) => draftToServiceItemInput(line, addOns)),
+          p_items: serviceLines.map((line) => {
+            const initialUsage = initialServiceInventoryUsageRef.current.get(line.localId)
+            const inventoryChanged = !initialUsage || !inventoryUsageEquals(line.inventoryUsage, initialUsage)
+            return draftToServiceItemInput(
+              line,
+              addOns,
+              inventoryChanged ? detergentItems : [],
+              inventoryChanged ? fabricConditionerItems : [],
+            )
+          }),
         })
 
         setSaving(false)

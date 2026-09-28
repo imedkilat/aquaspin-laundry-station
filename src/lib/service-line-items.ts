@@ -2,7 +2,7 @@
 // same order beyond the primary one recorded directly on the transaction.
 // Used by both TransactionForm (new order) and EditTransactionModal (existing
 // order), so the pricing/add-on/inventory math only lives in one place.
-import type { AddOn, Service, TransactionAddOnItem, TransactionServiceItem, TransactionServiceItemInput } from '../types/database'
+import type { AddOn, InventoryItem, Service, TransactionAddOnItem, TransactionServiceItem, TransactionServiceItemInput } from '../types/database'
 import {
   emptyInventoryUsageDraft,
   inventoryUsageHasAnyValue,
@@ -78,20 +78,39 @@ export function lineTotal(draft: ServiceLineDraft, addOns: AddOn[]) {
   return base + addOnsTotal
 }
 
-export function serviceLineDraftIsComplete(draft: ServiceLineDraft) {
+export function serviceLineDraftIsComplete(
+  draft: ServiceLineDraft,
+  detergentItems: InventoryItem[] = [],
+  fabricConditionerItems: InventoryItem[] = [],
+) {
   if (!draft.service_id) return false
   if (!draft.useOwnInventory) return true
-  return inventoryUsageIsComplete(draft.inventoryUsage)
+  return inventoryUsageIsComplete(draft.inventoryUsage, detergentItems, fabricConditionerItems)
 }
 
-export function serviceLineDraftHasInventoryGap(draft: ServiceLineDraft) {
-  return draft.useOwnInventory && !inventoryUsageIsComplete(draft.inventoryUsage) && inventoryUsageHasAnyValue(draft.inventoryUsage)
+export function serviceLineDraftHasInventoryGap(
+  draft: ServiceLineDraft,
+  detergentItems: InventoryItem[] = [],
+  fabricConditionerItems: InventoryItem[] = [],
+) {
+  return draft.useOwnInventory &&
+    !inventoryUsageIsComplete(draft.inventoryUsage, detergentItems, fabricConditionerItems) &&
+    inventoryUsageHasAnyValue(draft.inventoryUsage)
 }
 
-export function draftToServiceItemInput(draft: ServiceLineDraft, addOns: AddOn[]): TransactionServiceItemInput {
+export function draftToServiceItemInput(
+  draft: ServiceLineDraft,
+  addOns: AddOn[],
+  detergentItems: InventoryItem[] = [],
+  fabricConditionerItems: InventoryItem[] = [],
+): TransactionServiceItemInput {
   const detergentCustomerSupplied = draft.inventoryUsage.detergent_item_id === OTHER_INVENTORY_SOURCE
   const conditionerCustomerSupplied = draft.inventoryUsage.fabric_conditioner_item_id === OTHER_INVENTORY_SOURCE
-  const useInventory = draft.useOwnInventory && inventoryUsageIsComplete(draft.inventoryUsage)
+  const useInventory = draft.useOwnInventory && inventoryUsageIsComplete(
+    draft.inventoryUsage,
+    detergentItems,
+    fabricConditionerItems,
+  )
 
   return {
     service_id: draft.service_id,

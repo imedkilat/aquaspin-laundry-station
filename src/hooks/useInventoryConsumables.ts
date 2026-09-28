@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '../lib/supabase'
+import { getUnitQuantityValidationError } from '../lib/inventory-quantity'
 import type { InventoryItem } from '../types/database'
 
 export const LIQUID_DETERGENT_CATEGORY = 'liquid detergent'
@@ -29,9 +30,34 @@ const sideIsComplete = (itemId: string, quantity: string, otherReason: string) =
     ? Boolean(otherReason.trim())
     : Boolean(itemId && Number(quantity) > 0)
 
-export function inventoryUsageIsComplete(usage: InventoryUsageDraft) {
+export function inventoryUsageQuantityError(
+  usage: InventoryUsageDraft,
+  detergentItems: InventoryItem[],
+  fabricConditionerItems: InventoryItem[],
+) {
+  const sides = [
+    { label: 'Liquid Detergent quantity', itemId: usage.detergent_item_id, quantity: usage.detergent_quantity, items: detergentItems },
+    { label: 'Fabric Conditioner quantity', itemId: usage.fabric_conditioner_item_id, quantity: usage.fabric_conditioner_quantity, items: fabricConditionerItems },
+  ]
+
+  for (const side of sides) {
+    const selectedItem = side.items.find((item) => item.id === side.itemId)
+    if (!selectedItem) continue
+    const error = getUnitQuantityValidationError(side.quantity, selectedItem.unit_label, side.label)
+    if (error) return error
+  }
+
+  return null
+}
+
+export function inventoryUsageIsComplete(
+  usage: InventoryUsageDraft,
+  detergentItems: InventoryItem[] = [],
+  fabricConditionerItems: InventoryItem[] = [],
+) {
   return sideIsComplete(usage.detergent_item_id, usage.detergent_quantity, usage.detergent_other_reason) &&
-    sideIsComplete(usage.fabric_conditioner_item_id, usage.fabric_conditioner_quantity, usage.fabric_conditioner_other_reason)
+    sideIsComplete(usage.fabric_conditioner_item_id, usage.fabric_conditioner_quantity, usage.fabric_conditioner_other_reason) &&
+    !inventoryUsageQuantityError(usage, detergentItems, fabricConditionerItems)
 }
 
 export function inventoryUsageHasAnyValue(usage: InventoryUsageDraft) {
