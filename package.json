@@ -10,6 +10,7 @@
     "lint": "oxlint",
     "test:sales-metrics": "node --test tests/sales-metrics.test.mjs",
     "test:customer-items": "node --experimental-strip-types --test tests/customer-items-pending.test.mjs",
+    "test:customer-directory": "node --experimental-strip-types --test tests/customer-directory.test.mjs",
     "test:inventory-quantity": "node --test tests/inventory-quantity.test.mjs",
     "test:staff-accounts": "node --experimental-strip-types --test tests/staff-accounts.test.mjs",
     "test:receipt": "node --experimental-strip-types --test tests/receipt.test.mjs",
