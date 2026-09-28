@@ -4,27 +4,46 @@ import { supabase } from '../lib/supabase'
 import type { CustomerLoyaltyBalance, TransactionWithService } from '../types/database'
 import type { Customer, CustomerSummary } from '../types/customer-status'
 
-export type CustomerListRow = Customer & CustomerSummary & { points_balance: number | null }
+export type CustomerListRow = Customer & CustomerSummary & {
+  points_balance: number | null
+  first_visit: string | null
+  has_redeemed_reward: boolean | null
+}
 
 const TRANSACTION_SELECT = `*, services ( code, label )`
 
-export function useCustomers() {
+export function useCustomers({ includeRedemptions = false }: { includeRedemptions?: boolean } = {}) {
   const [rows, setRows] = useState<CustomerListRow[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [customerDirectoryError, setCustomerDirectoryError] = useState<string | null>(null)
   const [realtimeState, setRealtimeState] = useState<'connecting' | 'connected' | 'disconnected' | 'error'>('connecting')
+  const [directoryDataWarning, setDirectoryDataWarning] = useState<string | null>(null)
 
   const reload = useCallback(async () => {
     setLoading(true)
     setError(null)
     setCustomerDirectoryError(null)
 
-    const [customersResult, summaryResult, loyaltyResult] = await Promise.all([
+    const [customersResult, summaryResult, loyaltyResult, historyResult, redemptionResult] = await Promise.all([
       supabase.from('customers').select('*').order('active', { ascending: false }).order('full_name'),
       supabase.from('customer_summary').select('*'),
       supabase.from('customer_loyalty_balance').select('*'),
+      supabase.from('customer_transaction_history').select('customer_id, transaction_date').is('deleted_at', null).order('transaction_date', { ascending: true }),
+      includeRedemptions
+        ? supabase.from('loyalty_redemptions').select('customer_id')
+        : Promise.resolve({ data: null, error: null }),
     ])
+
+    const firstVisitByCustomer = new Map<string, string>()
+    for (const transaction of (historyResult.data ?? []) as Array<{ customer_id: string; transaction_date: string }>) {
+      if (!firstVisitByCustomer.has(transaction.customer_id)) firstVisitByCustomer.set(transaction.customer_id, transaction.transaction_date)
+    }
+    const redeemedCustomerIds = new Set(((redemptionResult.data ?? []) as Array<{ customer_id: string }>).map((row) => row.customer_id))
+    setDirectoryDataWarning([
+      historyResult.error ? 'First-visit dates could not be loaded; Newest uses registration date for those customers.' : '',
+      includeRedemptions && redemptionResult.error ? 'Reward redemption data is unavailable right now.' : '',
+    ].filter(Boolean).join(' ') || null)
 
     if (customersResult.error) {
       const message = 'Could not load customers. Check the connection and try again.'
@@ -45,6 +64,8 @@ export function useCustomers() {
         outstanding_balance: 0,
         last_visit: null,
         points_balance: null,
+        first_visit: firstVisitByCustomer.get(customer.id) ?? null,
+        has_redeemed_reward: includeRedemptions && !redemptionResult.error ? redeemedCustomerIds.has(customer.id) : null,
       })))
       setLoading(false)
       return
@@ -64,9 +85,11 @@ export function useCustomers() {
         last_visit: null,
       }),
       points_balance: loyaltyResult.error ? null : (loyaltyBalances.get(customer.id) ?? 0),
+      first_visit: firstVisitByCustomer.get(customer.id) ?? null,
+      has_redeemed_reward: includeRedemptions && !redemptionResult.error ? redeemedCustomerIds.has(customer.id) : null,
     })))
     setLoading(false)
-  }, [])
+  }, [includeRedemptions])
 
   useEffect(() => {
     void reload()
@@ -79,6 +102,7 @@ export function useCustomers() {
       .channel(makeRealtimeTopic('customers-realtime'))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'customers' }, () => void reload())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'transactions' }, () => void reload())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'loyalty_redemptions' }, () => void reload())
       .subscribe((status) => {
         if (status === 'SUBSCRIBED') {
           setRealtimeState('connected')
@@ -93,7 +117,7 @@ export function useCustomers() {
     }
   }, [reload])
 
-  return { rows, loading, error, customerDirectoryError, realtimeState, reload }
+  return { rows, loading, error, customerDirectoryError, realtimeState, directoryDataWarning, reload }
 }
 
 export function useCustomerDetail(id: string | undefined) {
