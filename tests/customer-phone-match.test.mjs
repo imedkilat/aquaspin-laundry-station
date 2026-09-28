@@ -33,6 +33,7 @@ const existingCustomer = {
   phone_number: '09171234567',
   normalized_phone: '+639171234567',
   active: true,
+  created_at: '2026-01-01T00:00:00.000Z',
 }
 
 function checkSubmit(input, customers = [existingCustomer]) {
@@ -92,4 +93,29 @@ test('an explicitly selected customer allows submit without a phone-name warning
   assert.equal(result.allowed, true)
   assert.equal(result.submitted, true)
   assert.equal(result.warningCustomer, null)
+})
+
+test('duplicate phone matches use the same earliest-created customer as the database trigger', () => {
+  const earlierCustomer = {
+    ...existingCustomer,
+    id: '00000000-0000-0000-0000-000000000002',
+    customer_code: 'CUS-0000000000000002',
+    full_name: 'Zulu Earlier',
+    created_at: '2026-01-01T00:00:00.000Z',
+  }
+  const laterCustomer = {
+    ...existingCustomer,
+    id: '00000000-0000-0000-0000-000000000001',
+    customer_code: 'CUS-0000000000000001',
+    full_name: 'Aaron Later',
+    created_at: '2026-02-01T00:00:00.000Z',
+  }
+  const input = {
+    customer_id: '',
+    customer_name: 'New Customer',
+    phone_number: '09171234567',
+  }
+
+  assert.equal(findPhoneCustomerNameMismatch(input, [laterCustomer, earlierCustomer]), earlierCustomer)
+  assert.equal(findPhoneCustomerNameMismatch(input, [earlierCustomer, laterCustomer]), earlierCustomer)
 })

@@ -54,7 +54,7 @@ const makeEmptyForm = (defaultPaymentMethod: PaymentMethod) => ({
 type TransactionFormState = ReturnType<typeof makeEmptyForm>
 
 type PhoneCustomerMatchInput = Pick<TransactionFormState, 'customer_id' | 'customer_name' | 'phone_number'>
-type PhoneCustomerMatchCandidate = Pick<CustomerListRow, 'id' | 'customer_code' | 'full_name' | 'phone_number' | 'normalized_phone' | 'active'>
+type PhoneCustomerMatchCandidate = Pick<CustomerListRow, 'id' | 'customer_code' | 'full_name' | 'phone_number' | 'normalized_phone' | 'active' | 'created_at'>
 
 function normalizePhoneForCustomerMatch(phoneNumber: string): string | null {
   const digits = phoneNumber.replace(/[\s()+.-]/g, '')
@@ -71,9 +71,15 @@ function findPhoneCustomerNameMismatch(
   const normalizedPhone = normalizePhoneForCustomerMatch(input.phone_number)
   if (!normalizedPhone) return null
 
-  const match = customers.find((customer) =>
-    customer.active && customer.normalized_phone === normalizedPhone,
-  )
+  const match = customers
+    .filter((customer) => customer.active && customer.normalized_phone === normalizedPhone)
+    .sort((left, right) => {
+      const createdAtDifference = Date.parse(left.created_at) - Date.parse(right.created_at)
+      if (createdAtDifference !== 0) return createdAtDifference
+      if (left.id < right.id) return -1
+      if (left.id > right.id) return 1
+      return 0
+    })[0]
   if (!match || match.full_name.trim().toLowerCase() === input.customer_name.trim().toLowerCase()) return null
   return match
 }
