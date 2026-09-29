@@ -217,7 +217,15 @@ try {
     assert.equal(inventoryUpdated.detergent_source, 'customer_supplied');
     assert.equal(inventoryUpdated.fabric_conditioner_source, 'customer_supplied');
 
-    let completedInventory = await transaction({ customer_name: 'Completed inventory guard', phone_number: null });
+    let completedInventory = await transaction({
+      customer_name: 'Completed inventory guard',
+      phone_number: null,
+      payment_method: 'paid',
+      base_amount: 0,
+      total_amount: 0,
+      cash_amount: 0,
+      gcash_amount: 0,
+    });
     completedInventory = await status(completedInventory, 'washing');
     completedInventory = await status(completedInventory, 'drying');
     completedInventory = await status(completedInventory, 'ready_for_pickup');
@@ -260,6 +268,11 @@ try {
     let consumed = await transaction({
       customer_name: 'Consumed inventory reopen guard',
       phone_number: null,
+      payment_method: 'paid',
+      base_amount: 0,
+      total_amount: 0,
+      cash_amount: 0,
+      gcash_amount: 0,
       detergent_source: 'inventory',
       detergent_item_id: detergentItem.id,
       detergent_quantity: 50,
@@ -337,7 +350,7 @@ try {
     await assert.rejects(customerItems(staffOrder, [{ item_type: 'shorts', quantity: 0 }]), e => e.code === '22023');
     await assert.rejects(customerItems(staffOrder, [{ item_type: 'other', quantity: 1 }]), e => e.code === '22023');
     await assert.rejects(customerItems(staffOrder, [{ item_type: 'shorts', quantity: 1 }, { item_type: 'shorts', quantity: 2 }]), e => e.code === '22023');
-    let blocked = await transaction({ customer_name: 'Blocked completion', phone_number: null, service_id: wdfServiceId });
+    let blocked = await transaction({ customer_name: 'Blocked completion', phone_number: null, service_id: wdfServiceId, payment_method: 'paid', base_amount: 0, total_amount: 0, cash_amount: 0, gcash_amount: 0 });
     blocked = await status(blocked, 'washing'); blocked = await status(blocked, 'drying'); blocked = await status(blocked, 'ready_for_pickup');
     await assert.rejects(status(blocked, 'completed'), e => e.code === '23514' && e.message.includes("Please record the customer's item list before completing this order."));
     await customerItems(blocked, [{ item_type: 'pants', quantity: 1 }]);
@@ -356,7 +369,7 @@ try {
     ready = await status(ready, 'ready_for_pickup', 'Wash and dry completed');
     const covered = await transaction({ customer_name: 'Covered item list', phone_number: null, service_id: wdfServiceId });
     await customerItems(covered, [{ item_type: 'towels', quantity: 2 }]);
-    let completed = await transaction({ customer_name: 'Completed item list', phone_number: null, service_id: wdfServiceId });
+    let completed = await transaction({ customer_name: 'Completed item list', phone_number: null, service_id: wdfServiceId, payment_method: 'paid', base_amount: 0, total_amount: 0, cash_amount: 0, gcash_amount: 0 });
     await customerItems(completed, [{ item_type: 'pants', quantity: 1 }]);
     completed = await status(completed, 'washing');
     completed = await status(completed, 'drying');
@@ -416,7 +429,7 @@ try {
     await assert.rejects(status(dropOff, 'completed', 'Drop Off completion attempt'), e => e.code === '23514' && e.message.includes("Please record the customer's item list before completing this order."));
     assert.equal((await fresh(dropOff.id)).order_status, 'received');
 
-    let dropOffWithItems = await transaction({ customer_name: 'Drop Off with items', phone_number: null, service_id: wdfServiceId });
+    let dropOffWithItems = await transaction({ customer_name: 'Drop Off with items', phone_number: null, service_id: wdfServiceId, payment_method: 'paid', base_amount: 0, total_amount: 0, cash_amount: 0, gcash_amount: 0 });
     await customerItems(dropOffWithItems, [{ item_type: 'towels', quantity: 2 }]);
     dropOffWithItems = await status(dropOffWithItems, 'washing');
     dropOffWithItems = await status(dropOffWithItems, 'drying');
@@ -425,14 +438,14 @@ try {
     assert.equal(dropOffWithItems.order_status, 'completed');
 
     for (const code of ['WDSS', 'SSD', 'SSW']) {
-      const selfService = await transaction({ customer_name: `${code} without items`, phone_number: null, service_id: await serviceId(code) });
+      const selfService = await transaction({ customer_name: `${code} without items`, phone_number: null, service_id: await serviceId(code), payment_method: 'paid', base_amount: 0, total_amount: 0, cash_amount: 0, gcash_amount: 0 });
       assert.equal((await pendingCustomerItems()).some(row => row.id === selfService.id), false, `${code} must not be pending`);
       await assert.rejects(customerItems(selfService, [{ item_type: 'shorts', quantity: 1 }]), e => e.code === '42501' && e.message.includes('only applicable to Drop Off'));
       const completedSelfService = await status(selfService, 'completed', `${code} completed without item list`);
       assert.equal(completedSelfService.order_status, 'completed');
     }
 
-    const invalidService = await transaction({ customer_name: 'Unclassified service', phone_number: null });
+    const invalidService = await transaction({ customer_name: 'Unclassified service', phone_number: null, payment_method: 'paid', base_amount: 0, total_amount: 0, cash_amount: 0, gcash_amount: 0 });
     assert.equal((await pendingCustomerItems()).some(row => row.id === invalidService.id), false);
     const completedInvalidService = await status(invalidService, 'completed', 'Unclassified service completed');
     assert.equal(completedInvalidService.order_status, 'completed');
@@ -515,7 +528,7 @@ try {
     await asUser(owner);
   });
   const lifecycleDropOffServiceId = await serviceId('WDF');
-  let flow = await transaction({ service_id: lifecycleDropOffServiceId });
+  let flow = await transaction({ service_id: lifecycleDropOffServiceId, payment_method: 'paid', base_amount: 0, total_amount: 0, cash_amount: 0, gcash_amount: 0 });
   await customerItems(flow, [{ item_type: 't_shirts', quantity: 1 }]);
   for (const next of ['washing', 'drying', 'ready_for_pickup', 'completed']) {
     await test(`${flow.order_status} -> ${next}; history and audit metadata`, async () => {
@@ -525,6 +538,33 @@ try {
       assert.equal(h.previous_status, old.order_status); assert.equal(h.new_status, next); assert.equal(h.changed_by, owner);
     });
   }
+  await test('Pay Later orders cannot be completed, including with Owner override', async () => {
+    let unpaid = await transaction({
+      customer_name: 'Unpaid Pay Later completion guard',
+      phone_number: null,
+      payment_method: 'pay_later',
+      base_amount: 0,
+      total_amount: 0,
+      cash_amount: 0,
+      gcash_amount: 0,
+    });
+    unpaid = await status(unpaid, 'washing');
+    unpaid = await status(unpaid, 'drying');
+    unpaid = await status(unpaid, 'ready_for_pickup');
+    const historyBefore = await q('select id from transaction_status_history where transaction_id=$1', [unpaid.id]);
+
+    await assert.rejects(
+      status(unpaid, 'completed'),
+      e => e.code === '23514' && e.message.includes('Change the payment method from Pay Later to Cash or GCash before completing this order.'),
+    );
+    await assert.rejects(
+      status(unpaid, 'completed', 'Owner override must not bypass Pay Later guard', true),
+      e => e.code === '23514' && e.message.includes('Change the payment method from Pay Later to Cash or GCash before completing this order.'),
+    );
+
+    assert.equal((await fresh(unpaid.id)).order_status, 'ready_for_pickup');
+    assert.equal((await q('select id from transaction_status_history where transaction_id=$1', [unpaid.id])).length, historyBefore.length);
+  });
   await test('terminal status requires reasoned owner override/reopen', async () => {
     await assert.rejects(status(flow, 'received'), e => ['22023', '42501'].includes(e.code));
     await assert.rejects(status(flow, 'received', null, true), e => e.code === '42501');
@@ -550,11 +590,11 @@ try {
     await assert.rejects(status(flow, 'drying'), e => e.code === '22023');
     flow = await status(flow, 'drying', 'Resume after manual wash');
     flow = await status(flow, 'cancelled', 'Customer requested cancellation');
-    assert.equal(flow.payment_method, 'pay_later'); assert.equal(Number(flow.total_amount), 0);
+    assert.equal(flow.payment_method, 'paid'); assert.equal(Number(flow.total_amount), 0);
   });
   await test('hold history does not contaminate resumed forward transitions', async () => {
     await setting('staff_can_edit_transactions', true); await asUser(staff);
-    let resumed = await transaction({ created_by: staff, customer_name: 'Hold resume lifecycle', service_id: lifecycleDropOffServiceId });
+    let resumed = await transaction({ created_by: staff, customer_name: 'Hold resume lifecycle', service_id: lifecycleDropOffServiceId, payment_method: 'paid', base_amount: 0, total_amount: 0, cash_amount: 0, gcash_amount: 0 });
     resumed = await status(resumed, 'washing');
     resumed = await status(resumed, 'on_hold', 'Machine maintenance');
     resumed = await status(resumed, 'washing', 'Maintenance complete');
@@ -646,7 +686,7 @@ try {
     skip2 = await status(skip2, 'washing');
     skip2 = await status(skip2, 'ready_for_pickup', 'Air dry completed off-machine');
     assert.equal(skip2.order_status, 'ready_for_pickup');
-    let skip3 = await transaction({ created_by: staff, customer_name: 'Skip drying to complete', service_id: lifecycleDropOffServiceId });
+    let skip3 = await transaction({ created_by: staff, customer_name: 'Skip drying to complete', service_id: lifecycleDropOffServiceId, payment_method: 'paid', base_amount: 0, total_amount: 0, cash_amount: 0, gcash_amount: 0 });
     skip3 = await status(skip3, 'washing');
     skip3 = await status(skip3, 'drying');
     await customerItems(skip3, [{ item_type: 'jackets', quantity: 1 }]);
@@ -1244,7 +1284,7 @@ try {
       e => e.code === '40001',
     );
 
-    let completed = await transaction({ customer_name: 'Completed services guard', phone_number: null, service_id: wdfId, base_amount: 195, total_amount: 195 });
+    let completed = await transaction({ customer_name: 'Completed services guard', phone_number: null, service_id: wdfId, base_amount: 195, total_amount: 195, payment_method: 'paid', cash_amount: 195, gcash_amount: 0 });
     await customerItems(completed, [{ item_type: 'towels', quantity: 1 }]);
     completed = await status(completed, 'washing');
     completed = await status(completed, 'drying');
@@ -1293,7 +1333,7 @@ try {
     await asUser(owner);
 
     let order = await createWithServices(
-      multiServicePrimary({ total_amount: 195 }),
+      multiServicePrimary({ total_amount: 195, payment_method: 'paid', cash_amount: 415 }),
       [csdbLine({ detergent_source: 'inventory', detergent_item_id: detergentItem.id, detergent_quantity: 40 })],
     );
     order.token = order.updated_at; // create_transaction_with_service_items returns public.transactions, not the token-aliased shape status() expects
@@ -1310,7 +1350,7 @@ try {
     assert.equal(Number(stock.total), 1000 - 40);
 
     let shortOrder = await createWithServices(
-      multiServicePrimary({ total_amount: 195 }),
+      multiServicePrimary({ total_amount: 195, payment_method: 'paid', cash_amount: 415 }),
       [csdbLine({ detergent_source: 'inventory', detergent_item_id: detergentItem.id, detergent_quantity: 100000 })],
     );
     shortOrder.token = shortOrder.updated_at;
@@ -1415,7 +1455,7 @@ try {
     // Baseline regression: an ordinary single-service order still earns points for its own kg alone.
     let single = await transaction({
       customer_id: loyaltyCustomer.id, customer_name: 'Loyalty Multi Service Customer', phone_number: null,
-      service_id: wdfId, base_amount: 195, total_amount: 195, kg: 5, no_of_loads: 1, payment_method: 'pay_later',
+      service_id: wdfId, base_amount: 195, total_amount: 195, kg: 5, no_of_loads: 1, payment_method: 'paid', cash_amount: 195,
     });
     await customerItems(single, [{ item_type: 'towels', quantity: 1 }]);
     single = await status(single, 'washing');
@@ -1430,7 +1470,7 @@ try {
     // additional line's kg - not the primary alone, which is what the shop
     // actually processed and what an equivalent pair of separate orders would earn.
     let multi = await createWithServices(
-      multiServicePrimary({ customer_id: loyaltyCustomer.id, kg: 8, total_amount: 195 }),
+      multiServicePrimary({ customer_id: loyaltyCustomer.id, kg: 8, total_amount: 195, payment_method: 'paid', cash_amount: 415 }),
       [csdbLine({ kg: 8 })],
     );
     multi.token = multi.updated_at; // create_transaction_with_service_items returns public.transactions, not the token-aliased shape status() expects
@@ -1461,7 +1501,7 @@ try {
     );
     const testOrder = await transaction({
       customer_id: oldCustomer.id, customer_name: oldCustomer.full_name, phone_number: null,
-      service_id: wdfId, base_amount: 195, total_amount: 195, kg: 7, no_of_loads: 1, payment_method: 'pay_later',
+      service_id: wdfId, base_amount: 195, total_amount: 195, kg: 7, no_of_loads: 1, payment_method: 'paid', cash_amount: 195,
     });
     await customerItems(testOrder, [{ item_type: 'towels', quantity: 1 }]);
     let completed = await status(testOrder, 'washing');
