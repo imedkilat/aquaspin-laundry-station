@@ -279,7 +279,7 @@ export default function OwnerDashboard() {
           </div>
 
           <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
-            <PaymentFilterCard label="Today's Sales" value={peso(stats.salesToday)} hint={`${stats.countToday} transactions today · click to view`} icon="money" active={dateFrom === shopDate() && dateTo === shopDate() && methodFilter === 'all'} onClick={() => { setDateFrom(shopDate()); setDateTo(shopDate()); setMethodFilter('all') }} />
+            <PaymentFilterCard label="Today's Sales" value={peso(stats.salesToday)} hint={`${stats.countToday} transactions today · click to view`} icon="money" active={dateFrom === shopDate() && dateTo === shopDate() && methodFilter === 'all'} onClick={() => { setDateFrom(shopDate()); setDateTo(shopDate()); setMethodFilter('all'); setOutstandingOnly(false) }} />
             <PaymentFilterCard label={todayOnlyForStaff ? "Today's Sales" : 'Selected Sales'} value={peso(stats.salesRange)} hint={`${activeRows.length} transactions · click for all`} icon="dashboard" active={methodFilter === 'all'} onClick={() => setMethodFilter('all')} />
             <PaymentFilterCard label="Cash" value={peso(stats.cashTotal)} hint={`${stats.cashCount} customers · click to view`} icon="money" active={methodFilter === 'paid'} onClick={() => setMethodFilter('paid')} />
             <PaymentFilterCard label="GCash" value={peso(stats.gcashTotal)} hint={`${stats.gcashCount} customers · click to view`} icon="money" active={methodFilter === 'gcash'} onClick={() => setMethodFilter('gcash')} />
