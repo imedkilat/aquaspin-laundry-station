@@ -8,7 +8,7 @@ import BentoCard from '../components/BentoCard'
 import UiIcon, { type IconName } from '../components/UiIcon'
 import { InlineAlert } from '../components/UiFeedback'
 import { useShopDate } from '../hooks/useShopDate'
-import { useTransactions } from '../hooks/useTransactions'
+import { FETCH_ALL_HARD_CAP, useTransactions } from '../hooks/useTransactions'
 import { useAuth } from '../lib/auth-context'
 import { shopDateDaysAgo } from '../lib/date'
 import { useShopSettings } from '../lib/shop-settings-context'
@@ -60,7 +60,7 @@ export default function OrdersPage() {
   const effectiveDateFrom = historyRestricted ? today : dateFrom
   const effectiveDateTo = historyRestricted ? today : dateTo
 
-  const { rows, loading, error, realtimeState, reload } = useTransactions({
+  const { rows, loading, error, realtimeState, reload, truncated } = useTransactions({
     dateFrom: effectiveDateFrom,
     dateTo: effectiveDateTo,
     limit: 1000,
@@ -232,6 +232,13 @@ export default function OrdersPage() {
         </BentoCard>
 
         <BentoCard title="Transaction history" description={`${filtered.length} matching records · ${effectiveDateFrom || 'all dates'} to ${effectiveDateTo}`} icon="orders">
+          {truncated && (
+            <div className="mb-3">
+              <InlineAlert variant="warning" title="Showing recent transactions only">
+                Showing the {FETCH_ALL_HARD_CAP.toLocaleString()} most recent matching transactions. Narrow the date range to see older ones.
+              </InlineAlert>
+            </div>
+          )}
           <TransactionTable
             rows={filtered}
             loading={loading}
