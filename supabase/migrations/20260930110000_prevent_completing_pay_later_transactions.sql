@@ -77,6 +77,9 @@ begin
       if destination_rank < source_rank then
         raise exception 'Backward movement requires an owner override' using errcode = '42501';
       end if;
+      -- Incidental fix to a pre-existing dead branch: normal_next was unassigned,
+      -- so the comparison below always compared against NULL. This is separate
+      -- from the Pay Later completion guardrail.
       normal_next := case source_status
         when 'received' then 'washing' when 'washing' then 'drying'
         when 'drying' then 'ready_for_pickup' when 'ready_for_pickup' then 'completed' end;
