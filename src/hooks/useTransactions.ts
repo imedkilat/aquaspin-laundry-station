@@ -26,6 +26,10 @@ const SELECT = `*, services ( code, label ),
   updated_by_profile:profiles!transactions_updated_by_fkey ( full_name ),
   deleted_by_profile:profiles!transactions_deleted_by_fkey ( full_name )`
 
+// Safety net for the fetchAll path: newest rows are retained and the oldest
+// matches are omitted once the client-side result set reaches this size.
+export const FETCH_ALL_HARD_CAP = 5000
+
 export function useTransactions(options: Options = {}) {
   const {
     dateFrom,
@@ -42,10 +46,12 @@ export function useTransactions(options: Options = {}) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [realtimeState, setRealtimeState] = useState<RealtimeState>('connecting')
+  const [truncated, setTruncated] = useState(false)
 
   const reload = useCallback(async () => {
     setLoading(true)
     setError(null)
+    setTruncated(false)
 
     const pageSize = Math.max(1, Math.min(limit, 1000))
 
@@ -133,6 +139,7 @@ export function useTransactions(options: Options = {}) {
 
     const allRows: TransactionWithService[] = []
     let offset = 0
+    let wasTruncated = false
 
     while (true) {
       const { data, error: queryError, count } = await fetchPage(offset)
@@ -143,15 +150,30 @@ export function useTransactions(options: Options = {}) {
       }
 
       const page = (data as unknown as TransactionWithService[]) ?? []
+      const remaining = FETCH_ALL_HARD_CAP - allRows.length
+      if (page.length > remaining) {
+        allRows.push(...page.slice(0, remaining))
+        wasTruncated = true
+        break
+      }
       allRows.push(...page)
 
       if (page.length === 0) break
       offset += page.length
 
       if (typeof count === 'number' && allRows.length >= count) break
+      if (allRows.length >= FETCH_ALL_HARD_CAP) {
+        if (typeof count === 'number') {
+          wasTruncated = count > allRows.length
+          break
+        }
+        // If the exact count is unavailable, request one more page to tell
+        // whether this is a complete 5,000-row result or a truncated one.
+      }
       if (count == null && page.length < pageSize) break
     }
 
+    setTruncated(wasTruncated)
     await finish(allRows, 'Could not load customer item coverage. Check the internet connection and try again.')
   }, [dateFrom, dateTo, limit, includeDeleted, fetchAll, paymentMethod, orderStatuses, includeCustomerItemCoverage, includeServiceItemsWeight])
 
@@ -199,5 +221,5 @@ export function useTransactions(options: Options = {}) {
     }
   }, [reload, includeCustomerItemCoverage, includeServiceItemsWeight])
 
-  return { rows, loading, error, realtimeState, reload }
+  return { rows, loading, error, realtimeState, reload, truncated }
 }

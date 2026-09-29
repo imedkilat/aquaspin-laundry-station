@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Navigate, useSearchParams } from 'react-router-dom'
-import { useTransactions } from '../hooks/useTransactions'
+import { FETCH_ALL_HARD_CAP, useTransactions } from '../hooks/useTransactions'
 import TransactionTable from '../components/TransactionTable'
 import StaffAccountsManager from '../components/StaffAccountsManager'
 import ServicePricingManager from '../components/ServicePricingManager'
@@ -90,7 +90,7 @@ export default function OwnerDashboard() {
   const effectiveDateFrom = todayOnlyForStaff ? shopDate() : dateFrom
   const effectiveDateTo = todayOnlyForStaff ? shopDate() : dateTo
 
-  const { rows, loading, error, realtimeState, reload } = useTransactions({
+  const { rows, loading, error, realtimeState, reload, truncated } = useTransactions({
     dateFrom: effectiveDateFrom || undefined,
     dateTo: effectiveDateTo,
     limit: 1000,
@@ -367,7 +367,18 @@ export default function OwnerDashboard() {
               </div>
             </div>
 
-            <TransactionTable rows={filtered} loading={loading} isOwner={isOwner} />
+            {truncated && (
+              <InlineAlert variant="warning" title="Showing recent transactions only">
+                Showing the {FETCH_ALL_HARD_CAP.toLocaleString()} most recent matching transactions. Narrow the date range to see older ones.
+              </InlineAlert>
+            )}
+            <TransactionTable
+              rows={filtered}
+              loading={loading}
+              isOwner={isOwner}
+              pageSize={10}
+              paginationKey={JSON.stringify([effectiveDateFrom, effectiveDateTo, methodFilter, excludeCancelled, outstandingOnly, search, showDeleted, rows.length])}
+            />
           </div>
         </>
       )}
