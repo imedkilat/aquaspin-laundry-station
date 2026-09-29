@@ -66,15 +66,20 @@ export default function TransactionStatusPanel({
   const isTerminal = currentStatus === 'completed' || currentStatus === 'cancelled'
   const requiresCustomerItems = isDropOffTransaction(transaction)
   const completionBlocked = requiresCustomerItems && !hasCustomerItems && !isTerminal
+  const paymentMethodBlocksCompletion = transaction.payment_method === 'pay_later'
   const availableOverrideStatuses = useMemo(
-    () => (Object.keys(STATUS_LABELS) as OrderStatus[]).filter((status) => status !== currentStatus && (status !== 'completed' || !requiresCustomerItems || hasCustomerItems)),
-    [currentStatus, hasCustomerItems, requiresCustomerItems],
+    () => (Object.keys(STATUS_LABELS) as OrderStatus[]).filter((status) => status !== currentStatus && (status !== 'completed' || ((!requiresCustomerItems || hasCustomerItems) && !paymentMethodBlocksCompletion))),
+    [currentStatus, hasCustomerItems, requiresCustomerItems, paymentMethodBlocksCompletion],
   )
 
   const changeStatus = async (status: OrderStatus, useOverride = false, actionReason = '') => {
     if (!canEdit || busy || transaction.deleted_at) return
     if (status === 'completed' && requiresCustomerItems && !hasCustomerItems) {
       setError("Please record the customer's item list before completing this order.")
+      return
+    }
+    if (status === 'completed' && paymentMethodBlocksCompletion) {
+      setError('Change the payment method from Pay Later to Cash or GCash before completing this order.')
       return
     }
     setBusy(true)
@@ -129,13 +134,21 @@ export default function TransactionStatusPanel({
         </div>
       )}
 
+      {paymentMethodBlocksCompletion && !isTerminal && canEdit && (
+        <div className="mt-4">
+          <InlineAlert variant="warning" title="Payment required before completion">
+            This order is still marked Pay Later. Change the payment method to Cash or GCash before completing it.
+          </InlineAlert>
+        </div>
+      )}
+
       {!transaction.deleted_at && canEdit && !isTerminal && (
         <div className="mt-4 flex flex-wrap gap-2">
           {nextStatus && (
             <button
               type="button"
               onClick={() => void changeStatus(nextStatus)}
-              disabled={busy || (nextStatus === 'completed' && requiresCustomerItems && !hasCustomerItems)}
+              disabled={busy || (nextStatus === 'completed' && (requiresCustomerItems && !hasCustomerItems || paymentMethodBlocksCompletion))}
               className="inline-flex items-center gap-2 rounded-xl bg-sky-600 px-3.5 py-2 text-sm font-semibold text-white hover:bg-sky-700 disabled:opacity-60"
             >
               {busy && <ButtonSpinner />}
