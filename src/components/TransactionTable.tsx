@@ -53,21 +53,29 @@ type TransactionTableProps = {
   rows: TransactionWithService[]
   loading: boolean
   isOwner?: boolean
+  pageSize?: number
+  paginationKey?: string
   onEdit?: (transaction: TransactionWithService) => void
   onDelete?: (transaction: TransactionWithService) => void
 }
 
-export default function TransactionTable({ rows, loading, isOwner = false, onEdit, onDelete }: TransactionTableProps) {
+export default function TransactionTable({ rows, loading, isOwner = false, pageSize, paginationKey = '', onEdit, onDelete }: TransactionTableProps) {
   const { settings } = useShopSettings()
   const [editingTransaction, setEditingTransaction] = useState<TransactionWithService | null>(null)
   const [deletingTransaction, setDeletingTransaction] = useState<TransactionWithService | null>(null)
   const [printingTransaction, setPrintingTransaction] = useState<TransactionWithService | null>(null)
   const [restoringId, setRestoringId] = useState<string | null>(null)
   const [restoreError, setRestoreError] = useState<string | null>(null)
+  const [pageState, setPageState] = useState({ key: paginationKey, page: 1 })
 
   const canEdit = isOwner || settings.staff_can_edit_transactions
   const canDelete = isOwner || settings.staff_can_delete_transactions
   const hasActions = true
+  const pageCount = pageSize ? Math.max(1, Math.ceil(rows.length / pageSize)) : 1
+  const currentPage = Math.min(pageState.key === paginationKey ? pageState.page : 1, pageCount)
+  const visibleRows = pageSize
+    ? rows.slice((currentPage - 1) * pageSize, currentPage * pageSize)
+    : rows
 
   const restore = async (id: string) => {
     if (!isOwner) return
@@ -118,7 +126,7 @@ export default function TransactionTable({ rows, loading, isOwner = false, onEdi
             </tr>
           </thead>
           <tbody>
-            {rows.map((r) => {
+            {visibleRows.map((r) => {
               const isDeleted = Boolean(r.deleted_at)
               return (
                 <tr key={r.id} className={`border-b border-slate-100 last:border-0 dark:border-slate-800 ${isDeleted ? 'bg-red-50/40 dark:bg-red-950/10' : 'hover:bg-slate-50 dark:hover:bg-slate-800/60'}`}>
@@ -164,6 +172,35 @@ export default function TransactionTable({ rows, loading, isOwner = false, onEdi
           </tbody>
         </table>
       </div>
+
+      {pageSize && (
+        <div className="mt-3 flex flex-col gap-3 border-t border-slate-200 pt-3 dark:border-slate-800 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-sm text-slate-500 dark:text-slate-400">
+            Showing {(currentPage - 1) * pageSize + 1}–{Math.min(currentPage * pageSize, rows.length)} of {rows.length} matching transactions
+          </p>
+          <div className="flex items-center justify-between gap-3 sm:justify-end">
+            <button
+              type="button"
+              disabled={currentPage <= 1}
+              onClick={() => setPageState({ key: paginationKey, page: currentPage - 1 })}
+              className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+            >
+              Previous
+            </button>
+            <span aria-live="polite" className="min-w-20 text-center text-sm text-slate-600 dark:text-slate-300">
+              Page {currentPage} of {pageCount}
+            </span>
+            <button
+              type="button"
+              disabled={currentPage >= pageCount}
+              onClick={() => setPageState({ key: paginationKey, page: currentPage + 1 })}
+              className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+            >
+              Next
+            </button>
+          </div>
+        </div>
+      )}
 
       {!onEdit && editingTransaction && canEdit && <EditTransactionModal transaction={editingTransaction} onClose={() => setEditingTransaction(null)} />}
       {!onDelete && deletingTransaction && canDelete && <DeleteTransactionModal transaction={deletingTransaction} onClose={() => setDeletingTransaction(null)} />}

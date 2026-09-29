@@ -367,7 +367,13 @@ export default function OwnerDashboard() {
               </div>
             </div>
 
-            <TransactionTable rows={filtered} loading={loading} isOwner={isOwner} />
+            <TransactionTable
+              rows={filtered}
+              loading={loading}
+              isOwner={isOwner}
+              pageSize={10}
+              paginationKey={JSON.stringify([effectiveDateFrom, effectiveDateTo, methodFilter, excludeCancelled, outstandingOnly, search, showDeleted, rows.length])}
+            />
           </div>
         </>
       )}

@@ -236,6 +236,8 @@ export default function OrdersPage() {
             rows={filtered}
             loading={loading}
             isOwner={isOwner}
+            pageSize={10}
+            paginationKey={JSON.stringify([effectiveDateFrom, effectiveDateTo, methodFilter, customerItemsFilter, excludeCancelled, outstandingOnly, search, showDeleted, rows.length])}
             onEdit={setEditingTransaction}
             onDelete={setDeletingTransaction}
           />
