@@ -279,12 +279,7 @@ export default function OwnerDashboard() {
           </div>
 
           <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
-            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:border-slate-800 dark:bg-slate-900">
-              <span className="mb-3 flex h-9 w-9 items-center justify-center rounded-xl bg-sky-100 text-sky-700 dark:bg-sky-950 dark:text-sky-300"><UiIcon name="money" size={18} /></span>
-              <p className="text-xs text-slate-500">Today's Sales</p>
-              <p className="mt-1 text-2xl font-semibold text-slate-900 dark:text-slate-100">{peso(stats.salesToday)}</p>
-              <p className="mt-1 text-xs text-slate-400">{stats.countToday} transactions today</p>
-            </div>
+            <PaymentFilterCard label="Today's Sales" value={peso(stats.salesToday)} hint={`${stats.countToday} transactions today · click to view`} icon="money" active={dateFrom === shopDate() && dateTo === shopDate() && methodFilter === 'all'} onClick={() => { setDateFrom(shopDate()); setDateTo(shopDate()); setMethodFilter('all'); setOutstandingOnly(false) }} />
             <PaymentFilterCard label={todayOnlyForStaff ? "Today's Sales" : 'Selected Sales'} value={peso(stats.salesRange)} hint={`${activeRows.length} transactions · click for all`} icon="dashboard" active={methodFilter === 'all'} onClick={() => setMethodFilter('all')} />
             <PaymentFilterCard label="Cash" value={peso(stats.cashTotal)} hint={`${stats.cashCount} customers · click to view`} icon="money" active={methodFilter === 'paid'} onClick={() => setMethodFilter('paid')} />
             <PaymentFilterCard label="GCash" value={peso(stats.gcashTotal)} hint={`${stats.gcashCount} customers · click to view`} icon="money" active={methodFilter === 'gcash'} onClick={() => setMethodFilter('gcash')} />
