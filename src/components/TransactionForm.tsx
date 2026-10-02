@@ -161,6 +161,24 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
   const [showThermalModal, setShowThermalModal] = useState(false)
   const [clientRequestId, setClientRequestId] = useState(() => crypto.randomUUID())
   const submitLockRef = useRef(false)
+  const [customerSuggestionsOpen, setCustomerSuggestionsOpen] = useState(false)
+  const [highlightedCustomer, setHighlightedCustomer] = useState(-1)
+  const matchingCustomers = useMemo(() => {
+    const query = form.customer_name.trim().toLocaleLowerCase()
+    return query && !form.customer_id
+      ? customers.filter((customer) => customer.active && customer.full_name.toLocaleLowerCase().includes(query)).slice(0, 8)
+      : []
+  }, [customers, form.customer_name, form.customer_id])
+  const showCustomerSuggestions = customerSuggestionsOpen && matchingCustomers.length > 0
+
+  function selectCustomer(customerId: string) {
+    const customer = customers.find((row) => row.id === customerId)
+    if (!customer) return
+    setForm((current) => ({ ...current, customer_id: customer.id, customer_name: customer.full_name, phone_number: customer.phone_number ?? '' }))
+    setCustomerSuggestionsOpen(false)
+    setPhoneCustomerWarning(null)
+    setHighlightedCustomer(-1)
+  }
 
   const selectedService = useMemo(
     () => services.find((service) => service.id === form.service_id) ?? null,
@@ -648,7 +666,7 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
                 ...current,
                 customer_id: customer?.id ?? '',
                 customer_name: customer?.full_name ?? current.customer_name,
-                phone_number: customer?.phone_number ?? current.phone_number,
+                phone_number: customer ? customer.phone_number ?? '' : current.phone_number,
               }))
               setPhoneCustomerWarning(null)
             }}
@@ -664,12 +682,64 @@ export default function TransactionForm({ onAdded }: { onAdded?: () => void }) {
           </select>
           <p className="mt-1 text-xs text-slate-500">Selecting a customer links this order while preserving the name and phone snapshots on the transaction.</p>
         </div>
-        <div>
-          <label className={labelClass}>Customer Name *</label>
-          <input required value={form.customer_name} onChange={(e) => {
-            setForm((current) => ({ ...current, customer_id: '', customer_name: e.target.value }))
-            setPhoneCustomerWarning(null)
-          }} onBlur={() => setForm((f) => ({ ...f, customer_name: toTitleCaseName(f.customer_name) }))} className={inputClass} placeholder="Earl Dela Cruz" />
+        <div className="relative">
+          <label htmlFor="customer-name" className={labelClass}>Customer Name *</label>
+          <input
+            id="customer-name"
+            required
+            role="combobox"
+            autoComplete="off"
+            aria-autocomplete="list"
+            aria-expanded={showCustomerSuggestions}
+            aria-controls={showCustomerSuggestions ? 'customer-name-suggestions' : undefined}
+            aria-activedescendant={showCustomerSuggestions && matchingCustomers[highlightedCustomer] ? `customer-suggestion-${matchingCustomers[highlightedCustomer].id}` : undefined}
+            value={form.customer_name}
+            onFocus={() => setCustomerSuggestionsOpen(true)}
+            onChange={(e) => {
+              setForm((current) => ({ ...current, customer_id: '', customer_name: e.target.value }))
+              setCustomerSuggestionsOpen(true)
+              setPhoneCustomerWarning(null)
+              setHighlightedCustomer(-1)
+            }}
+            onBlur={() => {
+              setCustomerSuggestionsOpen(false)
+              setForm((current) => ({ ...current, customer_name: toTitleCaseName(current.customer_name) }))
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') setCustomerSuggestionsOpen(false)
+              if (!showCustomerSuggestions) return
+              if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+                e.preventDefault()
+                setHighlightedCustomer((current) => e.key === 'ArrowDown'
+                  ? (current + 1) % matchingCustomers.length
+                  : (current <= 0 ? matchingCustomers.length - 1 : current - 1))
+              } else if (e.key === 'Enter' && matchingCustomers[highlightedCustomer]) {
+                e.preventDefault()
+                selectCustomer(matchingCustomers[highlightedCustomer].id)
+              }
+            }}
+            className={inputClass}
+            placeholder="Earl Dela Cruz"
+          />
+          {showCustomerSuggestions && (
+            <ul id="customer-name-suggestions" role="listbox" aria-label="Recorded customers" className="absolute z-20 mt-1 max-h-64 w-full overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-lg dark:border-slate-700 dark:bg-slate-900">
+              {matchingCustomers.map((customer, index) => (
+                <li
+                  key={customer.id}
+                  id={`customer-suggestion-${customer.id}`}
+                  role="option"
+                  aria-selected={highlightedCustomer === index}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => selectCustomer(customer.id)}
+                  className={`cursor-pointer px-3 py-2 text-sm hover:bg-sky-50 dark:hover:bg-slate-800 ${highlightedCustomer === index ? 'bg-sky-50 dark:bg-slate-800' : ''}`}
+                >
+                  <span className="block font-medium text-slate-900 dark:text-slate-100">{customer.full_name}</span>
+                  <span className="text-xs text-slate-500 dark:text-slate-400">{customer.customer_code}{customer.phone_number ? ` · ${customer.phone_number}` : ''}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+          <p className="mt-1 text-xs text-slate-500">Type a name and select a recorded customer to fill their phone number, or enter a new customer.</p>
         </div>
         <div>
           <label className={labelClass}>Phone Number{settings.require_phone_number ? ' *' : ''}</label>
