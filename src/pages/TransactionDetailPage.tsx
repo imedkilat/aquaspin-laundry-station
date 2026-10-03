@@ -4,6 +4,8 @@ import ActionErrorBoundary from '../components/ActionErrorBoundary'
 import CustomerItemsCard from '../components/CustomerItemsCard'
 import DeleteTransactionModal from '../components/DeleteTransactionModal'
 import EditTransactionModal from '../components/EditTransactionModal'
+import CompletedOrderEditHistory from '../components/CompletedOrderEditHistory'
+import { canEditTransaction } from '../lib/transaction-edit'
 import PaymentBadge from '../components/PaymentBadge'
 import TransactionStatusPanel, { StatusBadge, type TransactionStatusHistoryWithActor } from '../components/TransactionStatusPanel'
 import ThermalPrintModal from '../components/ThermalPrintModal'
@@ -63,7 +65,6 @@ export default function TransactionDetailPage() {
   const canDelete = isOwner || settings.staff_can_delete_transactions
 
   const [transaction, setTransaction] = useState<TransactionWithService | null>(null)
-  const isTerminalOrder = ['completed', 'cancelled'].includes(transaction?.order_status ?? '')
   const [customerItems, setCustomerItems] = useState<TransactionCustomerItem[] | null>(null)
   const [serviceItems, setServiceItems] = useState<TransactionServiceItem[] | null>(null)
   const [customerItemsError, setCustomerItemsError] = useState<string | null>(null)
@@ -344,7 +345,7 @@ export default function TransactionDetailPage() {
                 )}
               </>
             )}
-            {!transaction.deleted_at && canEdit && !isTerminalOrder && (
+            {canEdit && canEditTransaction(transaction.order_status, Boolean(transaction.deleted_at), isOwner) && (
               <button type="button" onClick={() => setEditing(true)} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">Edit</button>
             )}
             {!transaction.deleted_at && canDelete && (
@@ -557,7 +558,9 @@ export default function TransactionDetailPage() {
         )}
       </div>
 
-      {editing && !transaction.deleted_at && !isTerminalOrder && (
+      {isOwner && <CompletedOrderEditHistory key={transaction.id} transactionId={transaction.id} updatedAt={transaction.updated_at} />}
+
+      {editing && canEdit && canEditTransaction(transaction.order_status, Boolean(transaction.deleted_at), isOwner) && (
         <ActionErrorBoundary key={`detail-edit-${transaction.id}`} onClose={() => setEditing(false)}>
           <EditTransactionModal transaction={transaction} onClose={() => { setEditing(false); void reload() }} />
         </ActionErrorBoundary>

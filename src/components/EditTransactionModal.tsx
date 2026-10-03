@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { supabase } from '../lib/supabase'
+import { useAuth } from '../lib/auth-context'
+import { canEditTransaction } from '../lib/transaction-edit'
 import { useServices } from '../hooks/useServices'
 import { useAddOns } from '../hooks/useAddOns'
 import { useShopSettings } from '../lib/shop-settings-context'
@@ -118,6 +120,10 @@ function addOnItemsSignature(items: TransactionAddOnItem[] | null | undefined) {
 }
 
 export default function EditTransactionModal({ transaction, onClose }: { transaction: TransactionWithService; onClose: () => void }) {
+  const { profile } = useAuth()
+  const isOwner = profile?.role === 'owner'
+  const isCompletedEdit = transaction.order_status === 'completed'
+  const [editReason, setEditReason] = useState('')
   const { services } = useServices()
   const { addOns, loading: addOnsLoading } = useAddOns({ includeInactive: true })
   const { settings } = useShopSettings()
@@ -346,8 +352,16 @@ export default function EditTransactionModal({ transaction, onClose }: { transac
     try {
       setError(null)
 
-      if (['completed', 'cancelled'].includes(transaction.order_status)) {
-        setError('Completed and cancelled orders cannot be edited.')
+      if (!canEditTransaction(transaction.order_status, Boolean(transaction.deleted_at), isOwner)) {
+        setError('Only the Owner can edit completed orders. Cancelled and deleted orders cannot be edited.')
+        return
+      }
+      if (isCompletedEdit && (!editReason.trim() || editReason.trim().length > 500)) {
+        setError('Enter an edit reason of 1 to 500 characters before saving.')
+        return
+      }
+      if (isCompletedEdit && form.payment_method === 'pay_later') {
+        setError('A completed order must remain paid.')
         return
       }
 
@@ -489,6 +503,38 @@ export default function EditTransactionModal({ transaction, onClose }: { transac
         inventoryUsageHasAnyValue(initialInventoryUsage) ||
         !inventoryUsageEquals(inventoryUsage, initialInventoryUsage)
       const shouldPersistAddOnItems = addOnItemsSignature(selectedAddOnItems) !== addOnItemsSignature(transaction.add_on_items)
+
+      if (isCompletedEdit) {
+        const { error: completedEditError } = await supabase.rpc('edit_completed_order', {
+          p_transaction_id: transaction.id,
+          p_expected_updated_at: expectedUpdatedAtRef.current,
+          p_reason: editReason.trim(),
+          p_changes: {
+            customer_name: normalizedCustomerName,
+            phone_number: form.phone_number.trim() || null,
+            transaction_date: form.transaction_date,
+            service_id: form.service_id,
+            kg: form.kg ? Number(form.kg) : null,
+            no_of_loads: form.no_of_loads ? Number(form.no_of_loads) : null,
+            base_amount: Number(form.base_amount) || 0,
+            ...(shouldPersistAddOnItems ? { add_ons: addOnsTotal, add_on_items: selectedAddOnItems } : {}),
+            total_amount: totalAmount,
+            cash_amount: Number(form.cash_amount) || 0,
+            gcash_amount: Number(form.gcash_amount) || 0,
+            gcash_reference: form.payment_method === 'gcash' ? form.gcash_reference.trim() : null,
+            payment_method: form.payment_method,
+            pickup_date: form.pickup_date || null,
+            pickup_time: form.pickup_date && form.pickup_time ? form.pickup_time : null,
+            notes: form.notes.trim() || null,
+          },
+        })
+        if (completedEditError) {
+          setError(completedEditError.message)
+          return
+        }
+        onClose()
+        return
+      }
 
       // Additional service lines exist, or are being added/removed — route
       // through the RPC that keeps the primary fields, the lines, and the
@@ -658,7 +704,7 @@ export default function EditTransactionModal({ transaction, onClose }: { transac
         <div className="flex items-center justify-between gap-3">
           <div>
             <h2 id="edit-transaction-title" className="font-semibold text-slate-900 dark:text-slate-100">Edit Transaction — {transaction.transaction_code || `#${String(transaction.transaction_no).padStart(4, '0')}`}</h2>
-            <p className="text-xs text-slate-500 mt-0.5">Changes apply immediately and are logged under Last Updated By.</p>
+            <p className="text-xs text-slate-500 mt-0.5">{isCompletedEdit ? 'Owner correction: an edit reason is required before saving.' : 'Saved changes are logged under Last Updated By.'}</p>
           </div>
           <button type="button" onClick={onClose} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 text-xl leading-none px-1">×</button>
         </div>
@@ -797,7 +843,7 @@ export default function EditTransactionModal({ transaction, onClose }: { transac
           <div>
             <label className={labelClass}>Payment Method *</label>
             <select required value={form.payment_method} onChange={handlePaymentMethodChange} className={inputClass}>
-              <option value="paid">Cash</option><option value="gcash">GCash</option><option value="pay_later">Pay Later</option>
+              <option value="paid">Cash</option><option value="gcash">GCash</option>{!isCompletedEdit && <option value="pay_later">Pay Later</option>}
             </select>
           </div>
 
@@ -834,11 +880,18 @@ export default function EditTransactionModal({ transaction, onClose }: { transac
           </div>
         </div>
 
+        {isCompletedEdit && (
+          <div>
+            <label htmlFor="completed-edit-reason" className={labelClass}>Reason for editing *</label>
+            <textarea id="completed-edit-reason" required maxLength={500} value={editReason} onChange={(event) => setEditReason(event.target.value)} className={`${inputClass} min-h-24`} placeholder="Explain why this completed order needs to be corrected." />
+            <p className="mt-1 text-xs text-slate-500">Your reason, edit date and time will be recorded on this order. Consumed inventory and additional service lines stay locked.</p>
+          </div>
+        )}
         {error && <InlineAlert variant="error" title="Changes were not saved">{error}</InlineAlert>}
 
         <div className="flex items-center justify-end gap-2">
           <button type="button" onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">Cancel</button>
-          <button type="button" onClick={() => void handleSave()} disabled={saving || inventoryLoading || serviceLinesLoading || ['completed', 'cancelled'].includes(transaction.order_status)} className="inline-flex items-center gap-2 bg-sky-600 hover:bg-sky-700 disabled:opacity-60 text-white font-medium rounded-lg px-4 py-2 text-sm transition">
+          <button type="button" onClick={() => void handleSave()} disabled={saving || inventoryLoading || serviceLinesLoading || !canEditTransaction(transaction.order_status, Boolean(transaction.deleted_at), isOwner) || (isCompletedEdit && !editReason.trim())} className="inline-flex items-center gap-2 bg-sky-600 hover:bg-sky-700 disabled:opacity-60 text-white font-medium rounded-lg px-4 py-2 text-sm transition">
             {saving && <ButtonSpinner />}{saving ? 'Saving…' : 'Save Changes'}
           </button>
         </div>

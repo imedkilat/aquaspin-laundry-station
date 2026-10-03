@@ -1567,5 +1567,89 @@ try {
     assert.equal((await one('select reason from transaction_customer_corrections where id=$1', [correction.id])).reason, 'Owner-confirmed duplicate customer link');
   });
 
+  await admin();
+  await test('completed-order edits require an active Owner and a reason, with immutable timestamped history', async () => {
+    await asUser(owner);
+    let t = await transaction({ kg: 7, total_amount: 175, cash_amount: 175, payment_method: 'paid', service_id: await serviceId('WDF') });
+    await customerItems(t, [{ item_type: 'towels', quantity: 1 }]);
+    t = await fresh(t.id);
+    t = await status(t, 'completed', 'Prepare completed edit fixture', true);
+    const edit = (token, changes, reason) => one('select *, updated_at::text as token from public.edit_completed_order($1,$2,$3::jsonb,$4)', [t.id, token, JSON.stringify(changes), reason]);
+    await asUser(staff);
+    await assert.rejects(edit(t.token, { notes: 'Staff correction' }, 'Staff attempt'), e => e.code === '42501');
+    assert.equal((await one('select count(*)::int as count from completed_order_edits')).count, 0, 'Staff cannot read audit rows');
+    await asUser(owner);
+    for (const reason of ['', '   ', null, 'x'.repeat(501)]) {
+      await assert.rejects(edit(t.token, { notes: 'Correction' }, reason), e => e.code === '22023');
+    }
+    await assert.rejects(edit(t.token, { order_status: 'received' }, 'Change lifecycle'), e => e.code === '22023');
+    await assert.rejects(edit(t.token, { customer_id: staff }, 'Change customer link'), e => e.code === '22023');
+    await assert.rejects(edit(t.token, { detergent_quantity: 2 }, 'Change consumed stock'), e => e.code === '22023');
+    await assert.rejects(edit(t.token, { payment_method: 'pay_later' }, 'Revert payment'), e => e.code === '22023');
+    await assert.rejects(edit(t.token, { notes: t.notes }, 'No actual changes'), e => e.code === '22023');
+    const saved = await edit(t.token, { notes: 'Correct pickup instructions' }, '  Customer clarified pickup  ');
+    assert.equal(saved.order_status, 'completed');
+    assert.equal(saved.notes, 'Correct pickup instructions');
+    const audit = await one('select * from completed_order_edits where transaction_id=$1', [t.id]);
+    assert.equal(audit.reason, 'Customer clarified pickup');
+    assert.equal(audit.edited_by, owner);
+    assert.ok(audit.edited_at);
+    assert.equal(audit.before_values.notes, t.notes);
+    assert.equal(audit.after_values.notes, saved.notes);
+    await assert.rejects(edit(t.token, { notes: 'Stale correction' }, 'Stale save'), e => e.code === '40001');
+    await rejects('update public.transactions set notes=$2 where id=$1', [t.id, 'Direct unaudited edit'], '42501');
+    await rejects('update completed_order_edits set reason=$2 where id=$1', [audit.id, 'Rewritten reason'], '42501');
+    await rejects('delete from completed_order_edits where id=$1', [audit.id], '42501');
+    assert.equal((await one('select count(*)::int as count from completed_order_edits where transaction_id=$1', [t.id])).count, 1);
+  });
+
+  await test('completed weight edits correct loyalty once per save and failed saves roll back', async () => {
+    await asUser(owner);
+    const customer = await one("insert into customers(full_name,phone_number) values ('Completed Weight Correction','09171118888') returning *");
+    let t = await transaction({ customer_id: customer.id, kg: 4, total_amount: 175, cash_amount: 175, payment_method: 'paid', customer_name: customer.full_name, phone_number: customer.phone_number, service_id: await serviceId('WDF') });
+    await customerItems(t, [{ item_type: 'towels', quantity: 1 }]);
+    t = await fresh(t.id);
+    t = await status(t, 'completed', 'Prepare weight correction fixture', true);
+    const balance = async () => Number((await one('select private.calculate_loyalty_balance($1) as value', [t.customer_id])).value);
+    const initial = await balance();
+    const edit = (changes) => one('select *, updated_at::text as token from public.edit_completed_order($1,$2,$3::jsonb,$4)', [t.id, t.token, JSON.stringify(changes), 'Correct recorded weight']);
+    const originalEvent = await one("select * from loyalty_point_events where transaction_id=$1 and event_type='earned'", [t.id]);
+    const rate = Number(originalEvent.points_earned) / Number(originalEvent.kg);
+    t = await edit({ kg: 6 });
+    assert.equal(await balance(), initial + 2 * rate);
+    t = await edit({ kg: 5 });
+    assert.equal(await balance(), initial + rate);
+    assert.equal(Number((await one("select points_earned from loyalty_point_events where id=$1", [originalEvent.id])).points_earned), Number(originalEvent.points_earned), 'Original award remains immutable');
+    await assert.rejects(edit({ total_amount: 9999 }), /cash|received|amount/i);
+    assert.equal(Number((await fresh(t.id)).total_amount), 175);
+    assert.equal((await one('select count(*)::int as count from completed_order_edits where transaction_id=$1', [t.id])).count, 2, 'Failed payment edit did not create history');
+    assert.equal(await balance(), initial + rate);
+    const destination = await one("insert into customers(full_name,phone_number) values ('Completed Edit Reassignment','09171118889') returning *");
+    await q('select * from public.reassign_transaction_customer($1,$2,$3)', [t.id,destination.id,'Move corrected completed order']);
+    assert.equal(await balance(), 0, 'Reassignment removes the corrected total, not the original award');
+    assert.equal(Number((await one('select private.calculate_loyalty_balance($1) as value', [destination.id])).value), initial + rate);
+  });
+
+  await test('completed edit endpoint rejects active, cancelled, deleted, anonymous and missing-profile access', async () => {
+    await asUser(owner);
+    let t = await transaction({ total_amount: 175, cash_amount: 175, payment_method: 'paid', service_id: await serviceId('WDF') });
+    const edit = () => q('select * from public.edit_completed_order($1,$2,$3::jsonb,$4)', [t.id,t.token,JSON.stringify({ notes: 'Restricted correction' }),'Owner correction']);
+    await assert.rejects(edit(), e => e.code === '42501');
+    t = await status(t,'cancelled','Cancel test fixture');
+    await assert.rejects(edit(), e => e.code === '42501');
+    t = await transaction({ total_amount: 175, cash_amount: 175, payment_method: 'paid', service_id: await serviceId('WDF') });
+    await customerItems(t,[{ item_type: 'towels', quantity: 1 }]);
+    t = await fresh(t.id);
+    t = await status(t,'completed','Complete deleted fixture',true);
+    await softDelete(t);
+    t = await fresh(t.id);
+    await assert.rejects(edit(), e => e.code === '42501');
+    await asUser(null,'anon');
+    await assert.rejects(edit(), e => e.code === '42501');
+    await asUser('00000000-0000-4000-8000-000000009999');
+    await assert.rejects(edit(), e => e.code === '42501');
+    await asUser(owner);
+  });
+
   console.log(`\n${passed} PASS; 0 FAIL. NOT RUN: multi-session contention, Supabase API/Realtime transport, external n8n export.`);
 } finally { await db.close(); }

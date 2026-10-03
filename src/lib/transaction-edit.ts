@@ -1,5 +1,5 @@
 import type { OrderStatus } from '../types/customer-status'
 
-export function canEditTransaction(orderStatus: OrderStatus, isDeleted: boolean) {
-  return !isDeleted && orderStatus !== 'completed' && orderStatus !== 'cancelled'
+export function canEditTransaction(orderStatus: OrderStatus, isDeleted: boolean, isOwner = false) {
+  return !isDeleted && orderStatus !== 'cancelled' && (orderStatus !== 'completed' || isOwner)
 }

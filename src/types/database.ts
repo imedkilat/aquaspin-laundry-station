@@ -89,6 +89,16 @@ export type TransactionCustomerCorrection = {
   corrected_at: string
 }
 
+export type CompletedOrderEdit = {
+  id: string
+  transaction_id: string
+  edited_by: string
+  edited_at: string
+  reason: string
+  before_values: Record<string, unknown>
+  after_values: Record<string, unknown>
+}
+
 export type LoyaltyRedemption = {
   id: string
   customer_id: string
@@ -468,6 +478,12 @@ export type TransactionPrimaryUpdatePayload = {
 export type Database = {
   public: {
     Tables: {
+      completed_order_edits: {
+        Row: CompletedOrderEdit
+        Insert: { [key: string]: never }
+        Update: { [key: string]: never }
+        Relationships: []
+      }
       customers: {
         Row: Customer
         Insert: { full_name: string; phone_number?: string | null; notes?: string | null; active?: boolean }
@@ -895,6 +911,15 @@ export type Database = {
       active_expenses: { Row: ActiveExpense; Relationships: [] }
     }
     Functions: {
+      edit_completed_order: {
+        Args: {
+          p_transaction_id: string
+          p_expected_updated_at: string
+          p_changes: Partial<TransactionPrimaryUpdatePayload>
+          p_reason: string
+        }
+        Returns: Transaction
+      }
       record_expense: {
         Args: {
           p_description: string
